@@ -1,0 +1,16 @@
+# Git files
+.git/
+.gitignore
+
+# Local environment
+venv/
+.venv/
+env/
+*.pyc
+__pycache__/
+
+# VSCode
+.vscode/
+
+# Local secrets
+.env
