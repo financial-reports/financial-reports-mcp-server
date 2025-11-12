@@ -1,17 +1,25 @@
-# Financial Reports MCP Server**Official Model Context Protocol (MCP) server for the FinancialReports API.**
+# Financial Reports MCP Server
+
+**Official Model Context Protocol (MCP) server for the FinancialReports API.**
 
 This server acts as a bridge between an MCP client (like Claude Desktop) and the official FinancialReports API. It exposes the complete API surface as a set of LLM-callable tools, allowing for natural language queries of European company filings, financial data, and corporate information.
 
-This server is generated directly from the official [FinancialReports OpenAPI schema](https://api.financialreports.eu/api/schema/) to ensure it is always up-to-date with the latest API endpoints.> *Special thanks to [itisaevalex](https://github.com/itisaevalex) for their original [community-built MCP server](https://github.com/itisaevalex/financial-reports-mcp-server), which served as the inspiration and proof-of-concept for this official version.*
+This server is generated directly from the official [FinancialReports OpenAPI schema](https://api.financialreports.eu/api/schema/) to ensure it is always up-to-date with the latest API endpoints.
 
----## 🚀 Getting Started (Docker)
+> *Special thanks to [itisaevalex](https://github.com/itisaevalex) for their original [community-built MCP server](https://github.com/itisaevalex/financial-reports-mcp-server), which served as the inspiration and proof-of-concept for this official version.*
 
-The recommended way to run this server is with Docker.### 1. Build the Image
+---
+
+## 🚀 Getting Started (Docker)
+
+The recommended way to run this server is with Docker.
+
+### 1. Build the Image
 
 From the root of this repository, build the Docker image. We use `--no-cache` to ensure the latest source code is always used, bypassing any stale layers.
-We use --no-cache to ensure the latest source code is used
-docker build --no-cache -t financial-reports-mcp .
 
+# We use --no-cache to ensure the latest source code is used
+docker build --no-cache -t financial-reports-mcp .
 
 ### 2. Configure Your MCP Client (Claude Desktop)
 
@@ -20,21 +28,22 @@ Open your Claude Desktop configuration file:
 * **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 Add the following entry to the `mcpServers` object, replacing `your_api_key_here` with your real FinancialReports API key:
+
 {
-"mcpServers": {
-"financial-reports": {
-"command": "docker",
-"args": [
-"run",
-"--rm",
-"-i",
-"-e", "API_KEY=your_api_key_here",
-"-e", "API_BASE_URL=[https://api.financialreports.eu/](https://api.financialreports.eu/)",
-"-e", "MCP_TRANSPORT=stdio",
-"financial-reports-mcp:latest"
-]
-}
-}
+  "mcpServers": {
+    "financial-reports": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e", "API_KEY=your_api_key_here",
+        "-e", "API_BASE_URL=https://api.financialreports.eu/",
+        "-e", "MCP_TRANSPORT=stdio",
+        "financial-reports-mcp:latest"
+      ]
+    }
+  }
 }
 
 
@@ -130,7 +139,7 @@ This server dynamically generates tools for *all* `GET` endpoints in the Financi
 ## ⚠️ Known Issues
 
 ### SDK `v1.3.2`
-The `financial-reports-generated-client` version `1.3.2` had a known authentication bug where the `ApiClient` failed to send the `X-API-Key` header. This server was built to bypass the SDK entirely and use `httpx` directly, which resolves this issue. SDK version `v1.3.3` has fixed this bug.
+The `financial-reports-generated-client` version `v1.3.2` had a known authentication bug where the `ApiClient` failed to send the `X-API-Key` header. This server was built to bypass the SDK entirely and use `httpx` directly, which resolves this issue. SDK version `v1.3.3` has fixed this bug.
 
 ### `SSLCertVerificationError`
 This server disables SSL certificate verification (`verify=False`) in its internal `httpx` client. This is necessary to accommodate local Python environments (especially on macOS) that may be missing the required root certificates. This is generally safe for this use case but is not recommended for highly sensitive production environments.
