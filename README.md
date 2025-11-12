@@ -4,7 +4,7 @@
 
 This server acts as a bridge between an MCP client (like Claude Desktop) and the official FinancialReports API. It exposes the complete API surface as a set of LLM-callable tools, allowing for natural language queries of European company filings, financial data, and corporate information.
 
-This server is generated directly from the official [FinancialReports OpenAPI schema](https://api.financialreports.eu/api/schema/) to ensure it is always up-to-date with the latest API endpoints.
+This server is generated directly from the official [FinancialReports OpenAPI schema](https://financialreports.eu/api/schema/) to ensure it is always up-to-date with the latest API endpoints.
 
 > *Special thanks to [itisaevalex](https://github.com/itisaevalex) for their original [community-built MCP server](https://github.com/itisaevalex/financial-reports-mcp-server), which served as the inspiration and proof-of-concept for this official version.*
 
