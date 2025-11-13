@@ -1,0 +1,12 @@
+name = "financial-reports-mcp"
+main = "src/worker.py"
+compatibility_date = "2024-03-29"
+compatibility_flags = ["python_workers"]
+
+[[durable_objects.bindings]]
+name = "FinancialReports"
+class_name = "FinancialReportsServer"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["FinancialReportsServer"]
