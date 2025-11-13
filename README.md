@@ -18,8 +18,10 @@ The recommended way to run this server is with Docker.
 
 From the root of this repository, build the Docker image. We use `--no-cache` to ensure the latest source code is always used, bypassing any stale layers.
 
-# We use --no-cache to ensure the latest source code is used
+We use --no-cache to ensure the latest source code is used
+```
 docker build --no-cache -t financial-reports-mcp .
+```
 
 ### 2. Configure Your MCP Client (Claude Desktop)
 
@@ -29,6 +31,7 @@ Open your Claude Desktop configuration file:
 
 Add the following entry to the `mcpServers` object, replacing `your_api_key_here` with your real FinancialReports API key:
 
+```
 {
   "mcpServers": {
     "financial-reports": {
@@ -45,6 +48,7 @@ Add the following entry to the `mcpServers` object, replacing `your_api_key_here
     }
   }
 }
+```
 
 
 ### 3. Restart Claude

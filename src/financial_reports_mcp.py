@@ -17,28 +17,24 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
 if not API_KEY:
     raise ValueError("API_KEY environment variable not set.")
 
-# --- THIS IS THE FIX ---
-# We create a single, reusable httpx client, just like in the test script.
-# This client will correctly send the API key and disable SSL checks.
 headers = {
     'X-API-Key': API_KEY,
     'User-Agent': 'FinancialReports-MCP-Server/1.0'
 }
+# Disable SSL verify for local/dev environments; consider strict verify for prod
 client = httpx.AsyncClient(
     base_url=API_BASE_URL,
     headers=headers,
-    verify=False, # Disables SSL certificate check
-    timeout=30.0
+    verify=False,
+    timeout=60.0 
 )
-# --- END FIX ---
 
 
 async def format_response(response: httpx.Response) -> str:
     """Formats an httpx.Response into a JSON string for the LLM."""
     try:
-        response.raise_for_status() # Raise an exception for 4xx or 5xx errors
+        response.raise_for_status()
         data = response.json()
-        
         json_string = json.dumps(data, indent=2)
         return f"""```json
 {json_string}
@@ -47,8 +43,6 @@ async def format_response(response: httpx.Response) -> str:
         return f"Error: {e.response.status_code} {e.response.reason_phrase}\nBody: {e.response.text}"
     except Exception as e:
         return f"Error formatting response: {e}"
-
-# --- Auto-Generated Tools ---
 
 
 @mcp.tool()
@@ -91,7 +85,6 @@ Retrieve a paginated list of companies.
         view (Optional[str]): Controls the level of detail. Omit for a default 'summary' view, or use 'full' to include all details for each company.
     """
     try:
-        # Separate query params from path params
         query_params = {
             "countries": countries,
             "industry": industry,
@@ -108,21 +101,19 @@ Retrieve a paginated list of companies.
             "ticker": ticker,
             "view": view,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/companies/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -141,25 +132,22 @@ Retrieve detailed information for a single company by its internal ID.
         id (int): A unique integer value identifying this company.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/companies/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -180,26 +168,23 @@ Retrieve a list of all supported countries.
         page_size (Optional[int]): Number of results to return per page.
     """
     try:
-        # Separate query params from path params
         query_params = {
             "page": page,
             "page_size": page_size,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/countries/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -218,25 +203,22 @@ Retrieve details for a specific country by its ID.
         id (int): A unique integer value identifying this country.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/countries/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -259,27 +241,24 @@ Retrieve a paginated list of all available filing types.
         search (Optional[str]): A search term.
     """
     try:
-        # Separate query params from path params
         query_params = {
             "page": page,
             "page_size": page_size,
             "search": search,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/filing-types/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -298,25 +277,22 @@ Retrieve details for a specific filing type by its ID.
         id (int): A unique integer value identifying this filing type.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/filing-types/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -375,7 +351,6 @@ Retrieve a paginated list of regulatory filings.
         view (Optional[str]): Controls the level of detail. Omit for a default 'summary' view, or use 'full' to include all details for each filing.
     """
     try:
-        # Separate query params from path params
         query_params = {
             "added_to_platform_from": added_to_platform_from,
             "added_to_platform_to": added_to_platform_to,
@@ -399,21 +374,19 @@ Retrieve a paginated list of regulatory filings.
             "updated_date_to": updated_date_to,
             "view": view,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/filings/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -421,39 +394,48 @@ Retrieve a paginated list of regulatory filings.
 @mcp.tool()
 async def filings_markdown_retrieve(
     filing_id: int,
+    offset: int = 0,
+    limit: int = 50000
 ) -> str:
     """
     **Access Level Required:** Access to full filing content in Markdown requires a **Level 2** Plan or higher.
 
 ---
 Retrieve the raw processed content of a single filing in Markdown format.
+    
+    NOTE: This tool uses client-side pagination. If the content is cut off, 
+    call this tool again with an increased 'offset'.
 
     Args:
-        filing_id (int): 
+        filing_id (int): The ID of the filing to retrieve.
+        offset (int): Character offset to start reading from (default 0).
+        limit (int): Number of characters to read (default 50,000).
     """
     try:
-        # Separate query params from path params
-        query_params = {
-        }
-        
-        path_params = {
-            "filing_id": filing_id,
-        }
-        
-        # Format the URL with path parameters
+        # 1. Fetch the FULL content (backend does not support range requests)
         url = f"/filings/{filing_id}/markdown/"
-        if path_params:
-            url = url.format(**path_params)
-
-        # Make the raw httpx request
-        response = await client.get(
-            url,
-            params={k: v for k, v in query_params.items() if v is not None}
-        )
+        response = await client.get(url)
         
-        return await format_response(response)
+        if response.status_code != 200:
+             return f"Error: {response.status_code} {response.reason_phrase}\n{response.text}"
+
+        # 2. Get full text and length
+        full_text = response.text
+        total_length = len(full_text)
+        
+        # 3. Slice the text
+        end_index = min(offset + limit, total_length)
+        chunk = full_text[offset:end_index]
+        
+        # 4. Construct a helpful status header for the LLM
+        header = f"--- MARKDOWN CONTENT (Chars {offset} to {end_index} of {total_length}) ---\n"
+        if end_index < total_length:
+            header += f"--- WARNING: Content truncated. Call this tool again with offset={end_index} to continue. ---\n"
+        
+        return header + "\n" + chunk
+
     except Exception as e:
-        return f"Error calling API: {e}"
+        return f"Error retrieving markdown: {e}"
 
 @mcp.tool()
 async def filings_retrieve(
@@ -469,25 +451,22 @@ Retrieve detailed information for a single filing by its ID.
         id (int): A unique integer value identifying this filing.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/filings/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -522,7 +501,6 @@ Retrieve a paginated list of ISIC Classes.
         sector_code (Optional[str]): Filter by great-grandparent ISIC Section code (e.g., A)
     """
     try:
-        # Separate query params from path params
         query_params = {
             "code": code,
             "code__iexact": code__iexact,
@@ -534,21 +512,19 @@ Retrieve a paginated list of ISIC Classes.
             "page_size": page_size,
             "sector_code": sector_code,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/isic-classes/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -567,25 +543,22 @@ Retrieve details for a specific ISIC Class by its ID.
         id (int): A unique integer value identifying this sub industry.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/isic-classes/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -616,7 +589,6 @@ Retrieve a paginated list of ISIC Divisions.
         sector_code (Optional[str]): Filter by parent ISIC Section code (e.g., A)
     """
     try:
-        # Separate query params from path params
         query_params = {
             "code": code,
             "code__iexact": code__iexact,
@@ -626,21 +598,19 @@ Retrieve a paginated list of ISIC Divisions.
             "page_size": page_size,
             "sector_code": sector_code,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/isic-divisions/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -659,25 +629,22 @@ Retrieve details for a specific ISIC Division by its ID.
         id (int): A unique integer value identifying this industry group.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/isic-divisions/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -710,7 +677,6 @@ Retrieve a paginated list of ISIC Groups.
         sector_code (Optional[str]): Filter by grandparent ISIC Section code (e.g., A)
     """
     try:
-        # Separate query params from path params
         query_params = {
             "code": code,
             "code__iexact": code__iexact,
@@ -721,21 +687,19 @@ Retrieve a paginated list of ISIC Groups.
             "page_size": page_size,
             "sector_code": sector_code,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/isic-groups/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -754,25 +718,22 @@ Retrieve details for a specific ISIC Group by its ID.
         id (int): A unique integer value identifying this industry.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/isic-groups/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -801,7 +762,6 @@ Retrieve a paginated list of ISIC Sections.
         page_size (Optional[int]): Number of results to return per page.
     """
     try:
-        # Separate query params from path params
         query_params = {
             "code": code,
             "code__iexact": code__iexact,
@@ -810,21 +770,19 @@ Retrieve a paginated list of ISIC Sections.
             "page": page,
             "page_size": page_size,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/isic-sections/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -843,25 +801,22 @@ Retrieve details for a specific ISIC Section by its ID.
         id (int): A unique integer value identifying this sector.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/isic-sections/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -882,26 +837,23 @@ Retrieve a list of all supported languages for filings.
         page_size (Optional[int]): Number of results to return per page.
     """
     try:
-        # Separate query params from path params
         query_params = {
             "page": page,
             "page_size": page_size,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/languages/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -920,25 +872,22 @@ Retrieve details for a specific language by its ID.
         id (int): A unique integer value identifying this Language.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/languages/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -959,26 +908,23 @@ async def schema_retrieve(
         lang (Optional[str]): 
     """
     try:
-        # Separate query params from path params
         query_params = {
             "format": format,
             "lang": lang,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/schema/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -999,26 +945,23 @@ Retrieve a paginated list of all available data sources.
         page_size (Optional[int]): Number of results to return per page.
     """
     try:
-        # Separate query params from path params
         query_params = {
             "page": page,
             "page_size": page_size,
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/sources/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -1037,25 +980,22 @@ Retrieve details for a specific data source by its ID.
         id (int): A unique integer value identifying this source.
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "id": id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/sources/{id}/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -1072,24 +1012,21 @@ Fetches all companies currently in the authenticated user's watchlist.
     Args:
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
         }
-        
-        # Format the URL with path parameters
+
         url = f"/watchlist/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -1105,25 +1042,22 @@ async def downloader_jobs_status_retrieve(
         job_id (str): 
     """
     try:
-        # Separate query params from path params
         query_params = {
         }
-        
+
         path_params = {
             "job_id": job_id,
         }
-        
-        # Format the URL with path parameters
+
         url = f"/downloader/jobs/{job_id}/status/"
         if path_params:
             url = url.format(**path_params)
 
-        # Make the raw httpx request
         response = await client.get(
             url,
             params={k: v for k, v in query_params.items() if v is not None}
         )
-        
+
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
