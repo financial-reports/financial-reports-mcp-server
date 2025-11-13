@@ -18,7 +18,6 @@ The recommended way to run this server is with Docker.
 
 From the root of this repository, build the Docker image. We use `--no-cache` to ensure the latest source code is always used, bypassing any stale layers.
 
-We use --no-cache to ensure the latest source code is used
 ```
 docker build --no-cache -t financial-reports-mcp .
 ```
