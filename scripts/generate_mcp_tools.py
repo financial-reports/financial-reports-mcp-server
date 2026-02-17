@@ -5,11 +5,10 @@ import re
 from pathlib import Path
 import json
 import asyncio
+import sys
 
 SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
-
-# --- TEMPLATE START ---
 
 FILE_HEADER_TEMPLATE = """\"\"\"
 AUTO-GENERATED FILE by scripts/generate_mcp_tools.py
@@ -29,7 +28,6 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
 if not API_KEY:
     raise ValueError("API_KEY environment variable not set.")
 
-# Shared client setup
 headers = {
     'X-API-Key': API_KEY,
     'User-Agent': 'FinancialReports-MCP-Server/1.0'
@@ -50,16 +48,13 @@ async def format_response(response: httpx.Response) -> str:
         response.raise_for_status()
         data = response.json()
         json_string = json.dumps(data, indent=2)
-        return f\"\"\"```json
-{json_string}
-```\"\"\"
+        return f\"\"\"```json\n{json_string}\n```\"\"\"
     except httpx.HTTPStatusError as e:
         return f"Error: {e.response.status_code} {e.response.reason_phrase}\\nBody: {e.response.text}"
     except Exception as e:
         return f"Error formatting response: {e}"
 """
 
-# Standard template
 TOOL_TEMPLATE = """
 @mcp.tool()
 async def {{ func_name }}(
@@ -102,7 +97,6 @@ async def {{ func_name }}(
         return f"Error calling API: {e}"
 """
 
-# Pagination template (The Fix)
 MARKDOWN_TOOL_TEMPLATE = """
 @mcp.tool()
 async def {{ func_name }}(
@@ -112,8 +106,8 @@ async def {{ func_name }}(
 ) -> str:
     \"\"\"
     {{ description }}
-    
-    NOTE: This tool uses client-side pagination. If the content is cut off, 
+
+    NOTE: This tool uses client-side pagination. If the content is cut off,
     call this tool again with an increased 'offset'.
 
     Args:
@@ -122,33 +116,27 @@ async def {{ func_name }}(
         limit (int): Number of characters to read (default 50,000).
     \"\"\"
     try:
-        # 1. Fetch the FULL content (backend does not support range requests)
         url = f"/filings/{filing_id}/markdown/"
         response = await client.get(url)
-        
+
         if response.status_code != 200:
              return f"Error: {response.status_code} {response.reason_phrase}\\n{response.text}"
 
-        # 2. Get full text and length
         full_text = response.text
         total_length = len(full_text)
-        
-        # 3. Slice the text
+
         end_index = min(offset + limit, total_length)
         chunk = full_text[offset:end_index]
-        
-        # 4. Construct a helpful status header for the LLM
+
         header = f"--- MARKDOWN CONTENT (Chars {offset} to {end_index} of {total_length}) ---\\n"
         if end_index < total_length:
             header += f"--- WARNING: Content truncated. Call this tool again with offset={end_index} to continue. ---\\n"
-        
+
         return header + "\\n" + chunk
 
     except Exception as e:
         return f"Error retrieving markdown: {e}"
 """
-
-# --- TEMPLATE END ---
 
 def get_python_type(schema_type, schema_format=None, is_required=True, default=None):
     py_type = "Any"
@@ -188,8 +176,8 @@ def main():
         response.raise_for_status()
         schema = yaml.safe_load(response.content)
     except Exception as e:
-        print(f"Failed to download or parse schema: {e}")
-        return
+        print(f"Failed to download or parse schema: {e}", file=sys.stderr)
+        sys.exit(1)
 
     env = jinja2.Environment()
     standard_template = env.from_string(TOOL_TEMPLATE)
@@ -256,8 +244,7 @@ def main():
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(generated_code))
-        f.write("\n\n# --- Main entrypoint ---\n")
-        f.write("def main():\n")
+        f.write("\n\ndef main():\n")
         f.write("    try:\n")
         f.write("        mcp.run(transport='stdio')\n")
         f.write("    finally:\n")
