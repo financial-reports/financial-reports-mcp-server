@@ -9,8 +9,7 @@ import sys
 SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
 
-# --- UPDATED HEADER FOR FASTAPI & SSE ---
-# --- UPDATED HEADER FOR FASTAPI & SSE ---
+# --- UPDATED HEADER FOR FASTAPI & SSE WITH CORS ---
 FILE_HEADER_TEMPLATE = """\"\"\"
 AUTO-GENERATED FILE by scripts/generate_mcp_tools.py
 \"\"\"
@@ -23,6 +22,7 @@ import uvicorn
 from typing import Any, Coroutine, Optional
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
@@ -34,6 +34,16 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
 current_token: contextvars.ContextVar[str] = contextvars.ContextVar("current_token")
 
 app = FastAPI(title="FinancialReports MCP Connector")
+
+# --- CORS CONFIGURATION FOR CLAUDE.AI ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://claude.ai"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 security = HTTPBearer()
 sse = SseServerTransport("/message")
 
