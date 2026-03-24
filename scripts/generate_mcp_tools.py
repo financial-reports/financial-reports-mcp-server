@@ -4,41 +4,70 @@ import jinja2
 import re
 from pathlib import Path
 import json
-import asyncio
 import sys
 
 SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
 
+# --- UPDATED HEADER FOR FASTAPI & SSE ---
 FILE_HEADER_TEMPLATE = """\"\"\"
 AUTO-GENERATED FILE by scripts/generate_mcp_tools.py
 \"\"\"
 import os
-from typing import Any, Coroutine
-from mcp.server.fastmcp import FastMCP
 import httpx
 import json
 import asyncio
+import contextvars
+import uvicorn
+from typing import Any, Coroutine, Optional
+from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sse_starlette.sse import EventSourceResponse
+from mcp.server.fastmcp import FastMCP
+from mcp.server.sse import SseServerTransport
 
 mcp = FastMCP("financial-reports")
 
-API_KEY = os.environ.get("API_KEY")
+# Extract the underlying server object to attach our custom SSE transport
+_mcp_server = getattr(mcp, '_mcp_server', None) or getattr(mcp, '_server')
+
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
 
-if not API_KEY:
-    raise ValueError("API_KEY environment variable not set.")
+# We use ContextVars to securely pass the token from the FastAPI request into the FastMCP tool context
+current_token: contextvars.ContextVar[str] = contextvars.ContextVar("current_token")
 
-headers = {
-    'X-API-Key': API_KEY,
-    'User-Agent': 'FinancialReports-MCP-Server/1.0'
-}
+app = FastAPI(title="FinancialReports MCP Connector")
+security = HTTPBearer()
+sse = SseServerTransport("/message")
 
-client = httpx.AsyncClient(
-    base_url=API_BASE_URL,
-    headers=headers,
-    verify=False,
-    timeout=60.0
-)
+async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if not credentials or not credentials.credentials:
+        raise HTTPException(status_code=401, detail="Missing Bearer Token")
+    return credentials.credentials
+
+@app.get("/sse")
+async def handle_sse(request: Request, token: str = Depends(verify_token)):
+    async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+        await _mcp_server.run(streams[0], streams[1], _mcp_server.create_initialization_options())
+
+@app.post("/message")
+async def handle_message(request: Request, token: str = Depends(verify_token)):
+    # Inject the token into the current async context before executing the tool
+    current_token.set(token)
+    await sse.handle_post_message(request.scope, request.receive, request._send)
+
+async def get_client() -> httpx.AsyncClient:
+    token = current_token.get()
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'User-Agent': 'FinancialReports-MCP-Server/2.0'
+    }
+    return httpx.AsyncClient(
+        base_url=API_BASE_URL,
+        headers=headers,
+        verify=False,
+        timeout=60.0
+    )
 """
 
 FUNCTION_DEFINITIONS = """
@@ -48,13 +77,14 @@ async def format_response(response: httpx.Response) -> str:
         response.raise_for_status()
         data = response.json()
         json_string = json.dumps(data, indent=2)
-        return f\"\"\"```json\n{json_string}\n```\"\"\"
+        return f\"\"\"```json\\n{json_string}\\n```\"\"\"
     except httpx.HTTPStatusError as e:
         return f"Error: {e.response.status_code} {e.response.reason_phrase}\\nBody: {e.response.text}"
     except Exception as e:
         return f"Error formatting response: {e}"
 """
 
+# --- UPDATED TOOL TEMPLATES TO USE GET_CLIENT() ---
 TOOL_TEMPLATE = """
 @mcp.tool()
 async def {{ func_name }}(
@@ -64,11 +94,6 @@ async def {{ func_name }}(
 ) -> str:
     \"\"\"
     {{ description }}
-
-    Args:
-    {%- for param in params %}
-        {{ param.name }} ({{ param.py_type_str }}): {{ param.description }}
-    {%- endfor %}
     \"\"\"
     try:
         query_params = {
@@ -76,22 +101,20 @@ async def {{ func_name }}(
             "{{ param.name }}": {{ param.name }},
             {%- endfor %}
         }
-
         path_params = {
             {%- for param in params if param.is_path %}
             "{{ param.name }}": {{ param.name }},
             {%- endfor %}
         }
-
         url = f"{{ path }}"
         if path_params:
             url = url.format(**path_params)
 
-        response = await client.get(
-            url,
-            params={k: v for k, v in query_params.items() if v is not None}
-        )
-
+        async with await get_client() as client:
+            response = await client.get(
+                url,
+                params={k: v for k, v in query_params.items() if v is not None}
+            )
         return await format_response(response)
     except Exception as e:
         return f"Error calling API: {e}"
@@ -106,25 +129,17 @@ async def {{ func_name }}(
 ) -> str:
     \"\"\"
     {{ description }}
-
-    NOTE: This tool uses client-side pagination. If the content is cut off,
-    call this tool again with an increased 'offset'.
-
-    Args:
-        filing_id (int): The ID of the filing to retrieve.
-        offset (int): Character offset to start reading from (default 0).
-        limit (int): Number of characters to read (default 50,000).
     \"\"\"
     try:
         url = f"/filings/{filing_id}/markdown/"
-        response = await client.get(url)
+        async with await get_client() as client:
+            response = await client.get(url)
 
         if response.status_code != 200:
              return f"Error: {response.status_code} {response.reason_phrase}\\n{response.text}"
 
         full_text = response.text
         total_length = len(full_text)
-
         end_index = min(offset + limit, total_length)
         chunk = full_text[offset:end_index]
 
@@ -133,7 +148,6 @@ async def {{ func_name }}(
             header += f"--- WARNING: Content truncated. Call this tool again with offset={end_index} to continue. ---\\n"
 
         return header + "\\n" + chunk
-
     except Exception as e:
         return f"Error retrieving markdown: {e}"
 """
@@ -200,7 +214,6 @@ def main():
         formatted_path = re.sub(r'\{([^}]+)\}', r'{\1}', path)
 
         if func_name == "filings_markdown_retrieve":
-            print(f"Generating SPECIAL handling for: {func_name}")
             tool_context = {
                 "func_name": func_name,
                 "description": description,
@@ -239,21 +252,13 @@ def main():
             "params": params,
             "path": formatted_path
         }
-
         generated_code.append(standard_template.render(tool_context))
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(generated_code))
-        f.write("\n\ndef main():\n")
-        f.write("    try:\n")
-        f.write("        mcp.run(transport='stdio')\n")
-        f.write("    finally:\n")
-        f.write("        try:\n")
-        f.write("            asyncio.run(client.aclose())\n")
-        f.write("        except Exception as e:\n")
-        f.write("            print(f\"Error closing httpx client: {e}\")\n\n")
-        f.write("if __name__ == \"__main__\":\n")
-        f.write("    main()\n")
+        # --- UPDATED ENTRYPOINT TO RUN UVICORN INSTEAD OF STDIO ---
+        f.write("\n\nif __name__ == \"__main__\":\n")
+        f.write("    uvicorn.run(\"financial_reports_mcp:app\", host=\"0.0.0.0\", port=8000)\n")
 
     print(f"Successfully generated MCP server tools at: {OUTPUT_FILE}")
 

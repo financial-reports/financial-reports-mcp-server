@@ -16,6 +16,9 @@ RUN chmod +x entrypoint.sh
 USER appuser
 ENV PATH="/home/appuser/venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
-ENV MCP_TRANSPORT=stdio
+
+EXPOSE 8000
+
 ENTRYPOINT ["./entrypoint.sh"]
-CMD ["python", "-m", "src.financial_reports_mcp"]
+# Run the FastAPI app with uvicorn via the generated script module
+CMD ["uvicorn", "src.financial_reports_mcp:app", "--host", "0.0.0.0", "--port", "8000"]
