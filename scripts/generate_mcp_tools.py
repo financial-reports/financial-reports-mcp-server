@@ -9,7 +9,7 @@ import sys
 SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
 
-# --- UPDATED HEADER FOR FASTAPI & SSE WITH CORS ---
+# --- UPDATED HEADER FOR FASTAPI & SSE ---
 FILE_HEADER_TEMPLATE = """\"\"\"
 AUTO-GENERATED FILE by scripts/generate_mcp_tools.py
 \"\"\"
@@ -35,16 +35,15 @@ current_token: contextvars.ContextVar[str] = contextvars.ContextVar("current_tok
 
 app = FastAPI(title="FinancialReports MCP Connector")
 
-# --- CORS CONFIGURATION FOR CLAUDE.AI ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://claude.ai"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 sse = SseServerTransport("/message")
 
 async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
@@ -52,11 +51,12 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
         raise HTTPException(status_code=401, detail="Missing Bearer Token")
     return credentials.credentials
 
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
+@app.get("/")
+async def root():
+    return {"status": "FinancialReports MCP Server is running!"}
 
 @app.get("/.well-known/oauth-authorization-server")
+@app.get("/sse/.well-known/oauth-authorization-server")
 async def oauth_metadata():
     return {
         "issuer": "https://auth.financialreports.eu",
@@ -69,12 +69,14 @@ async def oauth_metadata():
     }
 
 @app.get("/sse")
-async def handle_sse(request: Request, token: str = Depends(verify_token)):
+async def handle_sse(request: Request):
+    # NO TOKEN REQUIRED HERE: Claude pings this to verify the server exists BEFORE OAuth
     async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
         await _mcp_server.run(streams[0], streams[1], _mcp_server.create_initialization_options())
 
 @app.post("/message")
 async def handle_message(request: Request, token: str = Depends(verify_token)):
+    # TOKEN STRICTLY REQUIRED: This is where Claude actually executes the tools
     current_token.set(token)
     await sse.handle_post_message(request.scope, request.receive, request._send)
 
