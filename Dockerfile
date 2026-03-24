@@ -21,4 +21,4 @@ EXPOSE 8000
 
 ENTRYPOINT ["./entrypoint.sh"]
 # Run the FastAPI app with uvicorn via the generated script module
-CMD ["uvicorn", "src.financial_reports_mcp:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "uvicorn", "src.financial_reports_mcp:app", "--host", "0.0.0.0", "--port", "8000"]
