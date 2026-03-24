@@ -9,7 +9,7 @@ import sys
 SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
 
-# --- UPDATED HEADER FOR FASTAPI & SSE ---
+# --- FINAL HEADER WITH FIXED ASYNC CONTEXT PROPAGATION ---
 FILE_HEADER_TEMPLATE = """\"\"\"
 AUTO-GENERATED FILE by scripts/generate_mcp_tools.py
 \"\"\"
@@ -31,7 +31,9 @@ mcp = FastMCP("financial-reports")
 
 _mcp_server = getattr(mcp, '_mcp_server', None) or getattr(mcp, '_server')
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
-current_token: contextvars.ContextVar[str] = contextvars.ContextVar("current_token")
+
+# Set a default value to prevent hard LookupErrors
+current_token: contextvars.ContextVar[str] = contextvars.ContextVar("current_token", default="")
 
 app = FastAPI(title="FinancialReports MCP Connector")
 
@@ -46,14 +48,9 @@ app.add_middleware(
 security = HTTPBearer(auto_error=False)
 sse = SseServerTransport("/message")
 
-async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    if not credentials or not credentials.credentials:
-        raise HTTPException(status_code=401, detail="Missing Bearer Token")
-    return credentials.credentials
-
 @app.get("/")
 async def root():
-    return {"status": "FinancialReports MCP Server is running!"}
+    return {"status": "ok", "message": "FinancialReports MCP Server is running!"}
 
 @app.get("/.well-known/oauth-authorization-server")
 @app.get("/sse/.well-known/oauth-authorization-server")
@@ -70,18 +67,27 @@ async def oauth_metadata():
 
 @app.get("/sse")
 async def handle_sse(request: Request):
-    # NO TOKEN REQUIRED HERE: Claude pings this to verify the server exists BEFORE OAuth
+    # CRITICAL FIX: We must capture the token in the GET task, because this is the task that executes the tools!
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        current_token.set(auth_header.split(" ")[1])
+        
     async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
         await _mcp_server.run(streams[0], streams[1], _mcp_server.create_initialization_options())
 
 @app.post("/message")
-async def handle_message(request: Request, token: str = Depends(verify_token)):
-    # TOKEN STRICTLY REQUIRED: This is where Claude actually executes the tools
-    current_token.set(token)
+async def handle_message(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        current_token.set(auth_header.split(" ")[1])
+        
     await sse.handle_post_message(request.scope, request.receive, request._send)
 
 async def get_client() -> httpx.AsyncClient:
     token = current_token.get()
+    if not token:
+        raise ValueError("Missing OAuth Bearer Token in context. Please re-authenticate Claude.")
+    
     headers = {
         'Authorization': f'Bearer {token}',
         'User-Agent': 'FinancialReports-MCP-Server/2.0'
