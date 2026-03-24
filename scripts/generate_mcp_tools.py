@@ -10,6 +10,7 @@ SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
 
 # --- UPDATED HEADER FOR FASTAPI & SSE ---
+# --- UPDATED HEADER FOR FASTAPI & SSE ---
 FILE_HEADER_TEMPLATE = """\"\"\"
 AUTO-GENERATED FILE by scripts/generate_mcp_tools.py
 \"\"\"
@@ -28,12 +29,8 @@ from mcp.server.sse import SseServerTransport
 
 mcp = FastMCP("financial-reports")
 
-# Extract the underlying server object to attach our custom SSE transport
 _mcp_server = getattr(mcp, '_mcp_server', None) or getattr(mcp, '_server')
-
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
-
-# We use ContextVars to securely pass the token from the FastAPI request into the FastMCP tool context
 current_token: contextvars.ContextVar[str] = contextvars.ContextVar("current_token")
 
 app = FastAPI(title="FinancialReports MCP Connector")
@@ -45,6 +42,22 @@ async def verify_token(credentials: HTTPAuthorizationCredentials = Depends(secur
         raise HTTPException(status_code=401, detail="Missing Bearer Token")
     return credentials.credentials
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
+@app.get("/.well-known/oauth-authorization-server")
+async def oauth_metadata():
+    return {
+        "issuer": "https://auth.financialreports.eu",
+        "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
+        "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
+        "scopes_supported": ["openid", "profile", "email"],
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "code_challenge_methods_supported": ["S256"]
+    }
+
 @app.get("/sse")
 async def handle_sse(request: Request, token: str = Depends(verify_token)):
     async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
@@ -52,7 +65,6 @@ async def handle_sse(request: Request, token: str = Depends(verify_token)):
 
 @app.post("/message")
 async def handle_message(request: Request, token: str = Depends(verify_token)):
-    # Inject the token into the current async context before executing the tool
     current_token.set(token)
     await sse.handle_post_message(request.scope, request.receive, request._send)
 
