@@ -62,7 +62,7 @@ from fastapi.responses import RedirectResponse
 async def authorize(request: Request):
     params = dict(request.query_params)
     params["client_id"] = "1rlr4m72je83ug0s0catddgenj"
-    params["scope"] = "openid profile email https://mcp.financialfilings.com/claudeai"
+    params["scope"] = "openid profile email"
     params.pop("resource", None)
     from urllib.parse import urlencode
     cognito_url = f"https://financialreports-eu.auth.eu-central-1.amazoncognito.com/oauth2/authorize?{urlencode(params)}"
