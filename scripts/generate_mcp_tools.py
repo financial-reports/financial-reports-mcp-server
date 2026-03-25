@@ -56,6 +56,17 @@ app.add_middleware(
 async def root():
     return {"status": "ok", "message": "FinancialReports MCP Server is running!"}
 
+from fastapi.responses import RedirectResponse
+
+@app.get("/authorize")
+async def authorize(request: Request):
+    params = dict(request.query_params)
+    params["client_id"] = "1rlr4m72je83ug0s0catddgenj"
+    params["scope"] = "openid profile email https://mcp.financialfilings.com/claudeai"
+    from urllib.parse import urlencode
+    cognito_url = f"https://auth.financialreports.eu/oauth2/authorize?{urlencode(params)}"
+    return RedirectResponse(url=cognito_url)
+
 @app.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource():
     return {
@@ -69,10 +80,10 @@ async def oauth_protected_resource():
 async def oauth_metadata():
     return {
         "issuer": "https://auth.financialreports.eu/",
-        "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
+        "authorization_endpoint": "https://mcp.financialfilings.com/authorize",
         "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
         "registration_endpoint": "https://mcp.financialfilings.com/register",
-        "scopes_supported": ["openid", "profile", "email"],
+        "scopes_supported": ["openid", "profile", "email", "https://mcp.financialfilings.com/claudeai"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "code_challenge_methods_supported": ["S256"]
