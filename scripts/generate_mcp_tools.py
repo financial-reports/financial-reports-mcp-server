@@ -49,6 +49,16 @@ sse = SseServerTransport("/message")
 async def root():
     return {"status": "ok", "message": "FinancialReports MCP Server is running!"}
 
+@app.get("/.well-known/oauth-protected-resource")
+@app.get("/sse/.well-known/oauth-protected-resource")
+async def oauth_protected_resource():
+    return {
+        "resource": "https://mcp.financialfilings.com",
+        "authorization_servers": ["https://mcp.financialfilings.com"],
+        "bearer_methods_supported": ["header"],
+        "resource_documentation": "https://financialreports.eu/api/docs/"
+    }
+
 @app.get("/.well-known/oauth-authorization-server")
 @app.get("/sse/.well-known/oauth-authorization-server")
 async def oauth_metadata():
