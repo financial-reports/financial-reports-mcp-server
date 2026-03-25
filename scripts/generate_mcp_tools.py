@@ -9,8 +9,6 @@ import sys
 SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
 
-# --- FINAL HEADER WITH FIXED ASYNC CONTEXT PROPAGATION ---
-# --- FINAL HEADER WITH ASYNC BOUNDARY BYPASS ---
 FILE_HEADER_TEMPLATE = """\"\"\"
 AUTO-GENERATED FILE by scripts/generate_mcp_tools.py
 \"\"\"
@@ -22,6 +20,7 @@ import uvicorn
 from typing import Any, Coroutine, Optional
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.sse import SseServerTransport
@@ -30,8 +29,8 @@ mcp = FastMCP("financial-reports")
 
 _mcp_server = getattr(mcp, '_mcp_server', None) or getattr(mcp, '_server')
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
+VERIFY_URL = "https://api.financialreports.eu/api/mcp/verify/"
 
-# The Sledgehammer Fix: Bypass strict asyncio ContextVar isolation completely.
 LATEST_TOKEN = ""
 
 app = FastAPI(title="FinancialReports MCP Connector")
@@ -54,7 +53,7 @@ async def root():
 @app.get("/sse/.well-known/oauth-authorization-server")
 async def oauth_metadata():
     return {
-        "issuer": "https://auth.financialreports.eu",
+        "issuer": "https://mcp.financialfilings.com",
         "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
         "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
         "scopes_supported": ["openid", "profile", "email"],
@@ -63,13 +62,41 @@ async def oauth_metadata():
         "code_challenge_methods_supported": ["S256"]
     }
 
+async def verify_subscription(token: str) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                VERIFY_URL,
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            return response.status_code == 200
+    except Exception:
+        return False
+
 @app.get("/sse")
 async def handle_sse(request: Request):
     global LATEST_TOKEN
     auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        LATEST_TOKEN = auth_header.split(" ")[1]
-        
+
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Authentication required."},
+            headers={
+                "WWW-Authenticate": 'Bearer realm="FinancialReports MCP", resource_metadata="https://mcp.financialfilings.com/.well-known/oauth-authorization-server"'
+            }
+        )
+
+    token = auth_header.split(" ")[1]
+
+    if not await verify_subscription(token):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Access denied. An active Analyst or Enterprise subscription is required to use the FinancialReports MCP."}
+        )
+
+    LATEST_TOKEN = token
+
     async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
         await _mcp_server.run(streams[0], streams[1], _mcp_server.create_initialization_options())
 
@@ -79,14 +106,14 @@ async def handle_message(request: Request):
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         LATEST_TOKEN = auth_header.split(" ")[1]
-        
+
     await sse.handle_post_message(request.scope, request.receive, request._send)
 
 async def get_client() -> httpx.AsyncClient:
     global LATEST_TOKEN
     if not LATEST_TOKEN:
-        raise ValueError("Missing OAuth Bearer Token. Please re-authenticate Claude.")
-    
+        raise ValueError("Missing OAuth Bearer Token. Please re-authenticate.")
+
     headers = {
         'Authorization': f'Bearer {LATEST_TOKEN}',
         'User-Agent': 'FinancialReports-MCP-Server/4.0'
@@ -113,7 +140,6 @@ async def format_response(response: httpx.Response) -> str:
         return f"Error formatting response: {e}"
 """
 
-# --- UPDATED TOOL TEMPLATES TO USE GET_CLIENT() ---
 TOOL_TEMPLATE = """
 @mcp.tool()
 async def {{ func_name }}(
@@ -285,7 +311,6 @@ def main():
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(generated_code))
-        # --- UPDATED ENTRYPOINT TO RUN UVICORN INSTEAD OF STDIO ---
         f.write("\n\nif __name__ == \"__main__\":\n")
         f.write("    uvicorn.run(\"financial_reports_mcp:app\", host=\"0.0.0.0\", port=8000)\n")
 
