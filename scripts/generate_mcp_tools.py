@@ -18,20 +18,17 @@ import json
 import asyncio
 import uvicorn
 from typing import Any, Coroutine, Optional
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sse_starlette.sse import EventSourceResponse
 from mcp.server.fastmcp import FastMCP
-from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
 mcp = FastMCP("financial-reports")
 
 _mcp_server = getattr(mcp, '_mcp_server', None) or getattr(mcp, '_server')
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
 VERIFY_URL = "https://api.financialreports.eu/api/mcp/verify/"
-
-LATEST_TOKEN = ""
 
 app = FastAPI(title="FinancialReports MCP Connector")
 
@@ -43,27 +40,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-sse = SseServerTransport("/message")
+session_manager = StreamableHTTPSessionManager(
+    app=_mcp_server,
+    event_store=None,
+    json_response=False,
+    stateless=True,
+)
+
+@app.on_event("startup")
+async def startup():
+    await session_manager.run()
 
 @app.get("/")
 async def root():
     return {"status": "ok", "message": "FinancialReports MCP Server is running!"}
 
 @app.get("/.well-known/oauth-protected-resource")
-@app.get("/sse/.well-known/oauth-protected-resource")
 async def oauth_protected_resource():
     return {
         "resource": "https://mcp.financialfilings.com",
-        "authorization_servers": ["https://mcp.financialfilings.com"],
+        "authorization_servers": ["https://auth.financialreports.eu/"],
         "bearer_methods_supported": ["header"],
         "resource_documentation": "https://financialreports.eu/api/docs/"
     }
 
 @app.get("/.well-known/oauth-authorization-server")
-@app.get("/sse/.well-known/oauth-authorization-server")
 async def oauth_metadata():
     return {
-        "issuer": "https://mcp.financialfilings.com",
+        "issuer": "https://auth.financialreports.eu/",
         "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
         "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
         "registration_endpoint": "https://mcp.financialfilings.com/register",
@@ -98,9 +102,9 @@ async def verify_subscription(token: str) -> bool:
         logger.warning(f"VERIFY EXCEPTION: {e}")
         return False
 
-@app.get("/sse")
-async def handle_sse(request: Request):
-    global LATEST_TOKEN
+@app.post("/mcp")
+@app.get("/mcp")
+async def handle_mcp(request: Request):
     auth_header = request.headers.get("Authorization")
 
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -108,7 +112,7 @@ async def handle_sse(request: Request):
             status_code=401,
             content={"detail": "Authentication required."},
             headers={
-                "WWW-Authenticate": 'Bearer realm="FinancialReports MCP", resource_metadata="https://mcp.financialfilings.com/.well-known/oauth-authorization-server"'
+                "WWW-Authenticate": 'Bearer realm="FinancialReports MCP", resource_metadata="https://mcp.financialfilings.com/.well-known/oauth-protected-resource"'
             }
         )
 
@@ -120,33 +124,25 @@ async def handle_sse(request: Request):
             content={"detail": "Access denied. An active Analyst or Enterprise subscription is required to use the FinancialReports MCP."}
         )
 
-    LATEST_TOKEN = token
+    request.state.token = token
+    return await session_manager.handle_request(request)
 
-    async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
-        await _mcp_server.run(streams[0], streams[1], _mcp_server.create_initialization_options())
+async def get_token_from_request() -> str:
+    return ""
 
-@app.post("/message")
-async def handle_message(request: Request):
-    global LATEST_TOKEN
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        LATEST_TOKEN = auth_header.split(" ")[1]
+_token_store: dict[str, str] = {}
 
-    await sse.handle_post_message(request.scope, request.receive, request._send)
-
-async def get_client() -> httpx.AsyncClient:
-    global LATEST_TOKEN
-    if not LATEST_TOKEN:
+async def get_client(token: str) -> httpx.AsyncClient:
+    if not token:
         raise ValueError("Missing OAuth Bearer Token. Please re-authenticate.")
-
     headers = {
-        'Authorization': f'Bearer {LATEST_TOKEN}',
+        'Authorization': f'Bearer {token}',
         'User-Agent': 'FinancialReports-MCP-Server/4.0'
     }
     return httpx.AsyncClient(
         base_url=API_BASE_URL,
         headers=headers,
-        verify=False,
+        verify=True,
         timeout=60.0
     )
 """
@@ -171,6 +167,7 @@ async def {{ func_name }}(
     {%- for param in params %}
     {{ param.name }}: {{ param.py_type }}{{ param.default_val }},
     {%- endfor %}
+    token: str = "",
 ) -> str:
     \"\"\"
     {{ description }}
@@ -190,7 +187,7 @@ async def {{ func_name }}(
         if path_params:
             url = url.format(**path_params)
 
-        async with await get_client() as client:
+        async with await get_client(token) as client:
             response = await client.get(
                 url,
                 params={k: v for k, v in query_params.items() if v is not None}
@@ -205,14 +202,15 @@ MARKDOWN_TOOL_TEMPLATE = """
 async def {{ func_name }}(
     filing_id: int,
     offset: int = 0,
-    limit: int = 50000
+    limit: int = 50000,
+    token: str = "",
 ) -> str:
     \"\"\"
     {{ description }}
     \"\"\"
     try:
         url = f"/filings/{filing_id}/markdown/"
-        async with await get_client() as client:
+        async with await get_client(token) as client:
             response = await client.get(url)
 
         if response.status_code != 200:
