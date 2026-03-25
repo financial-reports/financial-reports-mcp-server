@@ -111,32 +111,46 @@ async def verify_subscription(token: str) -> bool:
         logger.warning(f"VERIFY EXCEPTION: {e}")
         return False
 
-@app.post("/mcp")
-@app.get("/mcp")
-async def handle_mcp(request: Request):
+async def mcp_asgi_app(scope, receive, send):
+    # Only process HTTP/HTTPS requests
+    if scope["type"] != "http":
+        return await session_manager.handle_request(scope, receive, send)
+        
+    request = Request(scope, receive)
     auth_header = request.headers.get("Authorization")
+    
     import logging
     logging.getLogger("mcp_auth").warning(f"MCP_REQUEST: method={request.method} auth_header={'present' if auth_header else 'None'}")
 
     if not auth_header or not auth_header.startswith("Bearer "):
-        return JSONResponse(
+        response = JSONResponse(
             status_code=401,
             content={"detail": "Authentication required."},
             headers={
                 "WWW-Authenticate": 'Bearer realm="FinancialReports MCP", resource_metadata="https://mcp.financialfilings.com/.well-known/oauth-protected-resource"'
             }
         )
+        return await response(scope, receive, send)
 
     token = auth_header.split(" ")[1]
 
     if not await verify_subscription(token):
-        return JSONResponse(
+        response = JSONResponse(
             status_code=403,
             content={"detail": "Access denied. An active Analyst or Enterprise subscription is required to use the FinancialReports MCP."}
         )
+        return await response(scope, receive, send)
 
-    request.state.token = token
-    return await session_manager.handle_request(request)
+    # Attach token to the ASGI scope state
+    if "state" not in scope:
+        scope["state"] = {}
+    scope["state"]["token"] = token
+    
+    # Hand off the verified request to the MCP session manager
+    return await session_manager.handle_request(scope, receive, send)
+
+# Mount the ASGI app directly to the /mcp path
+app.mount("/mcp", mcp_asgi_app)
 
 async def get_client(token: str) -> httpx.AsyncClient:
     if not token:
