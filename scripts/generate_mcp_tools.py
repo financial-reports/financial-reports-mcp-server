@@ -65,7 +65,7 @@ async def authorize(request: Request):
     params["scope"] = "openid profile email https://mcp.financialfilings.com/claudeai"
     params.pop("resource", None)
     from urllib.parse import urlencode
-    cognito_url = f"https://auth.financialreports.eu/oauth2/authorize?{urlencode(params)}"
+    cognito_url = f"https://financialreports-eu.auth.eu-central-1.amazoncognito.com/oauth2/authorize?{urlencode(params)}"
     return RedirectResponse(url=cognito_url)
 
 @app.get("/.well-known/oauth-protected-resource")
