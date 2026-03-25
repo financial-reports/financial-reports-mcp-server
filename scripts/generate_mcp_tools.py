@@ -86,9 +86,11 @@ async def dynamic_client_registration(request: Request):
     return {
         "client_id": "1rlr4m72je83ug0s0catddgenj",
         "client_secret_expires_at": 0,
-        "grant_types": ["authorization_code"],
+        "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
-        "token_endpoint_auth_method": "none"
+        "redirect_uris": body.get("redirect_uris", []),
+        "token_endpoint_auth_method": "none",
+        "scope": "openid profile email https://mcp.financialfilings.com/claudeai"
     }
 
 async def verify_subscription(token: str) -> bool:
