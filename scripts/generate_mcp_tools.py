@@ -16,14 +16,12 @@ import os
 import httpx
 import json
 import asyncio
-import secrets
 import uvicorn
 from contextlib import asynccontextmanager
 from typing import Any, Coroutine, Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from starlette.middleware.sessions import SessionMiddleware
 from mcp.server.fastmcp import FastMCP
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
@@ -48,13 +46,6 @@ async def lifespan(app: FastAPI):
         yield
 
 app = FastAPI(title="FinancialReports MCP Connector", lifespan=lifespan)
-
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=os.environ.get("SESSION_SECRET", secrets.token_hex(32)),
-    https_only=True,
-    same_site="none",
-)
 
 app.add_middleware(
     CORSMiddleware,
