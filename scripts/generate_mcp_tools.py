@@ -76,7 +76,7 @@ async def oauth_metadata():
 @app.post("/register")
 async def dynamic_client_registration(request: Request):
     return {
-        "client_id": "65k7mqb0kpqrua7aqncsrkuej8",
+        "client_id": "1rlr4m72je83ug0s0catddgenj",
         "client_secret_expires_at": 0,
         "grant_types": ["authorization_code"],
         "response_types": ["code"],
