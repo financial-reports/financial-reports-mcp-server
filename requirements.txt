@@ -9,7 +9,7 @@ certifi==2025.11.12
 cffi==2.0.0
 click==8.3.0
 cryptography==46.0.3
-financial_reports_generated_client==1.3.2
+financial_reports_generated_client==1.4.4
 frozenlist==1.8.0
 h11==0.16.0
 httpcore==1.0.9
