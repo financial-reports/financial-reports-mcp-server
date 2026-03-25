@@ -80,6 +80,9 @@ async def oauth_metadata():
 
 @app.post("/register")
 async def dynamic_client_registration(request: Request):
+    body = await request.json()
+    import logging
+    logging.getLogger("mcp_auth").warning(f"DCR_REQUEST: {body}")
     return {
         "client_id": "1rlr4m72je83ug0s0catddgenj",
         "client_secret_expires_at": 0,
@@ -107,6 +110,8 @@ async def verify_subscription(token: str) -> bool:
 @app.get("/mcp")
 async def handle_mcp(request: Request):
     auth_header = request.headers.get("Authorization")
+    import logging
+    logging.getLogger("mcp_auth").warning(f"MCP_REQUEST: method={request.method} auth_header={auth_header}")
 
     if not auth_header or not auth_header.startswith("Bearer "):
         return JSONResponse(
