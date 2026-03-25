@@ -119,8 +119,13 @@ class MCPAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        # Intercept the exact root path ("/" or "") instead of "/mcp"
         if scope["type"] == "http" and scope["path"] in ["/", ""]:
+            # --- THE FIX STARTS HERE ---
+            # Let CORS preflight requests pass through unauthenticated
+            if scope.get("method") == "OPTIONS":
+                return await self.app(scope, receive, send)
+            # --- THE FIX ENDS HERE ---
+
             request = Request(scope, receive)
             auth_header = request.headers.get("Authorization")
             
@@ -146,7 +151,6 @@ class MCPAuthMiddleware:
                 )
                 return await response(scope, receive, send)
 
-            # Store the token safely in the current async context
             auth_token_var.set(token)
             
             return await session_manager.handle_request(scope, receive, send)
