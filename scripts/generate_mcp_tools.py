@@ -63,7 +63,7 @@ async def root():
 async def oauth_protected_resource():
     return {
         "resource": "https://mcp.financialfilings.com",
-        "authorization_servers": ["https://mcp.financialfilings.com"], # Fixed pointer
+        "authorization_servers": ["https://mcp.financialfilings.com"],
         "bearer_methods_supported": ["header"],
         "resource_documentation": "https://financialreports.eu/api/docs/"
     }
@@ -71,7 +71,7 @@ async def oauth_protected_resource():
 @app.get("/.well-known/oauth-authorization-server")
 async def oauth_metadata():
     return {
-        "issuer": "https://mcp.financialfilings.com", # Fixed pointer
+        "issuer": "https://mcp.financialfilings.com",
         "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
         "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
         "registration_endpoint": "https://mcp.financialfilings.com/register",
@@ -111,46 +111,46 @@ async def verify_subscription(token: str) -> bool:
         logger.warning(f"VERIFY EXCEPTION: {e}")
         return False
 
-async def mcp_asgi_app(scope, receive, send):
-    # Only process HTTP/HTTPS requests
-    if scope["type"] != "http":
-        return await session_manager.handle_request(scope, receive, send)
-        
-    request = Request(scope, receive)
-    auth_header = request.headers.get("Authorization")
-    
-    import logging
-    logging.getLogger("mcp_auth").warning(f"MCP_REQUEST: method={request.method} auth_header={'present' if auth_header else 'None'}")
+class MCPAuthMiddleware:
+    def __init__(self, app):
+        self.app = app
 
-    if not auth_header or not auth_header.startswith("Bearer "):
-        response = JSONResponse(
-            status_code=401,
-            content={"detail": "Authentication required."},
-            headers={
-                "WWW-Authenticate": 'Bearer realm="FinancialReports MCP", resource_metadata="https://mcp.financialfilings.com/.well-known/oauth-protected-resource"'
-            }
-        )
-        return await response(scope, receive, send)
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] in ["/mcp", "/mcp/"]:
+            request = Request(scope, receive)
+            auth_header = request.headers.get("Authorization")
+            
+            import logging
+            logging.getLogger("mcp_auth").warning(f"MCP_REQUEST: method={request.method} auth_header={'present' if auth_header else 'None'}")
 
-    token = auth_header.split(" ")[1]
+            if not auth_header or not auth_header.startswith("Bearer "):
+                response = JSONResponse(
+                    status_code=401,
+                    content={"detail": "Authentication required."},
+                    headers={
+                        "WWW-Authenticate": 'Bearer realm="FinancialReports MCP", resource_metadata="https://mcp.financialfilings.com/.well-known/oauth-protected-resource"'
+                    }
+                )
+                return await response(scope, receive, send)
 
-    if not await verify_subscription(token):
-        response = JSONResponse(
-            status_code=403,
-            content={"detail": "Access denied. An active Analyst or Enterprise subscription is required to use the FinancialReports MCP."}
-        )
-        return await response(scope, receive, send)
+            token = auth_header.split(" ")[1]
 
-    # Attach token to the ASGI scope state
-    if "state" not in scope:
-        scope["state"] = {}
-    scope["state"]["token"] = token
-    
-    # Hand off the verified request to the MCP session manager
-    return await session_manager.handle_request(scope, receive, send)
+            if not await verify_subscription(token):
+                response = JSONResponse(
+                    status_code=403,
+                    content={"detail": "Access denied. An active Analyst or Enterprise subscription is required to use the FinancialReports MCP."}
+                )
+                return await response(scope, receive, send)
 
-# Mount the ASGI app directly to the /mcp path
-app.mount("/mcp", mcp_asgi_app)
+            if "state" not in scope:
+                scope["state"] = {}
+            scope["state"]["token"] = token
+            
+            return await session_manager.handle_request(scope, receive, send)
+            
+        return await self.app(scope, receive, send)
+
+app.add_middleware(MCPAuthMiddleware)
 
 async def get_client(token: str) -> httpx.AsyncClient:
     if not token:
