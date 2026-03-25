@@ -58,8 +58,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def root():
+@app.get("/health")
+async def health():
     return {"status": "ok", "message": "FinancialReports MCP Server is running!"}
 
 @app.get("/.well-known/oauth-protected-resource")
@@ -74,7 +74,8 @@ async def oauth_protected_resource():
 @app.get("/.well-known/oauth-authorization-server")
 async def oauth_metadata():
     return {
-        "issuer": "https://mcp.financialfilings.com",
+        # CRITICAL FIX: Must perfectly match the 'iss' claim inside Cognito's JWTs
+        "issuer": "https://cognito-idp.eu-central-1.amazonaws.com/eu-central-1_1igWLOHh5",
         "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
         "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
         "registration_endpoint": "https://mcp.financialfilings.com/register",
@@ -119,7 +120,8 @@ class MCPAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"] in ["/mcp", "/mcp/"]:
+        # Bind the MCP streaming endpoint to the root URL ("/")
+        if scope["type"] == "http" and scope["path"] in ["/", ""]:
             
             # CORS Preflight Bypass
             if scope.get("method") == "OPTIONS":
@@ -150,9 +152,7 @@ class MCPAuthMiddleware:
                 )
                 return await response(scope, receive, send)
 
-            # Store the token safely in the current async context
             auth_token_var.set(token)
-            
             return await session_manager.handle_request(scope, receive, send)
             
         return await self.app(scope, receive, send)
