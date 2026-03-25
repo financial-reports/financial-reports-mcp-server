@@ -63,6 +63,7 @@ async def authorize(request: Request):
     params = dict(request.query_params)
     params["client_id"] = "1rlr4m72je83ug0s0catddgenj"
     params["scope"] = "openid profile email https://mcp.financialfilings.com/claudeai"
+    params.pop("resource", None)
     from urllib.parse import urlencode
     cognito_url = f"https://auth.financialreports.eu/oauth2/authorize?{urlencode(params)}"
     return RedirectResponse(url=cognito_url)
