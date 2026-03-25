@@ -20,9 +20,9 @@ import secrets
 import uvicorn
 from contextlib import asynccontextmanager
 from typing import Any, Coroutine, Optional
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse
 from starlette.middleware.sessions import SessionMiddleware
 from mcp.server.fastmcp import FastMCP
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -34,8 +34,6 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
 VERIFY_URL = "https://api.financialreports.eu/api/mcp/verify/"
 COGNITO_CLIENT_ID = "1rlr4m72je83ug0s0catddgenj"
 COGNITO_REGION = "eu-central-1"
-
-_code_store: dict[str, str] = {}
 
 session_manager = StreamableHTTPSessionManager(
     app=_mcp_server,
@@ -74,7 +72,7 @@ async def root():
 async def oauth_protected_resource():
     return {
         "resource": "https://mcp.financialfilings.com",
-        "authorization_servers": ["https://mcp.financialfilings.com"],
+        "authorization_servers": ["https://auth.financialreports.eu/"],
         "bearer_methods_supported": ["header"],
         "resource_documentation": "https://financialreports.eu/api/docs/"
     }
@@ -82,13 +80,13 @@ async def oauth_protected_resource():
 @app.get("/.well-known/oauth-authorization-server")
 async def oauth_metadata():
     return {
-        "issuer": "https://mcp.financialfilings.com",
-        "authorization_endpoint": "https://mcp.financialfilings.com/authorize",
-        "token_endpoint": "https://mcp.financialfilings.com/token",
+        "issuer": "https://auth.financialreports.eu/",
+        "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
+        "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
         "registration_endpoint": "https://mcp.financialfilings.com/register",
-        "scopes_supported": ["openid", "profile", "email"],
+        "scopes_supported": ["openid", "profile", "email", "https://mcp.financialfilings.com/claudeai"],
         "response_types_supported": ["code"],
-        "grant_types_supported": ["authorization_code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"]
     }
 
@@ -104,131 +102,8 @@ async def dynamic_client_registration(request: Request):
         "response_types": ["code"],
         "redirect_uris": body.get("redirect_uris", []),
         "token_endpoint_auth_method": "none",
-        "scope": "openid profile email"
+        "scope": "openid profile email https://mcp.financialfilings.com/claudeai"
     }
-
-@app.get("/authorize")
-async def authorize(request: Request):
-    params = dict(request.query_params)
-    request.session["oauth_params"] = params
-    return RedirectResponse(url="/login", status_code=302)
-
-@app.get("/login")
-async def login_page(request: Request):
-    error = request.query_params.get("error", "")
-    error_html = f'<div class="error">{error}</div>' if error else ""
-    return HTMLResponse(f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>FinancialReports - Sign In</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f7f7f7; display: flex; align-items: center; justify-content: center; min-height: 100vh; }}
-        .card {{ background: white; border-radius: 10px; padding: 44px 40px; width: 100%; max-width: 400px; box-shadow: 0 1px 4px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06); }}
-        .logo {{ font-size: 18px; font-weight: 700; color: #111; margin-bottom: 6px; letter-spacing: -0.3px; }}
-        .subtitle {{ color: #888; font-size: 13px; margin-bottom: 32px; }}
-        label {{ display: block; font-size: 13px; font-weight: 500; color: #444; margin-bottom: 5px; }}
-        input {{ width: 100%; padding: 10px 12px; border: 1.5px solid #e5e5e5; border-radius: 7px; font-size: 14px; margin-bottom: 14px; outline: none; transition: border-color 0.15s; background: #fafafa; }}
-        input:focus {{ border-color: #111; background: white; }}
-        button {{ width: 100%; padding: 11px; background: #111; color: white; border: none; border-radius: 7px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.15s; margin-top: 4px; }}
-        button:hover {{ background: #333; }}
-        .error {{ color: #dc2626; font-size: 13px; margin-bottom: 16px; padding: 10px 12px; background: #fef2f2; border-radius: 6px; border: 1px solid #fecaca; }}
-        .footer {{ margin-top: 20px; text-align: center; font-size: 12px; color: #aaa; }}
-    </style>
-</head>
-<body>
-    <div class="card">
-        <div class="logo">FinancialReports</div>
-        <div class="subtitle">Sign in to connect with Claude</div>
-        {error_html}
-        <form method="POST" action="/login">
-            <label>Email</label>
-            <input type="email" name="email" required autofocus placeholder="you@example.com" autocomplete="email">
-            <label>Password</label>
-            <input type="password" name="password" required placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;" autocomplete="current-password">
-            <button type="submit">Sign in</button>
-        </form>
-        <div class="footer">FinancialReports &mdash; <a href="https://financialreports.eu" style="color:#aaa;">financialreports.eu</a></div>
-    </div>
-</body>
-</html>""")
-
-@app.post("/login")
-async def login_post(request: Request, email: str = Form(...), password: str = Form(...)):
-    import boto3
-    import logging
-    from urllib.parse import quote
-    logger = logging.getLogger("mcp_auth")
-
-    oauth_params = request.session.get("oauth_params", {})
-    redirect_uri = oauth_params.get("redirect_uri", "")
-    state = oauth_params.get("state", "")
-
-    try:
-        cognito = boto3.client("cognito-idp", region_name=COGNITO_REGION)
-        response = cognito.initiate_auth(
-            ClientId=COGNITO_CLIENT_ID,
-            AuthFlow="USER_PASSWORD_AUTH",
-            AuthParameters={
-                "USERNAME": email,
-                "PASSWORD": password,
-            }
-        )
-
-        auth_result = response.get("AuthenticationResult")
-        if not auth_result:
-            challenge = response.get("ChallengeName", "Unknown challenge")
-            return RedirectResponse(url=f"/login?error={quote(f'Login challenge not supported: {challenge}')}", status_code=303)
-
-        access_token = auth_result["AccessToken"]
-        logger.warning(f"LOGIN_SUCCESS: user={email}")
-
-        if not await verify_subscription(access_token):
-            return RedirectResponse(
-                url=f"/login?error={quote('Access denied. An active Analyst or Enterprise subscription is required to use the FinancialReports MCP.')}",
-                status_code=303
-            )
-
-        code = secrets.token_urlsafe(32)
-        _code_store[code] = access_token
-        logger.warning(f"CODE_ISSUED: code_prefix={code[:10]} redirect_uri={redirect_uri}")
-
-        callback_url = f"{redirect_uri}?code={code}&state={state}"
-        return RedirectResponse(url=callback_url, status_code=303)
-
-    except Exception as e:
-        error_msg = str(e)
-        if "NotAuthorizedException" in error_msg or "Incorrect username or password" in error_msg:
-            error_msg = "Incorrect email or password."
-        elif "UserNotFoundException" in error_msg:
-            error_msg = "No account found with that email."
-        logger.warning(f"LOGIN_FAILED: user={email} error={error_msg}")
-        return RedirectResponse(url=f"/login?error={quote(error_msg)}", status_code=303)
-
-@app.post("/token")
-async def token_exchange(request: Request):
-    import logging
-    logger = logging.getLogger("mcp_auth")
-
-    body = await request.body()
-    from urllib.parse import parse_qs
-    params = parse_qs(body.decode())
-
-    code = params.get("code", [None])[0]
-    logger.warning(f"TOKEN_EXCHANGE: code_prefix={code[:10] if code else None}")
-
-    if not code or code not in _code_store:
-        return JSONResponse(status_code=400, content={"error": "invalid_grant", "error_description": "Invalid or expired code."})
-
-    access_token = _code_store.pop(code)
-
-    return JSONResponse({
-        "access_token": access_token,
-        "token_type": "Bearer",
-        "expires_in": 3600,
-        "scope": "openid profile email"
-    })
 
 async def verify_subscription(token: str) -> bool:
     import logging
