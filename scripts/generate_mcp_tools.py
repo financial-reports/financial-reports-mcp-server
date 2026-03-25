@@ -66,10 +66,21 @@ async def oauth_metadata():
         "issuer": "https://mcp.financialfilings.com",
         "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
         "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
+        "registration_endpoint": "https://mcp.financialfilings.com/register",
         "scopes_supported": ["openid", "profile", "email"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code"],
         "code_challenge_methods_supported": ["S256"]
+    }
+
+@app.post("/register")
+async def dynamic_client_registration(request: Request):
+    return {
+        "client_id": "65k7mqb0kpqrua7aqncsrkuej8",
+        "client_secret_expires_at": 0,
+        "grant_types": ["authorization_code"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none"
     }
 
 async def verify_subscription(token: str) -> bool:
