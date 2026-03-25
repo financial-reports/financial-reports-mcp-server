@@ -58,8 +58,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def root():
+@app.get("/health")
+async def health():
     return {"status": "ok", "message": "FinancialReports MCP Server is running!"}
 
 @app.get("/.well-known/oauth-protected-resource")
@@ -119,7 +119,8 @@ class MCPAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"] in ["/mcp", "/mcp/"]:
+        # Intercept the exact root path ("/" or "") instead of "/mcp"
+        if scope["type"] == "http" and scope["path"] in ["/", ""]:
             request = Request(scope, receive)
             auth_header = request.headers.get("Authorization")
             
