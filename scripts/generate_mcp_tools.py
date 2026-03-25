@@ -58,8 +58,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/health")
-async def health():
+@app.get("/")
+async def root():
     return {"status": "ok", "message": "FinancialReports MCP Server is running!"}
 
 @app.get("/.well-known/oauth-protected-resource")
@@ -78,7 +78,7 @@ async def oauth_metadata():
         "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
         "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
         "registration_endpoint": "https://mcp.financialfilings.com/register",
-        "scopes_supported": ["openid", "profile", "email"],
+        "scopes_supported": ["openid", "profile", "email", "https://mcp.financialfilings.com/claudeai"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"]
@@ -96,7 +96,7 @@ async def dynamic_client_registration(request: Request):
         "response_types": ["code"],
         "redirect_uris": body.get("redirect_uris", []),
         "token_endpoint_auth_method": "none",
-        "scope": "openid profile email"
+        "scope": "openid profile email https://mcp.financialfilings.com/claudeai"
     }
 
 async def verify_subscription(token: str) -> bool:
@@ -119,12 +119,11 @@ class MCPAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] == "http" and scope["path"] in ["/", ""]:
-            # --- THE FIX STARTS HERE ---
-            # Let CORS preflight requests pass through unauthenticated
+        if scope["type"] == "http" and scope["path"] in ["/mcp", "/mcp/"]:
+            
+            # CORS Preflight Bypass
             if scope.get("method") == "OPTIONS":
                 return await self.app(scope, receive, send)
-            # --- THE FIX ENDS HERE ---
 
             request = Request(scope, receive)
             auth_header = request.headers.get("Authorization")
@@ -151,6 +150,7 @@ class MCPAuthMiddleware:
                 )
                 return await response(scope, receive, send)
 
+            # Store the token safely in the current async context
             auth_token_var.set(token)
             
             return await session_manager.handle_request(scope, receive, send)
