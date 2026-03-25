@@ -84,14 +84,18 @@ async def dynamic_client_registration(request: Request):
     }
 
 async def verify_subscription(token: str) -> bool:
+    import logging
+    logger = logging.getLogger("mcp_auth")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
                 VERIFY_URL,
                 headers={"Authorization": f"Bearer {token}"}
             )
+            logger.warning(f"VERIFY STATUS: {response.status_code} | TOKEN_PREFIX: {token[:30]} | BODY: {response.text[:200]}")
             return response.status_code == 200
-    except Exception:
+    except Exception as e:
+        logger.warning(f"VERIFY EXCEPTION: {e}")
         return False
 
 @app.get("/sse")
