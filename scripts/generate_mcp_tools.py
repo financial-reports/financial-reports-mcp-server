@@ -17,6 +17,7 @@ import httpx
 import json
 import asyncio
 import uvicorn
+from contextvars import ContextVar
 from contextlib import asynccontextmanager
 from typing import Any, Coroutine, Optional
 from fastapi import FastAPI, Request
@@ -24,6 +25,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from mcp.server.fastmcp import FastMCP
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+
+auth_token_var = ContextVar("auth_token", default="")
 
 mcp = FastMCP("financial-reports")
 
@@ -142,9 +145,8 @@ class MCPAuthMiddleware:
                 )
                 return await response(scope, receive, send)
 
-            if "state" not in scope:
-                scope["state"] = {}
-            scope["state"]["token"] = token
+            # Store the token safely in the current async context
+            auth_token_var.set(token)
             
             return await session_manager.handle_request(scope, receive, send)
             
@@ -152,7 +154,8 @@ class MCPAuthMiddleware:
 
 app.add_middleware(MCPAuthMiddleware)
 
-async def get_client(token: str) -> httpx.AsyncClient:
+async def get_client() -> httpx.AsyncClient:
+    token = auth_token_var.get()
     if not token:
         raise ValueError("Missing OAuth Bearer Token. Please re-authenticate.")
     headers = {
@@ -187,7 +190,6 @@ async def {{ func_name }}(
     {%- for param in params %}
     {{ param.name }}: {{ param.py_type }}{{ param.default_val }},
     {%- endfor %}
-    token: str = "",
 ) -> str:
     \"\"\"
     {{ description }}
@@ -207,7 +209,7 @@ async def {{ func_name }}(
         if path_params:
             url = url.format(**path_params)
 
-        async with await get_client(token) as client:
+        async with await get_client() as client:
             response = await client.get(
                 url,
                 params={k: v for k, v in query_params.items() if v is not None}
@@ -223,14 +225,13 @@ async def {{ func_name }}(
     filing_id: int,
     offset: int = 0,
     limit: int = 50000,
-    token: str = "",
 ) -> str:
     \"\"\"
     {{ description }}
     \"\"\"
     try:
         url = f"/filings/{filing_id}/markdown/"
-        async with await get_client(token) as client:
+        async with await get_client() as client:
             response = await client.get(url)
 
         if response.status_code != 200:
