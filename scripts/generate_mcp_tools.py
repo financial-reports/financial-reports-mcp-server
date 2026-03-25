@@ -8,7 +8,6 @@ import sys
 
 SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
-
 FILE_HEADER_TEMPLATE = """\"\"\"
 AUTO-GENERATED FILE by scripts/generate_mcp_tools.py
 \"\"\"
@@ -17,6 +16,7 @@ import httpx
 import json
 import asyncio
 import uvicorn
+from contextlib import asynccontextmanager
 from typing import Any, Coroutine, Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +30,19 @@ _mcp_server = getattr(mcp, '_mcp_server', None) or getattr(mcp, '_server')
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
 VERIFY_URL = "https://api.financialreports.eu/api/mcp/verify/"
 
-app = FastAPI(title="FinancialReports MCP Connector")
+session_manager = StreamableHTTPSessionManager(
+    app=_mcp_server,
+    event_store=None,
+    json_response=False,
+    stateless=True,
+)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with session_manager.run():
+        yield
+
+app = FastAPI(title="FinancialReports MCP Connector", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -39,17 +51,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-session_manager = StreamableHTTPSessionManager(
-    app=_mcp_server,
-    event_store=None,
-    json_response=False,
-    stateless=True,
-)
-
-@app.on_event("startup")
-async def startup():
-    await session_manager.run()
 
 @app.get("/")
 async def root():
@@ -126,11 +127,6 @@ async def handle_mcp(request: Request):
 
     request.state.token = token
     return await session_manager.handle_request(request)
-
-async def get_token_from_request() -> str:
-    return ""
-
-_token_store: dict[str, str] = {}
 
 async def get_client(token: str) -> httpx.AsyncClient:
     if not token:
