@@ -78,7 +78,7 @@ async def oauth_metadata():
         "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
         "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
         "registration_endpoint": "https://mcp.financialfilings.com/register",
-        "scopes_supported": ["openid", "profile", "email", "https://mcp.financialfilings.com/claudeai"],
+        "scopes_supported": ["openid", "profile", "email"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"]
@@ -96,7 +96,7 @@ async def dynamic_client_registration(request: Request):
         "response_types": ["code"],
         "redirect_uris": body.get("redirect_uris", []),
         "token_endpoint_auth_method": "none",
-        "scope": "openid profile email https://mcp.financialfilings.com/claudeai"
+        "scope": "openid profile email"
     }
 
 async def verify_subscription(token: str) -> bool:
