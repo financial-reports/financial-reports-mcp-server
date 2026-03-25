@@ -63,7 +63,7 @@ async def root():
 async def oauth_protected_resource():
     return {
         "resource": "https://mcp.financialfilings.com",
-        "authorization_servers": ["https://auth.financialreports.eu/"],
+        "authorization_servers": ["https://mcp.financialfilings.com"], # Fixed pointer
         "bearer_methods_supported": ["header"],
         "resource_documentation": "https://financialreports.eu/api/docs/"
     }
@@ -71,7 +71,7 @@ async def oauth_protected_resource():
 @app.get("/.well-known/oauth-authorization-server")
 async def oauth_metadata():
     return {
-        "issuer": "https://auth.financialreports.eu/",
+        "issuer": "https://mcp.financialfilings.com", # Fixed pointer
         "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
         "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
         "registration_endpoint": "https://mcp.financialfilings.com/register",
