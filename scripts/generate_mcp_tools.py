@@ -98,6 +98,7 @@ async def token_proxy(request: Request):
     import logging
     logger = logging.getLogger("mcp_auth")
     body = await request.body()
+    logger.warning(f"TOKEN_PROXY_REQUEST: {body.decode('utf-8', errors='replace')}")
     headers = {
         "Content-Type": request.headers.get("Content-Type", "application/x-www-form-urlencoded"),
     }
@@ -107,7 +108,7 @@ async def token_proxy(request: Request):
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(COGNITO_TOKEN_URL, content=body, headers=headers)
-        logger.warning(f"TOKEN_PROXY: status={resp.status_code}")
+        logger.warning(f"TOKEN_PROXY_RESPONSE: status={resp.status_code} body={resp.text[:500]}")
         return Response(
             content=resp.content,
             status_code=resp.status_code,
