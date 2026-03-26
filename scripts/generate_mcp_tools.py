@@ -17,12 +17,13 @@ import httpx
 import json
 import asyncio
 import uvicorn
+from urllib.parse import urlencode
 from contextvars import ContextVar
 from contextlib import asynccontextmanager
 from typing import Any, Coroutine, Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from mcp.server.fastmcp import FastMCP
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 
@@ -35,6 +36,8 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
 VERIFY_URL = "https://api.financialreports.eu/api/mcp/verify/"
 COGNITO_CLIENT_ID = "1rlr4m72je83ug0s0catddgenj"
 COGNITO_REGION = "eu-central-1"
+COGNITO_TOKEN_URL = "https://auth.financialreports.eu/oauth2/token"
+COGNITO_AUTHORIZE_URL = "https://auth.financialreports.eu/oauth2/authorize"
 
 session_manager = StreamableHTTPSessionManager(
     app=_mcp_server,
@@ -74,16 +77,45 @@ async def oauth_protected_resource():
 @app.get("/.well-known/oauth-authorization-server")
 async def oauth_metadata():
     return {
-        # CRITICAL FIX: Must perfectly match the 'iss' claim inside Cognito's JWTs
-        "issuer": "https://cognito-idp.eu-central-1.amazonaws.com/eu-central-1_1igWLOHh5",
-        "authorization_endpoint": "https://auth.financialreports.eu/oauth2/authorize",
-        "token_endpoint": "https://auth.financialreports.eu/oauth2/token",
+        "issuer": "https://mcp.financialfilings.com",
+        "authorization_endpoint": "https://mcp.financialfilings.com/authorize",
+        "token_endpoint": "https://mcp.financialfilings.com/token",
         "registration_endpoint": "https://mcp.financialfilings.com/register",
         "scopes_supported": ["openid", "profile", "email"],
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"]
     }
+
+@app.get("/authorize")
+async def authorize_proxy(request: Request):
+    params = dict(request.query_params)
+    redirect_url = f"{COGNITO_AUTHORIZE_URL}?{urlencode(params)}"
+    return RedirectResponse(url=redirect_url, status_code=302)
+
+@app.post("/token")
+async def token_proxy(request: Request):
+    import logging
+    logger = logging.getLogger("mcp_auth")
+    body = await request.body()
+    headers = {
+        "Content-Type": request.headers.get("Content-Type", "application/x-www-form-urlencoded"),
+    }
+    auth_header = request.headers.get("Authorization")
+    if auth_header:
+        headers["Authorization"] = auth_header
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(COGNITO_TOKEN_URL, content=body, headers=headers)
+        logger.warning(f"TOKEN_PROXY: status={resp.status_code}")
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type=resp.headers.get("content-type", "application/json"),
+        )
+    except Exception as e:
+        logger.warning(f"TOKEN_PROXY_ERROR: {e}")
+        return JSONResponse(status_code=502, content={"detail": "Token exchange failed."})
 
 @app.post("/register")
 async def dynamic_client_registration(request: Request):
@@ -120,16 +152,14 @@ class MCPAuthMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        # Bind the MCP streaming endpoint to the root URL ("/")
         if scope["type"] == "http" and scope["path"] in ["/", ""]:
-            
-            # CORS Preflight Bypass
+
             if scope.get("method") == "OPTIONS":
                 return await self.app(scope, receive, send)
 
             request = Request(scope, receive)
             auth_header = request.headers.get("Authorization")
-            
+
             import logging
             logging.getLogger("mcp_auth").warning(f"MCP_REQUEST: method={request.method} auth_header={'present' if auth_header else 'None'}")
 
@@ -154,7 +184,7 @@ class MCPAuthMiddleware:
 
             auth_token_var.set(token)
             return await session_manager.handle_request(scope, receive, send)
-            
+
         return await self.app(scope, receive, send)
 
 app.add_middleware(MCPAuthMiddleware)
