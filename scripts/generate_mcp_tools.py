@@ -96,9 +96,14 @@ async def authorize_proxy(request: Request):
 @app.post("/token")
 async def token_proxy(request: Request):
     import logging
+    from urllib.parse import parse_qs, urlencode
     logger = logging.getLogger("mcp_auth")
     body = await request.body()
-    logger.warning(f"TOKEN_PROXY_REQUEST: {body.decode('utf-8', errors='replace')}")
+    body_str = body.decode("utf-8", errors="replace")
+    logger.warning(f"TOKEN_PROXY_REQUEST: {body_str}")
+    parsed = parse_qs(body_str, keep_blank_values=True)
+    parsed.pop("resource", None)
+    clean_body = urlencode({k: v[0] for k, v in parsed.items()})
     headers = {
         "Content-Type": request.headers.get("Content-Type", "application/x-www-form-urlencoded"),
     }
@@ -107,7 +112,7 @@ async def token_proxy(request: Request):
         headers["Authorization"] = auth_header
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(COGNITO_TOKEN_URL, content=body, headers=headers)
+            resp = await client.post(COGNITO_TOKEN_URL, content=clean_body.encode(), headers=headers)
         logger.warning(f"TOKEN_PROXY_RESPONSE: status={resp.status_code} body={resp.text[:500]}")
         return Response(
             content=resp.content,
