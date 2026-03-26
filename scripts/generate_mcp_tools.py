@@ -96,14 +96,13 @@ async def authorize_proxy(request: Request):
 @app.post("/token")
 async def token_proxy(request: Request):
     import logging
-    from urllib.parse import parse_qs, urlencode
+    import re
     logger = logging.getLogger("mcp_auth")
     body = await request.body()
     body_str = body.decode("utf-8", errors="replace")
     logger.warning(f"TOKEN_PROXY_REQUEST: {body_str}")
-    parsed = parse_qs(body_str, keep_blank_values=True)
-    parsed.pop("resource", None)
-    clean_body = urlencode({k: v[0] for k, v in parsed.items()})
+    clean_body = re.sub(r'&?resource=[^&]*', '', body_str).lstrip('&')
+    logger.warning(f"TOKEN_PROXY_CLEAN: {clean_body}")
     headers = {
         "Content-Type": request.headers.get("Content-Type", "application/x-www-form-urlencoded"),
     }
