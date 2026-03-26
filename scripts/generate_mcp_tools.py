@@ -89,9 +89,14 @@ async def oauth_metadata():
 
 @app.get("/authorize")
 async def authorize_proxy(request: Request):
-    params = dict(request.query_params)
-    redirect_url = f"{COGNITO_AUTHORIZE_URL}?{urlencode(params)}"
-    return RedirectResponse(url=redirect_url, status_code=302)
+    import re
+    raw_qs = request.scope.get("query_string", b"").decode("utf-8")
+    clean_qs = re.sub(r"&?resource=[^&]*", "", raw_qs).lstrip("&")
+    redirect_url = f"{COGNITO_AUTHORIZE_URL}?{clean_qs}"
+    return Response(
+        status_code=302,
+        headers={"Location": redirect_url},
+    )
 
 @app.post("/token")
 async def token_proxy(request: Request):
@@ -101,7 +106,7 @@ async def token_proxy(request: Request):
     body = await request.body()
     body_str = body.decode("utf-8", errors="replace")
     logger.warning(f"TOKEN_PROXY_REQUEST: {body_str}")
-    clean_body = re.sub(r'&?resource=[^&]*', '', body_str).lstrip('&')
+    clean_body = re.sub(r"&?resource=[^&]*", "", body_str).lstrip("&")
     logger.warning(f"TOKEN_PROXY_CLEAN: {clean_body}")
     headers = {
         "Content-Type": request.headers.get("Content-Type", "application/x-www-form-urlencoded"),
