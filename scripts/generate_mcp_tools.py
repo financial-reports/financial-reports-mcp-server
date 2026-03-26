@@ -64,6 +64,16 @@ app.add_middleware(
 @app.get("/health")
 async def health():
     return {"status": "ok", "message": "FinancialReports MCP Server is running!"}
+    
+@app.get("/favicon.ico")
+async def favicon():
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.get("https://cdn.financialreports.eu/financialreports/static/assets/favicon/new/favicon.ico")
+    return Response(
+        content=resp.content,
+        media_type="image/x-icon",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 @app.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource():
@@ -105,9 +115,7 @@ async def token_proxy(request: Request):
     logger = logging.getLogger("mcp_auth")
     body = await request.body()
     body_str = body.decode("utf-8", errors="replace")
-    logger.warning(f"TOKEN_PROXY_REQUEST: {body_str}")
     clean_body = re.sub(r"&?resource=[^&]*", "", body_str).lstrip("&")
-    logger.warning(f"TOKEN_PROXY_CLEAN: {clean_body}")
     headers = {
         "Content-Type": request.headers.get("Content-Type", "application/x-www-form-urlencoded"),
     }
