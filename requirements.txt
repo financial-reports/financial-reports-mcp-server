@@ -9,7 +9,6 @@ certifi==2025.11.12
 cffi==2.0.0
 click==8.3.0
 cryptography==46.0.3
-financial_reports_generated_client==1.4.8
 frozenlist==1.8.0
 h11==0.16.0
 httpcore==1.0.9
@@ -50,3 +49,4 @@ urllib3==2.5.0
 uvicorn==0.38.0
 yarl==1.22.0
 fastapi>=0.115.0
+financial_reports_generated_client==1.4.14
