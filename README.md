@@ -1,5 +1,7 @@
 # Financial Reports MCP Server
 
+[![SafeSkill 91/100](https://img.shields.io/badge/SafeSkill-91%2F100_Verified%20Safe-brightgreen)](https://safeskill.dev/scan/financial-reports-financial-reports-mcp-server)
+
 **Official Model Context Protocol (MCP) server for the FinancialReports API.**
 
 This server acts as a bridge between an MCP client (like Claude Desktop) and the official FinancialReports API. It exposes the complete API surface as a set of LLM-callable tools, allowing for natural language queries of European company filings, financial data, and corporate information.
