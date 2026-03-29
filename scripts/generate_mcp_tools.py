@@ -459,7 +459,7 @@ def compute_post_annotations(func_name, path):
 
 def main():
     try:
-        response = httpx.get(SCHEMA_URL)
+        response = httpx.get(SCHEMA_URL, timeout=30.0)
         response.raise_for_status()
         schema = yaml.safe_load(response.content)
     except Exception as e:
