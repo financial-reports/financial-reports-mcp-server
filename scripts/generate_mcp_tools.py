@@ -26,10 +26,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from mcp.server.fastmcp import FastMCP
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.types import Icon, ToolAnnotations
 
 auth_token_var = ContextVar("auth_token", default="")
 
-mcp = FastMCP("financial-reports")
+mcp = FastMCP(
+    "financial-reports",
+    icons=[
+        Icon(
+            src="https://cdn.financialreports.eu/financialreports/static/assets/favicon/new/favicon.ico",
+            mimeType="image/x-icon",
+        )
+    ],
+)
 
 _mcp_server = getattr(mcp, '_mcp_server', None) or getattr(mcp, '_server')
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
@@ -237,7 +246,7 @@ async def format_response(response: httpx.Response) -> str:
         return f"Error formatting response: {e}"
 """
 
-TOOL_TEMPLATE = """
+GET_TOOL_TEMPLATE = """
 @mcp.tool()
 async def {{ func_name }}(
     {%- for param in params %}
@@ -266,6 +275,41 @@ async def {{ func_name }}(
             response = await client.get(
                 url,
                 params={k: v for k, v in query_params.items() if v is not None}
+            )
+        return await format_response(response)
+    except Exception as e:
+        return f"Error calling API: {e}"
+"""
+
+POST_TOOL_TEMPLATE = """
+@mcp.tool(annotations=ToolAnnotations({{ annotations_str }}))
+async def {{ func_name }}(
+    {%- for param in params %}
+    {{ param.name }}: {{ param.py_type }}{{ param.default_val }},
+    {%- endfor %}
+) -> str:
+    \"\"\"
+    {{ description }}
+    \"\"\"
+    try:
+        path_params = {
+            {%- for param in params if param.is_path %}
+            "{{ param.name }}": {{ param.name }},
+            {%- endfor %}
+        }
+        body = {
+            {%- for param in params if param.is_body %}
+            "{{ param.original_name }}": {{ param.name }},
+            {%- endfor %}
+        }
+        url = f"{{ path }}"
+        if path_params:
+            url = url.format(**path_params)
+
+        async with await get_client() as client:
+            response = await client.post(
+                url,
+                json={k: v for k, v in body.items() if v is not None}
             )
         return await format_response(response)
     except Exception as e:
@@ -336,6 +380,83 @@ def snake_case(s):
     s = re.sub(r'(?<!^)(?=[A-Z])', '_', s).lower()
     return re.sub(r'[^a-z0-9_]+', '_', s).strip('_')
 
+def resolve_ref(full_schema, ref):
+    if not ref.startswith("#/"):
+        return {}
+    path = ref[2:].split("/")
+    current = full_schema
+    for part in path:
+        current = current.get(part, {})
+    return current
+
+def extract_path_params(operation):
+    params = []
+    for param in operation.get("parameters", []):
+        if param["in"] != "path":
+            continue
+        name = param["name"]
+        param_schema = param.get("schema", {})
+        schema_type = param_schema.get("type")
+        schema_format = param_schema.get("format")
+        default = param_schema.get("default")
+        is_required = param.get("required", True)
+        py_type, py_type_str, default_val = get_python_type(schema_type, schema_format, is_required, default)
+        params.append({
+            "name": snake_case(name),
+            "original_name": name,
+            "py_type": py_type,
+            "py_type_str": py_type_str,
+            "default_val": default_val,
+            "description": param.get("description", "").strip(),
+            "is_path": True,
+            "is_query": False,
+            "is_body": False,
+        })
+    return params
+
+def extract_body_params(operation, full_schema):
+    params = []
+    request_body = operation.get("requestBody", {})
+    rb_content = request_body.get("content", {})
+    json_schema = rb_content.get("application/json", {}).get("schema", {})
+
+    if "$ref" in json_schema:
+        json_schema = resolve_ref(full_schema, json_schema["$ref"])
+
+    properties = json_schema.get("properties", {})
+    required_fields = json_schema.get("required", [])
+
+    for prop_name, prop_schema in properties.items():
+        if "$ref" in prop_schema:
+            prop_schema = resolve_ref(full_schema, prop_schema["$ref"])
+
+        is_required = prop_name in required_fields
+        schema_type = prop_schema.get("type")
+        schema_format = prop_schema.get("format")
+        default = prop_schema.get("default")
+        py_type, py_type_str, default_val = get_python_type(schema_type, schema_format, is_required, default)
+
+        params.append({
+            "name": snake_case(prop_name),
+            "original_name": prop_name,
+            "py_type": py_type,
+            "py_type_str": py_type_str,
+            "default_val": default_val,
+            "description": prop_schema.get("description", "").strip(),
+            "is_path": False,
+            "is_query": False,
+            "is_body": True,
+        })
+    return params
+
+def compute_post_annotations(func_name, path):
+    parts = ["readOnlyHint=False"]
+    if "bulk_remove" in func_name or "bulk-remove" in path:
+        parts.append("destructiveHint=True")
+    if "replay" in func_name or "replay" in path:
+        parts.append("openWorldHint=True")
+    return ", ".join(parts)
+
 def main():
     try:
         response = httpx.get(SCHEMA_URL)
@@ -346,65 +467,83 @@ def main():
         sys.exit(1)
 
     env = jinja2.Environment()
-    standard_template = env.from_string(TOOL_TEMPLATE)
+    get_template = env.from_string(GET_TOOL_TEMPLATE)
+    post_template = env.from_string(POST_TOOL_TEMPLATE)
     markdown_template = env.from_string(MARKDOWN_TOOL_TEMPLATE)
 
     generated_code = [FILE_HEADER_TEMPLATE, FUNCTION_DEFINITIONS]
 
     paths = schema.get("paths", {})
     for path, path_item in paths.items():
-        if "get" not in path_item:
-            continue
+        for method in ["get", "post"]:
+            if method not in path_item:
+                continue
 
-        operation = path_item["get"]
-        operation_id = operation.get("operationId")
-        if not operation_id:
-            continue
+            operation = path_item[method]
+            operation_id = operation.get("operationId")
+            if not operation_id:
+                continue
 
-        func_name = snake_case(operation_id)
-        description = operation.get("description", "No description available.").strip()
-        formatted_path = re.sub(r'\{([^}]+)\}', r'{\1}', path)
+            func_name = snake_case(operation_id)
+            description = operation.get("description", "No description available.").strip()
+            formatted_path = re.sub(r'\{([^}]+)\}', r'{\1}', path)
 
-        if func_name == "filings_markdown_retrieve":
-            tool_context = {
-                "func_name": func_name,
-                "description": description,
-            }
-            generated_code.append(markdown_template.render(tool_context))
-            continue
+            if method == "get":
+                if func_name == "filings_markdown_retrieve":
+                    tool_context = {
+                        "func_name": func_name,
+                        "description": description,
+                    }
+                    generated_code.append(markdown_template.render(tool_context))
+                    continue
 
-        params = []
-        schema_params = operation.get("parameters", [])
+                params = []
+                schema_params = operation.get("parameters", [])
 
-        for param in schema_params:
-            name = param["name"]
-            is_path = param["in"] == "path"
-            is_query = param["in"] == "query"
-            is_required = param.get("required", False)
-            param_schema = param.get("schema", {})
-            schema_type = param_schema.get("type")
-            schema_format = param_schema.get("format")
-            default = param_schema.get("default")
+                for param in schema_params:
+                    name = param["name"]
+                    is_path = param["in"] == "path"
+                    is_query = param["in"] == "query"
+                    is_required = param.get("required", False)
+                    param_schema = param.get("schema", {})
+                    schema_type = param_schema.get("type")
+                    schema_format = param_schema.get("format")
+                    default = param_schema.get("default")
 
-            py_type, py_type_str, default_val = get_python_type(schema_type, schema_format, is_required, default)
+                    py_type, py_type_str, default_val = get_python_type(schema_type, schema_format, is_required, default)
 
-            params.append({
-                "name": snake_case(name),
-                "py_type": py_type,
-                "py_type_str": py_type_str,
-                "default_val": default_val,
-                "description": param.get("description", "").strip(),
-                "is_path": is_path,
-                "is_query": is_query,
-            })
+                    params.append({
+                        "name": snake_case(name),
+                        "py_type": py_type,
+                        "py_type_str": py_type_str,
+                        "default_val": default_val,
+                        "description": param.get("description", "").strip(),
+                        "is_path": is_path,
+                        "is_query": is_query,
+                    })
 
-        tool_context = {
-            "func_name": func_name,
-            "description": description,
-            "params": params,
-            "path": formatted_path
-        }
-        generated_code.append(standard_template.render(tool_context))
+                tool_context = {
+                    "func_name": func_name,
+                    "description": description,
+                    "params": params,
+                    "path": formatted_path,
+                }
+                generated_code.append(get_template.render(tool_context))
+
+            elif method == "post":
+                path_params = extract_path_params(operation)
+                body_params = extract_body_params(operation, schema)
+                all_params = path_params + body_params
+                annotations_str = compute_post_annotations(func_name, path)
+
+                tool_context = {
+                    "func_name": func_name,
+                    "description": description,
+                    "params": all_params,
+                    "path": formatted_path,
+                    "annotations_str": annotations_str,
+                }
+                generated_code.append(post_template.render(tool_context))
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(generated_code))
