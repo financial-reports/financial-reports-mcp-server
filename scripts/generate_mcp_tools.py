@@ -533,7 +533,9 @@ def main():
             elif method == "post":
                 path_params = extract_path_params(operation)
                 body_params = extract_body_params(operation, schema)
-                all_params = path_params + body_params
+                path_param_names = {p["name"] for p in path_params}
+                deduped_body = [p for p in body_params if p["name"] not in path_param_names]
+                all_params = path_params + sorted(deduped_body, key=lambda p: p["default_val"] != "")
                 annotations_str = compute_post_annotations(func_name, path)
 
                 tool_context = {
