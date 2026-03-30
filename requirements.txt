@@ -20,7 +20,7 @@ jsonschema==4.25.1
 jsonschema-specifications==2025.9.1
 markdown-it-py==4.0.0
 MarkupSafe==3.0.3
-mcp==1.21.0
+mcp>=1.21.0
 mdurl==0.1.2
 multidict==6.7.0
 propcache==0.4.1
@@ -50,3 +50,4 @@ uvicorn==0.38.0
 yarl==1.22.0
 fastapi>=0.115.0
 financial_reports_generated_client==1.4.16
+fastmcp>=2.13.0

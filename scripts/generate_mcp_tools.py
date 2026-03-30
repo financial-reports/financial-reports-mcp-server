@@ -24,7 +24,7 @@ from typing import Any, Coroutine, Optional
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, Response
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import Icon, ToolAnnotations
 
