@@ -49,4 +49,4 @@ urllib3==2.5.0
 uvicorn==0.38.0
 yarl==1.22.0
 fastapi>=0.115.0
-financial_reports_generated_client==1.4.15
+financial_reports_generated_client==1.4.16
