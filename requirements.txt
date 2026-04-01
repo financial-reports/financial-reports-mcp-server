@@ -50,4 +50,4 @@ uvicorn==0.38.0
 yarl==1.22.0
 fastapi>=0.115.0
 fastmcp>=2.13.0
-financial_reports_generated_client==1.4.17
+financial_reports_generated_client==1.4.18
