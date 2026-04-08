@@ -1,5 +1,4 @@
 # Direct dependencies only — pip resolves the rest.
-# Auto-managed by GitHub Actions: financial_reports_generated_client (do not pin manually below)
 
 # MCP framework — FastMCP 2.x. Auth module is unstable across minor versions
 # per upstream policy, so pin tight. mcp SDK is pulled transitively.
@@ -20,4 +19,4 @@ PyYAML>=6.0
 Jinja2>=3.1
 
 # SDK to FinancialReports backend (version pin auto-bumped by .github/workflows on schema change)
-financial_reports_generated_client==1.4.22
+financial_reports_generated_client==1.4.23
