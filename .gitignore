@@ -206,3 +206,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 src/financial_reports_mcp.py
+.DS_Store
+*.bak
+*.pyc
+.env.*
+!.env.example
