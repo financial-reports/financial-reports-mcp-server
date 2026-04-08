@@ -63,7 +63,7 @@ import uvicorn
 from cachetools import TTLCache
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.aws import AWSCognitoProvider
 from fastmcp.server.dependencies import get_access_token
@@ -362,16 +362,176 @@ async def favicon() -> Response:
         return Response(status_code=204)
 
 
-@app.get("/")
-async def root_landing() -> RedirectResponse:
-    """Redirect humans hitting the bare domain in a browser to the marketing page.
+_LANDING_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FinancialReports MCP Server</title>
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #e2e8f0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            line-height: 1.6;
+        }
+        .card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 48px 40px;
+            max-width: 640px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+        }
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            color: #f1f5f9;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        h1 img { width: 36px; height: 36px; }
+        .subtitle {
+            color: #94a3b8;
+            font-size: 16px;
+            margin-bottom: 32px;
+        }
+        .alert {
+            background: #422006;
+            border: 1px solid #92400e;
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin-bottom: 24px;
+            color: #fde68a;
+            font-size: 14px;
+        }
+        .alert strong { color: #fbbf24; }
+        .url-block {
+            background: #0f172a;
+            border: 2px solid #334155;
+            border-radius: 10px;
+            padding: 20px;
+            margin: 24px 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .url-block code {
+            font-family: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+            font-size: 15px;
+            color: #38bdf8;
+            font-weight: 600;
+            word-break: break-all;
+            user-select: all;
+        }
+        .copy-btn {
+            background: #38bdf8;
+            color: #0f172a;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.15s;
+        }
+        .copy-btn:hover { background: #7dd3fc; }
+        .copy-btn.copied { background: #10b981; color: white; }
+        h2 {
+            font-size: 18px;
+            color: #f1f5f9;
+            margin: 32px 0 12px;
+            font-weight: 600;
+        }
+        ol { margin-left: 20px; color: #cbd5e1; font-size: 15px; }
+        ol li { margin-bottom: 8px; }
+        .footer {
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 1px solid #334155;
+            color: #64748b;
+            font-size: 13px;
+            text-align: center;
+        }
+        .footer a { color: #38bdf8; text-decoration: none; }
+        .footer a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>
+            <img src="/favicon.ico" alt="">
+            FinancialReports MCP
+        </h1>
+        <p class="subtitle">
+            Global regulatory filings for AI assistants. You've reached the MCP server endpoint.
+        </p>
 
-    NOTE: MCP clients must use the full /mcp URL. We tried smart-redirecting MCP
-    clients from / to /mcp via 307, but Claude/ChatGPT/Cursor derive the OAuth
-    resource indicator from the URL the user typed (not where they were redirected),
-    causing an `invalid_target` mismatch later in the OAuth flow.
+        <div class="alert">
+            <strong>⚠ This URL is incomplete.</strong> To connect your AI assistant, use the full URL with <code>/mcp</code>:
+        </div>
+
+        <div class="url-block">
+            <code id="mcp-url">https://mcp.financialfilings.com/mcp\</code\>
+            <button class="copy-btn" onclick="copyUrl()" id="copy-btn">Copy</button>
+        </div>
+
+        <h2>Setup</h2>
+        <ol>
+            <li>Open your AI assistant's connector / integration settings (Claude, ChatGPT, Cursor, etc.)</li>
+            <li>Add a new MCP server with the URL above</li>
+            <li>Sign in with your FinancialReports account when prompted</li>
+            <li>Start asking about company filings, financials, and disclosures</li>
+        </ol>
+
+        <div class="footer">
+            Need an account? <a href="https://financialreports.eu/pricing/?utm_source=mcp_landing">View plans</a>
+            &nbsp;·&nbsp;
+            <a href="https://financialreports.eu/integrations/mcp/">Documentation</a>
+        </div>
+    </div>
+
+    <script>
+        function copyUrl() {
+            const url = document.getElementById("mcp-url").textContent;
+            const btn = document.getElementById("copy-btn");
+            navigator.clipboard.writeText(url).then(() => {
+                btn.textContent = "Copied!";
+                btn.classList.add("copied");
+                setTimeout(() => {
+                    btn.textContent = "Copy";
+                    btn.classList.remove("copied");
+                }, 2000);
+            });
+        }
+    </script>
+</body>
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root_landing() -> HTMLResponse:
+    """Self-contained landing page for users who hit the bare domain.
+
+    Includes a copy-button for the canonical /mcp URL and step-by-step setup
+    instructions. We do NOT redirect or smart-route here — earlier experiments
+    with 307-redirects from / to /mcp broke OAuth because Claude/ChatGPT/Cursor
+    derive the RFC 8707 resource indicator from the URL the user typed in the
+    connector dialog, causing an invalid_target mismatch downstream.
     """
-    return RedirectResponse(url=LANDING_URL, status_code=302)
+    return HTMLResponse(content=_LANDING_HTML, status_code=200)
 
 
 # IMPORTANT: mount must be the LAST route declaration so the explicit FastAPI
@@ -685,12 +845,23 @@ def compute_post_annotations(func_name: str, path: str) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    try:
-        response = httpx.get(SCHEMA_URL, timeout=30.0)
-        response.raise_for_status()
-        schema = yaml.safe_load(response.content)
-    except Exception as exc:
-        print(f"Failed to download or parse schema: {exc}", file=sys.stderr)
+    schema = None
+    last_exc = None
+    for attempt in range(1, 4):
+        try:
+            print(f"Fetching schema (attempt {attempt}/3)...", file=sys.stderr)
+            response = httpx.get(SCHEMA_URL, timeout=120.0)
+            response.raise_for_status()
+            schema = yaml.safe_load(response.content)
+            break
+        except Exception as exc:
+            last_exc = exc
+            print(f"  attempt {attempt} failed: {exc}", file=sys.stderr)
+            if attempt < 3:
+                import time
+                time.sleep(5 * attempt)
+    if schema is None:
+        print(f"Failed to download or parse schema after 3 attempts: {last_exc}", file=sys.stderr)
         sys.exit(1)
 
     env = jinja2.Environment(trim_blocks=False, lstrip_blocks=False)
