@@ -61,7 +61,7 @@ import httpx
 import json as _json
 import uvicorn
 from cachetools import TTLCache
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, Response
 from fastmcp import FastMCP
@@ -362,30 +362,15 @@ async def favicon() -> Response:
         return Response(status_code=204)
 
 
-def _looks_like_mcp_client(request) -> bool:
-    """Heuristic: does this request look like an MCP client probing the bare domain?"""
-    accept = (request.headers.get("accept") or "").lower()
-    if "text/event-stream" in accept or "application/json" in accept and request.method == "POST":
-        return True
-    if request.headers.get("mcp-protocol-version"):
-        return True
-    if request.headers.get("mcp-session-id"):
-        return True
-    user_agent = (request.headers.get("user-agent") or "").lower()
-    if "mcp" in user_agent or "claude" in user_agent or "cursor" in user_agent:
-        return True
-    return False
+@app.get("/")
+async def root_landing() -> RedirectResponse:
+    """Redirect humans hitting the bare domain in a browser to the marketing page.
 
-
-@app.api_route("/", methods=["GET", "POST", "DELETE"])
-async def root_handler(request: Request):
-    """Smart root: MCP clients get 307-redirected to /mcp, browsers get the landing page.
-
-    The 307 (vs 302/301) is critical — it preserves the HTTP method and request body,
-    so a `POST /` initialize request becomes `POST /mcp` transparently.
+    NOTE: MCP clients must use the full /mcp URL. We tried smart-redirecting MCP
+    clients from / to /mcp via 307, but Claude/ChatGPT/Cursor derive the OAuth
+    resource indicator from the URL the user typed (not where they were redirected),
+    causing an `invalid_target` mismatch later in the OAuth flow.
     """
-    if _looks_like_mcp_client(request):
-        return RedirectResponse(url="/mcp", status_code=307)
     return RedirectResponse(url=LANDING_URL, status_code=302)
 
 
