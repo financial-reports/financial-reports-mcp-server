@@ -19,4 +19,4 @@ PyYAML>=6.0
 Jinja2>=3.1
 
 # SDK to FinancialReports backend (version pin auto-bumped by .github/workflows on schema change)
-financial_reports_generated_client==1.4.27
+financial_reports_generated_client==1.4.28
