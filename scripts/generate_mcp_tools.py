@@ -545,7 +545,16 @@ app.mount("/", mcp_app)
 # ---------------------------------------------------------------------------
 
 GET_TOOL_TEMPLATE = '''
-@mcp.tool(tags={{ tags }})
+@mcp.tool(
+    tags={{ tags }},
+    annotations=ToolAnnotations(
+        title="{{ title }}",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
 @subscription_required
 async def {{ func_name }}(
     {%- for param in params %}
@@ -581,7 +590,14 @@ async def {{ func_name }}(
 
 
 POST_TOOL_TEMPLATE = '''
-@mcp.tool(tags={{ tags }}, annotations=ToolAnnotations({{ annotations_str }}))
+@mcp.tool(
+    tags={{ tags }},
+    annotations=ToolAnnotations(
+        title="{{ title }}",
+        readOnlyHint=False,
+        {{ annotations_str }}
+    ),
+)
 @subscription_required
 async def {{ func_name }}(
     {%- for param in params %}
@@ -617,7 +633,16 @@ async def {{ func_name }}(
 
 
 MARKDOWN_TOOL_TEMPLATE = '''
-@mcp.tool(tags={"Filings"})
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="{{ title }}",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
 @subscription_required
 async def {{ func_name }}(
     filing_id: int,
@@ -832,12 +857,38 @@ def extract_query_params(operation: dict) -> list:
 
 
 def compute_post_annotations(func_name: str, path: str) -> str:
-    parts = ["readOnlyHint=False"]
-    if "bulk_remove" in func_name or "bulk-remove" in path or "destroy" in func_name:
-        parts.append("destructiveHint=True")
-    if "replay" in func_name or "replay" in path:
+    """Compute extra ToolAnnotations kwargs for a POST tool.
+
+    Per Anthropic's connector review guidance, treat all POSTs that mutate
+    server state as destructiveHint=True — including creates, since the
+    reviewer cares about \"can this change my data\" not the spec-strict
+    \"is this delete-shaped\". webhooks_test_create is the one exception:
+    it's a probe (open world) but doesn't mutate FR state.
+    """
+    parts = []
+
+    if "test_create" in func_name or "test" in func_name.split("_"):
+        parts.append("destructiveHint=False")
         parts.append("openWorldHint=True")
-    return ", ".join(parts)
+        parts.append("idempotentHint=False")
+        return ",\n        ".join(parts)
+
+    if "replay" in func_name:
+        parts.append("destructiveHint=False")
+        parts.append("openWorldHint=True")
+        parts.append("idempotentHint=False")
+        return ",\n        ".join(parts)
+
+    parts.append("destructiveHint=True")
+
+    if "bulk_remove" in func_name or "regenerate" in func_name or "destroy" in func_name or "delete" in func_name:
+        parts.append("idempotentHint=False")
+        parts.append("openWorldHint=False")
+    else:
+        parts.append("idempotentHint=False")
+        parts.append("openWorldHint=False")
+
+    return ",\n        ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -891,6 +942,12 @@ def main() -> None:
                 operation.get("description") or operation.get("summary") or ""
             )
             tags = render_tags(operation)
+            # Title: prefer the OpenAPI summary (human-written, e.g. "List Companies"),
+            # fall back to a Title Case version of the function name. Escape quotes.
+            title_raw = (operation.get("summary") or "").strip()
+            if not title_raw:
+                title_raw = func_name.replace("_", " ").title()
+            title = title_raw.replace('"', '\\"')
 
             if method == "get":
                 # Special-case the markdown retrieve endpoint — needs pagination
@@ -899,6 +956,7 @@ def main() -> None:
                         markdown_template.render(
                             func_name=func_name,
                             description=description,
+                            title=title,
                         )
                     )
                     tool_count += 1
@@ -915,6 +973,7 @@ def main() -> None:
                         params=params,
                         path=path,
                         tags=tags,
+                        title=title,
                     )
                 )
                 tool_count += 1
@@ -937,6 +996,7 @@ def main() -> None:
                         path=path,
                         tags=tags,
                         annotations_str=annotations_str,
+                        title=title,
                     )
                 )
                 tool_count += 1
