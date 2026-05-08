@@ -14,6 +14,14 @@ httpx>=0.28.0
 # Subscription verification cache
 cachetools>=5.3.0
 
+# Redis client — used by FastMCP's OAuth state storage when MCP_REDIS_URL is
+# set. Without it, FastMCP falls back to a per-replica encrypted DiskStore,
+# which is wiped on container restart and not shared across replicas. With it,
+# refresh tokens persist across deploys and across horizontally scaled
+# replicas. `py-key-value-aio` is already a transitive dep via FastMCP; only
+# the redis client itself needs to be declared.
+redis>=5.0,<8
+
 # Schema generator (build-time only, but kept here so the Docker builder has them)
 PyYAML>=6.0
 Jinja2>=3.1
