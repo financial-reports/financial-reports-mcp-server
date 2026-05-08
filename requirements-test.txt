@@ -1,0 +1,7 @@
+# Test-only dependencies. Pinned loose because the unit and e2e jobs
+# share this file, and the OAuth/respx surface stays compatible across
+# minor versions.
+pytest>=8,<10
+pytest-asyncio>=0.23,<2
+respx>=0.22,<1
+httpx>=0.28
