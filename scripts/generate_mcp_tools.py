@@ -277,9 +277,24 @@ def subscription_required(func):
         claims = getattr(access_token, "claims", {}) or {}
         sub = claims.get("sub")
         raw_token = getattr(access_token, "token", None)
+        token_client_id = getattr(access_token, "client_id", None)
 
         if not sub or not raw_token:
             logger.warning("missing sub or token on access_token")
+            return _upgrade_response(UPGRADE_URL)
+
+        # Defense in depth against cross-app-client token replay.
+        # FastMCP's AWSCognitoProvider does not validate the JWT audience, so
+        # any valid token issued to a different app client in the same Cognito
+        # user pool would otherwise pass signature + issuer checks. Reject
+        # tokens whose `client_id` claim does not match the configured
+        # MCP app client.
+        if token_client_id and token_client_id != COGNITO_CLIENT_ID:
+            logger.warning(
+                "rejecting token with foreign client_id=%s sub=%s",
+                token_client_id,
+                sub[:8],
+            )
             return _upgrade_response(UPGRADE_URL)
 
         check = await _check_subscription(raw_token, sub)
@@ -309,7 +324,10 @@ def _backend_client() -> httpx.AsyncClient:
     """
     token = _current_token.get()
     if not token:
-        raise RuntimeError("No token in context — tool called outside subscription_required?")
+        # Generic message — never exposes internal architecture to the LLM
+        # response if this exception ever escapes a tool wrapper.
+        logger.error("_backend_client called without a token in context")
+        raise RuntimeError("Authentication required.")
     return httpx.AsyncClient(
         base_url=API_BASE_URL,
         headers={
@@ -323,8 +341,11 @@ def _backend_client() -> httpx.AsyncClient:
     )
 
 
-async def _format_response(response: httpx.Response) -> str:
-    """Format an httpx.Response as a JSON code block for the LLM."""
+def _format_response(response: httpx.Response) -> str:
+    """Format an httpx.Response as a JSON code block for the LLM.
+
+    Sync — no I/O happens here, the response body is already buffered by httpx.
+    """
     try:
         response.raise_for_status()
         data = response.json()
@@ -528,7 +549,7 @@ _LANDING_HTML = """<!DOCTYPE html>
         <div class="footer">
             Need an account? <a href="https://financialreports.eu/pricing/?utm_source=mcp_landing">View plans</a>
             &nbsp;·&nbsp;
-            <a href="https://financialreports.eu/integrations/mcp/">Documentation</a>
+            <a href="__LANDING_URL__">Documentation</a>
         </div>
     </div>
 
@@ -560,7 +581,10 @@ async def root_landing() -> HTMLResponse:
     derive the RFC 8707 resource indicator from the URL the user typed in the
     connector dialog, causing an invalid_target mismatch downstream.
     """
-    return HTMLResponse(content=_LANDING_HTML, status_code=200)
+    return HTMLResponse(
+        content=_LANDING_HTML.replace("__LANDING_URL__", LANDING_URL),
+        status_code=200,
+    )
 
 
 # IMPORTANT: mount must be the LAST route declaration so the explicit FastAPI
@@ -611,7 +635,7 @@ async def {{ func_name }}(
                 url,
                 params={k: v for k, v in query_params.items() if v is not None},
             )
-        return await _format_response(response)
+        return _format_response(response)
     except Exception as exc:
         logger.exception("{{ func_name }} failed")
         return f"Error calling {{ func_name }}: {exc}"
@@ -654,7 +678,7 @@ async def {{ func_name }}(
                 url,
                 json={k: v for k, v in body.items() if v is not None},
             )
-        return await _format_response(response)
+        return _format_response(response)
     except Exception as exc:
         logger.exception("{{ func_name }} failed")
         return f"Error calling {{ func_name }}: {exc}"
@@ -722,8 +746,12 @@ FILE_FOOTER = '''
 # Local dev entrypoint
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # Pass the app object directly rather than an import string — the import
+    # string form ("module:app") fails when this file is invoked as
+    # `python -m src.financial_reports_mcp`, because the actual module path
+    # is `src.financial_reports_mcp`, not `financial_reports_mcp`.
     uvicorn.run(
-        "financial_reports_mcp:app",
+        app,
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),
         log_level=os.environ.get("LOG_LEVEL", "info").lower(),
