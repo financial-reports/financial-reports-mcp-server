@@ -52,10 +52,8 @@ Architecture:
 """
 import os
 import logging
-from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, Optional
 
 import httpx
 import json as _json
@@ -63,7 +61,7 @@ import uvicorn
 from cachetools import TTLCache
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.aws import AWSCognitoProvider
 from fastmcp.server.dependencies import get_access_token
