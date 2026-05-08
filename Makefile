@@ -22,7 +22,7 @@ help:
 
 install:
 	pip install -r requirements.txt
-	pip install pytest pytest-asyncio respx
+	pip install -r requirements-test.txt
 
 test test-unit:
 	pytest tests/test_*.py -v
