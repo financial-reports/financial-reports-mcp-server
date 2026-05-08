@@ -52,6 +52,7 @@ Architecture:
 """
 import os
 import logging
+import threading
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import wraps
@@ -104,6 +105,13 @@ FAVICON_URL = (
     "https://cdn.financialreports.eu/financialreports/static/"
     "assets/favicon/new/favicon.ico"
 )
+# PNG variant advertised in MCP server metadata. Connector UIs (Claude,
+# ChatGPT, Cursor) reliably render PNG/SVG icons; ICO is silently dropped
+# by some clients, which is why /favicon.ico alone is not enough.
+ICON_URL = (
+    "https://cdn.financialreports.eu/financialreports/static/"
+    "assets/favicon/new/favicon-32x32.png"
+)
 MCP_VERSION = os.environ.get("MCP_VERSION", "dev")
 
 # ---------------------------------------------------------------------------
@@ -130,7 +138,7 @@ mcp = FastMCP(
         "directly from official regulators."
     ),
     auth=auth_provider,
-    icons=[Icon(src=FAVICON_URL, mimeType="image/x-icon")],
+    icons=[Icon(src=ICON_URL, mimeType="image/png", sizes=["32x32"])],
 )
 
 # ---------------------------------------------------------------------------
@@ -142,20 +150,30 @@ _current_user: ContextVar[dict] = ContextVar("_current_user", default={})
 # ---------------------------------------------------------------------------
 # Subscription verification cache
 # ---------------------------------------------------------------------------
-# Keyed by Cognito `sub`. 60s TTL absorbs the vast majority of repeated calls
-# within a single LLM session while propagating downgrades/cancellations fast.
-_subscription_cache: TTLCache = TTLCache(maxsize=10000, ttl=60)
+# Keyed by Cognito `sub`. 15s TTL absorbs repeated calls within a single LLM
+# turn while keeping downgrade/cancellation propagation tight. Note: this
+# cache is per-replica on Azure Container Apps; for true cross-replica
+# consistency, move to Redis. cachetools.TTLCache itself is not thread-safe,
+# so all access is guarded by `_subscription_cache_lock` below.
+_subscription_cache: TTLCache = TTLCache(maxsize=10000, ttl=15)
+_subscription_cache_lock = threading.Lock()
 
 
 async def _check_subscription(token: str, sub: str) -> dict:
     """Check whether the current user has an active paid subscription.
 
-    Returns a dict with at least an `authorized` bool. Cached per-`sub` for 60s.
+    Returns a dict with at least an `authorized` bool. Cached per-`sub` for
+    the TTL of `_subscription_cache`. Definitive backend responses
+    (HTTP 200/401/403) are cached; transient failures (network errors,
+    timeouts, unexpected status codes) are NOT cached, so a brief Django
+    blip does not lock paid users out for the full TTL.
     """
-    cached = _subscription_cache.get(sub)
+    with _subscription_cache_lock:
+        cached = _subscription_cache.get(sub)
     if cached is not None:
         return cached
 
+    cacheable = False
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
@@ -166,21 +184,21 @@ async def _check_subscription(token: str, sub: str) -> dict:
             payload = {}
             try:
                 payload = resp.json()
-            except Exception:
-                pass
+            except ValueError:
+                logger.debug("verify 200 had non-JSON body sub=%s", sub[:8])
             result = {
                 "authorized": True,
                 "plan": payload.get("plan"),
                 "user_id": payload.get("user_id"),
-                "email": payload.get("email"),
             }
             logger.info("verify ok sub=%s plan=%s", sub[:8], result.get("plan"))
+            cacheable = True
         elif resp.status_code in (401, 403):
             payload = {}
             try:
                 payload = resp.json()
-            except Exception:
-                pass
+            except ValueError:
+                logger.debug("verify %s had non-JSON body sub=%s", resp.status_code, sub[:8])
             result = {
                 "authorized": False,
                 "reason": payload.get("reason", "subscription_required"),
@@ -192,6 +210,7 @@ async def _check_subscription(token: str, sub: str) -> dict:
                 resp.status_code,
                 result.get("reason"),
             )
+            cacheable = True
         else:
             logger.warning(
                 "verify unexpected status=%s body=%s",
@@ -203,6 +222,7 @@ async def _check_subscription(token: str, sub: str) -> dict:
                 "reason": "verification_failed",
                 "upgrade_url": UPGRADE_URL,
             }
+            # Do not cache: treat unexpected statuses as transient.
     except Exception as exc:
         logger.exception("verify call failed: %s", exc)
         result = {
@@ -210,8 +230,11 @@ async def _check_subscription(token: str, sub: str) -> dict:
             "reason": "verification_error",
             "upgrade_url": UPGRADE_URL,
         }
+        # Do not cache: next call should retry.
 
-    _subscription_cache[sub] = result
+    if cacheable:
+        with _subscription_cache_lock:
+            _subscription_cache[sub] = result
     return result
 
 
@@ -291,7 +314,10 @@ def _backend_client() -> httpx.AsyncClient:
         base_url=API_BASE_URL,
         headers={
             "Authorization": f"Bearer {token}",
-            "User-Agent": f"FinancialReports-MCP/{MCP_VERSION}",
+            # Must start with "FinancialReports-MCP-Server" — the Django
+            # admin dashboard filters APIRequestLog by this exact prefix
+            # (users/admin_dashboard.py: MCP_USER_AGENT_PREFIX).
+            "User-Agent": f"FinancialReports-MCP-Server/{MCP_VERSION}",
         },
         timeout=60.0,
     )
@@ -332,7 +358,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    # `allow_credentials=True` combined with `allow_origins=["*"]` is rejected
+    # by browsers per the Fetch spec. MCP Streamable HTTP uses a Bearer token
+    # in the Authorization header, not cookies, so credentials are unnecessary.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["mcp-session-id", "mcp-protocol-version"],
@@ -484,7 +513,7 @@ _LANDING_HTML = """<!DOCTYPE html>
         </div>
 
         <div class="url-block">
-            <code id="mcp-url">https://mcp.financialfilings.com/mcp\</code\>
+            <code id="mcp-url">https://mcp.financialfilings.com/mcp</code>
             <button class="copy-btn" onclick="copyUrl()" id="copy-btn">Copy</button>
         </div>
 

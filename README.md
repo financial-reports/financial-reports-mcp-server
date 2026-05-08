@@ -10,78 +10,54 @@ This server is generated directly from the official [FinancialReports OpenAPI sc
 
 ---
 
-## 🚀 Getting Started (Docker)
+## 🌐 Using the hosted server
 
-The recommended way to run this server is with Docker.
+The official server is hosted at **`https://mcp.financialfilings.com/mcp`**. For most users you don't need to run anything locally — just point your MCP client at that URL and sign in with your FinancialReports account.
 
-### 1. Build the Image
+### Claude.ai / Claude Desktop / ChatGPT / Cursor
 
-From the root of this repository, build the Docker image. We use `--no-cache` to ensure the latest source code is always used, bypassing any stale layers.
-
-```
-docker build --no-cache -t financial-reports-mcp .
-```
-
-### 2. Configure Your MCP Client (Claude Desktop)
-
-Open your Claude Desktop configuration file:
-* **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-* **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
-
-Add the following entry to the `mcpServers` object, replacing `your_api_key_here` with your real FinancialReports API key:
-
-```
-{
-  "mcpServers": {
-    "financial-reports": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "-e", "API_KEY=your_api_key_here",
-        "-e", "API_BASE_URL=https://api.financialreports.eu/",
-        "-e", "MCP_TRANSPORT=stdio",
-        "financial-reports-mcp:latest"
-      ]
-    }
-  }
-}
-```
-
-
-### 3. Restart Claude
-
-Completely quit and restart the Claude Desktop application (Cmd+Q on macOS). The "financial-reports" toolset will now be available.
+Add a new connector / MCP server with the URL `https://mcp.financialfilings.com/mcp`. The first call triggers an OAuth sign-in via AWS Cognito; a paid (Analyst or Enterprise) subscription is required for tool access.
 
 ---
 
-## 🔧 Local Python (Development)
+## 🐳 Self-Hosting (Docker)
 
-If you want to run the server locally for development:
+If you want to run your own instance, you'll need your own AWS Cognito user pool and app client wired into the same Django backend.
 
-1.  **Create & Activate Environment:**
-    ```
-    python3 -m venv venv
-    source venv/bin/activate
-    ```
+### 1. Configure environment
 
-2.  **Install Dependencies:**
-    ```
-    pip install -r requirements.txt
-    ```
+Copy `.env.example` to `.env` and fill in the Cognito values. The required variables are:
 
-3.  **Set Environment Variables:**
-    Create a `.env` file in the project root (you can copy `.env.example`).
-    ```
-    API_KEY=your_api_key_here
-    MCP_TRANSPORT=stdio
-    ```
+* `COGNITO_USER_POOL_ID`
+* `COGNITO_CLIENT_ID`
+* `COGNITO_CLIENT_SECRET`
+* `MCP_BASE_URL` — public URL where this server is reachable (must be an allowed redirect URI on the Cognito app client)
 
-4.  **Run the Server:**
-    ```
-    python -m src.financial_reports_mcp
-    ```
+The full list with defaults lives in [`.env.example`](.env.example).
+
+### 2. Build & run
+
+```bash
+docker build -t financial-reports-mcp .
+docker run --rm -p 8000:8000 --env-file .env financial-reports-mcp
+```
+
+The server listens on `:8000`. Health check: `GET /health`. MCP transport (Streamable HTTP): `POST /mcp`.
+
+---
+
+## 🔧 Local Python (development)
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # then edit .env
+python scripts/generate_mcp_tools.py        # bake src/financial_reports_mcp.py
+python -m uvicorn src.financial_reports_mcp:app --host 0.0.0.0 --port 8000
+```
+
+The MCP entrypoint will be at `http://localhost:8000/mcp`.
 
 ---
 
@@ -137,12 +113,3 @@ This server dynamically generates tools for *all* `GET` endpoints in the Financi
 * "What filing types are available?"
 * "Using financial-reports, get the filing detail for filing ID 12345."
 
----
-
-## ⚠️ Known Issues
-
-### SDK `v1.3.2`
-The `financial-reports-generated-client` version `v1.3.2` had a known authentication bug where the `ApiClient` failed to send the `X-API-Key` header. This server was built to bypass the SDK entirely and use `httpx` directly, which resolves this issue. SDK version `v1.3.3` has fixed this bug.
-
-### `SSLCertVerificationError`
-This server disables SSL certificate verification (`verify=False`) in its internal `httpx` client. This is necessary to accommodate local Python environments (especially on macOS) that may be missing the required root certificates. This is generally safe for this use case but is not recommended for highly sensitive production environments.
