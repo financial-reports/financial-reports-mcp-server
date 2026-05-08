@@ -1,0 +1,91 @@
+# Local end-to-end test harness.
+#
+# Brings up the same image we deploy to Azure Container Apps, plus a Redis 7
+# sidecar so the optional MCP_REDIS_URL code path is actually exercised.
+# Run via `scripts/test-e2e.sh` or `make test-e2e`.
+#
+# This catches regressions such as:
+#   - The image fails to start (import-time errors)
+#   - Boot-time Redis ping is broken
+#   - /icon.png, /favicon.ico, /apple-touch-icon.png return 404 instead of
+#     proxying the CDN asset
+#   - /.well-known/oauth-protected-resource (bare and /mcp suffix) both serve
+#   - OAuth /register (RFC 7591 dynamic client registration) round-trips
+#     through the configured store (the operation that broke production
+#     in v1.4.37-audit2 against Azure Cache for Redis)
+#   - Restarting the server preserves registered clients when MCP_REDIS_URL
+#     is set, and DOESN'T preserve them when it isn't
+
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
+
+  mcp:
+    build:
+      context: .
+      args:
+        MCP_VERSION: "e2e"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      # Public Cognito pool used only for OIDC discovery; we never complete
+      # a real OAuth flow in the e2e suite. The dummy secret is fine because
+      # /register and /health don't need to hit the Cognito token endpoint.
+      COGNITO_USER_POOL_ID: "${COGNITO_USER_POOL_ID:-eu-central-1_1igWLOHh5}"
+      COGNITO_CLIENT_ID: "${COGNITO_CLIENT_ID:-65k7mqb0kpqrua7aqncsrkuej8}"
+      COGNITO_CLIENT_SECRET: "e2e-dummy"
+      COGNITO_REGION: "eu-central-1"
+      MCP_BASE_URL: "http://localhost:8000"
+      API_BASE_URL: "https://api.financialreports.eu"
+      LOG_LEVEL: "INFO"
+      MCP_VERSION: "e2e"
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  # Same as `mcp` but with MCP_REDIS_URL pointed at the redis sidecar.
+  # Activated with `--profile redis`. Used by the OAuth-state-persistence
+  # test: register a client → kill the container → start a new one →
+  # confirm the client is still registered.
+  #
+  # Inlined (not `extends:`) so the ports override is honored — `extends`
+  # in compose v2 does not always replace list-valued keys cleanly across
+  # all versions.
+  mcp-with-redis:
+    build:
+      context: .
+      args:
+        MCP_VERSION: "e2e-redis"
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      COGNITO_USER_POOL_ID: "${COGNITO_USER_POOL_ID:-eu-central-1_1igWLOHh5}"
+      COGNITO_CLIENT_ID: "${COGNITO_CLIENT_ID:-65k7mqb0kpqrua7aqncsrkuej8}"
+      COGNITO_CLIENT_SECRET: "e2e-dummy"
+      COGNITO_REGION: "eu-central-1"
+      MCP_BASE_URL: "http://localhost:8001"
+      API_BASE_URL: "https://api.financialreports.eu"
+      LOG_LEVEL: "INFO"
+      MCP_VERSION: "e2e-redis"
+      MCP_REDIS_URL: "redis://redis:6379/3"
+    ports:
+      - "8001:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    profiles: ["redis"]
