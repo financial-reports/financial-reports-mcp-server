@@ -50,9 +50,11 @@ Architecture:
     backend (with a 60s in-memory cache) and returns an upgrade-link
     markdown response for free-tier users.
 """
-import os
+import asyncio
 import logging
+import os
 import threading
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import wraps
 
@@ -156,84 +158,138 @@ _current_user: ContextVar[dict] = ContextVar("_current_user", default={})
 _subscription_cache: TTLCache = TTLCache(maxsize=10000, ttl=15)
 _subscription_cache_lock = threading.Lock()
 
+# Per-`sub` in-flight verify tracking. Prevents the thundering-herd pattern
+# where parallel tool calls from a single LLM session all hit the verify
+# endpoint on the very first call (before the cache is populated). Only one
+# verify call per sub is in flight at a time; the others wait and reuse
+# the cached result. Entries are removed once the verify completes.
+_subscription_inflight: dict[str, asyncio.Lock] = {}
+
+
+# ---------------------------------------------------------------------------
+# Shared HTTP client — module-level for connection-pool reuse
+# ---------------------------------------------------------------------------
+async def _inject_auth(request: httpx.Request) -> None:
+    """Add Authorization from `_current_token` if not already set on the request.
+
+    Tool wrappers run inside `subscription_required`, which sets the
+    contextvar, so they don't need to pass Authorization explicitly.
+    `_check_subscription` runs BEFORE the contextvar is set, so it passes
+    Authorization explicitly and this hook becomes a no-op for that call.
+    """
+    if "Authorization" not in request.headers:
+        token = _current_token.get()
+        if token:
+            request.headers["Authorization"] = f"Bearer {token}"
+
+
+# A single AsyncClient per process. Connection pool + HTTP keep-alive are
+# reused across all tool calls. Closed on shutdown via the FastAPI lifespan
+# below.
+_api_client = httpx.AsyncClient(
+    base_url=API_BASE_URL,
+    timeout=60.0,
+    event_hooks={"request": [_inject_auth]},
+    headers={
+        # Must start with "FinancialReports-MCP-Server" — the Django admin
+        # dashboard filters APIRequestLog by this exact prefix.
+        "User-Agent": f"FinancialReports-MCP-Server/{MCP_VERSION}",
+    },
+)
+
 
 async def _check_subscription(token: str, sub: str) -> dict:
     """Check whether the current user has an active paid subscription.
 
-    Returns a dict with at least an `authorized` bool. Cached per-`sub` for
-    the TTL of `_subscription_cache`. Definitive backend responses
-    (HTTP 200/401/403) are cached; transient failures (network errors,
-    timeouts, unexpected status codes) are NOT cached, so a brief Django
-    blip does not lock paid users out for the full TTL.
+    Cached per-`sub` for the TTL of `_subscription_cache`. Definitive backend
+    responses (HTTP 200/401/403) are cached; transient failures (network
+    errors, timeouts, unexpected status codes) are NOT cached, so a brief
+    Django blip does not lock paid users out for the full TTL.
+
+    Stampede-protected: only one in-flight verify per `sub` at a time; the
+    others wait and reuse the cached result.
     """
     with _subscription_cache_lock:
         cached = _subscription_cache.get(sub)
     if cached is not None:
         return cached
 
-    cacheable = False
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
+    # `dict.setdefault` is atomic under the GIL, so this is safe across
+    # concurrent coroutines without a separate guard.
+    lock = _subscription_inflight.setdefault(sub, asyncio.Lock())
+    async with lock:
+        # Re-check the cache after acquiring the lock — another coroutine may
+        # have populated it while we were waiting.
+        with _subscription_cache_lock:
+            cached = _subscription_cache.get(sub)
+        if cached is not None:
+            _subscription_inflight.pop(sub, None)
+            return cached
+
+        cacheable = False
+        try:
+            resp = await _api_client.get(
                 VERIFY_URL,
                 headers={"Authorization": f"Bearer {token}"},
+                timeout=10.0,
             )
-        if resp.status_code == 200:
-            payload = {}
-            try:
-                payload = resp.json()
-            except ValueError:
-                logger.debug("verify 200 had non-JSON body sub=%s", sub[:8])
-            result = {
-                "authorized": True,
-                "plan": payload.get("plan"),
-                "user_id": payload.get("user_id"),
-            }
-            logger.info("verify ok sub=%s plan=%s", sub[:8], result.get("plan"))
-            cacheable = True
-        elif resp.status_code in (401, 403):
-            payload = {}
-            try:
-                payload = resp.json()
-            except ValueError:
-                logger.debug("verify %s had non-JSON body sub=%s", resp.status_code, sub[:8])
+            if resp.status_code == 200:
+                payload = {}
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    logger.debug("verify 200 had non-JSON body sub=%s", sub[:8])
+                result = {
+                    "authorized": True,
+                    "plan": payload.get("plan"),
+                    "user_id": payload.get("user_id"),
+                }
+                logger.info("verify ok sub=%s plan=%s", sub[:8], result.get("plan"))
+                cacheable = True
+            elif resp.status_code in (401, 403):
+                payload = {}
+                try:
+                    payload = resp.json()
+                except ValueError:
+                    logger.debug("verify %s had non-JSON body sub=%s", resp.status_code, sub[:8])
+                result = {
+                    "authorized": False,
+                    "reason": payload.get("reason", "subscription_required"),
+                    "upgrade_url": payload.get("upgrade_url", UPGRADE_URL),
+                }
+                logger.info(
+                    "verify denied sub=%s status=%s reason=%s",
+                    sub[:8],
+                    resp.status_code,
+                    result.get("reason"),
+                )
+                cacheable = True
+            else:
+                logger.warning(
+                    "verify unexpected status=%s body=%s",
+                    resp.status_code,
+                    resp.text[:200],
+                )
+                result = {
+                    "authorized": False,
+                    "reason": "verification_failed",
+                    "upgrade_url": UPGRADE_URL,
+                }
+                # Do not cache: treat unexpected statuses as transient.
+        except Exception as exc:
+            logger.exception("verify call failed: %s", exc)
             result = {
                 "authorized": False,
-                "reason": payload.get("reason", "subscription_required"),
-                "upgrade_url": payload.get("upgrade_url", UPGRADE_URL),
-            }
-            logger.info(
-                "verify denied sub=%s status=%s reason=%s",
-                sub[:8],
-                resp.status_code,
-                result.get("reason"),
-            )
-            cacheable = True
-        else:
-            logger.warning(
-                "verify unexpected status=%s body=%s",
-                resp.status_code,
-                resp.text[:200],
-            )
-            result = {
-                "authorized": False,
-                "reason": "verification_failed",
+                "reason": "verification_error",
                 "upgrade_url": UPGRADE_URL,
             }
-            # Do not cache: treat unexpected statuses as transient.
-    except Exception as exc:
-        logger.exception("verify call failed: %s", exc)
-        result = {
-            "authorized": False,
-            "reason": "verification_error",
-            "upgrade_url": UPGRADE_URL,
-        }
-        # Do not cache: next call should retry.
+            # Do not cache: next call should retry.
 
-    if cacheable:
-        with _subscription_cache_lock:
-            _subscription_cache[sub] = result
-    return result
+        if cacheable:
+            with _subscription_cache_lock:
+                _subscription_cache[sub] = result
+        _subscription_inflight.pop(sub, None)
+        return result
 
 
 def _upgrade_response(upgrade_url: str) -> str:
@@ -311,32 +367,15 @@ def subscription_required(func):
 
 
 # ---------------------------------------------------------------------------
-# Backend HTTP client (per-request, scoped to the user's bearer token)
+# Backend client check — invoked at the top of every tool wrapper to fail
+# fast (with a generic message) if the wrapper is somehow called without
+# the contextvar being set. Real I/O is done via the module-level
+# `_api_client`; auth is injected automatically by `_inject_auth`.
 # ---------------------------------------------------------------------------
-def _backend_client() -> httpx.AsyncClient:
-    """Build an httpx client authenticated as the current MCP user.
-
-    The token is forwarded to api.financialreports.eu, where Django's
-    CognitoJWTAuthentication validates it against the same Cognito pool —
-    so the user hits API endpoints as themselves and consumes their own quota.
-    """
-    token = _current_token.get()
-    if not token:
-        # Generic message — never exposes internal architecture to the LLM
-        # response if this exception ever escapes a tool wrapper.
-        logger.error("_backend_client called without a token in context")
+def _require_auth_context() -> None:
+    if not _current_token.get():
+        logger.error("tool wrapper called without a token in context")
         raise RuntimeError("Authentication required.")
-    return httpx.AsyncClient(
-        base_url=API_BASE_URL,
-        headers={
-            "Authorization": f"Bearer {token}",
-            # Must start with "FinancialReports-MCP-Server" — the Django
-            # admin dashboard filters APIRequestLog by this exact prefix
-            # (users/admin_dashboard.py: MCP_USER_AGENT_PREFIX).
-            "User-Agent": f"FinancialReports-MCP-Server/{MCP_VERSION}",
-        },
-        timeout=60.0,
-    )
 
 
 def _format_response(response: httpx.Response) -> str:
@@ -365,10 +404,21 @@ def _format_response(response: httpx.Response) -> str:
 # browser landing) declared first so they win the route match.
 mcp_app = mcp.http_app(path="/mcp")
 
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Compose our shutdown work with FastMCP's existing lifespan."""
+    try:
+        async with mcp_app.lifespan(app):
+            yield
+    finally:
+        await _api_client.aclose()
+
+
 app = FastAPI(
     title="FinancialReports MCP Connector",
     version=MCP_VERSION,
-    lifespan=mcp_app.lifespan,
+    lifespan=_lifespan,
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
@@ -398,9 +448,11 @@ async def health() -> dict:
 
 @app.get("/favicon.ico")
 async def favicon() -> Response:
+    # Uses the shared client (absolute URL bypasses base_url). The
+    # `_inject_auth` hook is a no-op here because there's no token in
+    # the contextvar outside of a `subscription_required` call.
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get(FAVICON_URL)
+        resp = await _api_client.get(FAVICON_URL, timeout=5.0)
         return Response(
             content=resp.content,
             media_type="image/x-icon",
@@ -614,6 +666,7 @@ async def {{ func_name }}(
 ) -> str:
     """{{ description }}"""
     try:
+        _require_auth_context()
         query_params = {
             {%- for param in params if param.is_query %}
             "{{ param.original_name }}": {{ param.name }},
@@ -628,11 +681,10 @@ async def {{ func_name }}(
         if path_params:
             url = url.format(**path_params)
 
-        async with _backend_client() as client:
-            response = await client.get(
-                url,
-                params={k: v for k, v in query_params.items() if v is not None},
-            )
+        response = await _api_client.get(
+            url,
+            params={k: v for k, v in query_params.items() if v is not None},
+        )
         return _format_response(response)
     except Exception as exc:
         logger.exception("{{ func_name }} failed")
@@ -657,6 +709,7 @@ async def {{ func_name }}(
 ) -> str:
     """{{ description }}"""
     try:
+        _require_auth_context()
         path_params = {
             {%- for param in params if param.is_path %}
             "{{ param.original_name }}": {{ param.name }},
@@ -671,11 +724,10 @@ async def {{ func_name }}(
         if path_params:
             url = url.format(**path_params)
 
-        async with _backend_client() as client:
-            response = await client.post(
-                url,
-                json={k: v for k, v in body.items() if v is not None},
-            )
+        response = await _api_client.post(
+            url,
+            json={k: v for k, v in body.items() if v is not None},
+        )
         return _format_response(response)
     except Exception as exc:
         logger.exception("{{ func_name }} failed")
@@ -708,9 +760,9 @@ async def {{ func_name }}(
     of 50000 chars (default) for most LLM context windows.
     """
     try:
+        _require_auth_context()
         url = f"/filings/{filing_id}/markdown/"
-        async with _backend_client() as client:
-            response = await client.get(url)
+        response = await _api_client.get(url)
 
         if response.status_code != 200:
             return (
