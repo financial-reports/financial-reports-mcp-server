@@ -8,8 +8,11 @@ fastmcp>=2.13.3,<3.0.0
 fastapi>=0.115.0
 uvicorn>=0.32.0
 
-# Backend HTTP client
-httpx>=0.28.0
+# Backend HTTP client. The [http2] extra pulls in `h2` so the module-level
+# AsyncClient can multiplex parallel tool calls (Claude routinely fans out
+# 5–10 simultaneous calls per session) over a single TCP/TLS connection
+# to api.financialreports.eu.
+httpx[http2]>=0.28.0
 
 # Subscription verification cache
 cachetools>=5.3.0
