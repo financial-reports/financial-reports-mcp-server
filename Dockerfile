@@ -48,7 +48,10 @@ ENV PATH="/home/appuser/venv/bin:$PATH" \
 EXPOSE 8000
 
 # Honest health signal for Container Apps probes and local docker.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+# start-period=30s leaves headroom for the synchronous startup work
+# (Cognito OIDC discovery + JWKS fetch + optional Redis ping) before
+# Container Apps starts marking the revision unhealthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
 LABEL org.opencontainers.image.title="financial-reports-mcp" \
