@@ -18,5 +18,9 @@ cachetools>=5.3.0
 PyYAML>=6.0
 Jinja2>=3.1
 
-# SDK to FinancialReports backend (version pin auto-bumped by .github/workflows on schema change)
+# SDK to FinancialReports backend.
+# This pin is auto-bumped by the `Generate and Publish SDKs` workflow in the
+# financial-reports/web repo (.github/workflows/generate_sdks.yml on master)
+# whenever the OpenAPI schema changes. That workflow also rebuilds and
+# redeploys this MCP server's image to Azure Container Apps.
 financial_reports_generated_client==1.4.35
