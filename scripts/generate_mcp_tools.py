@@ -101,6 +101,19 @@ LANDING_URL = os.environ.get(
     "LANDING_URL",
     "https://financialreports.eu/integrations/mcp/",
 )
+# Optional. When set, FastMCP's OAuth proxy stores client registrations,
+# transactions, codes, and refresh tokens in Redis (shared across replicas,
+# survives container restarts). When unset, FastMCP falls back to an
+# encrypted DiskStore on the container's local disk — fine for dev, but on
+# Azure Container Apps the disk is ephemeral, so every deploy or replica
+# rotation forces every user to re-authenticate.
+#
+# Format: standard Redis URL, e.g.
+#   rediss://:<auth-token>@<endpoint>:<port>/3?ssl_cert_reqs=required
+# Use a dedicated DB number that does not collide with Celery (0) or the
+# Django cache (1).
+MCP_REDIS_URL = os.environ.get("MCP_REDIS_URL")
+
 FAVICON_URL = (
     "https://cdn.financialreports.eu/financialreports/static/"
     "assets/favicon/new/favicon.ico"
@@ -117,6 +130,29 @@ MCP_VERSION = os.environ.get("MCP_VERSION", "dev")
 # ---------------------------------------------------------------------------
 # FastMCP server with AWS Cognito OAuth proxy
 # ---------------------------------------------------------------------------
+# Build OAuth state storage. Redis if MCP_REDIS_URL is set, otherwise None
+# (FastMCP defaults to an encrypted DiskStore in `~/.local/share/fastmcp/`).
+_oauth_storage = None
+if MCP_REDIS_URL:
+    # Imported lazily so the redis client isn't required when running in
+    # disk mode (dev, smoke tests).
+    from key_value.aio.stores.redis import RedisStore
+
+    _oauth_storage = RedisStore(
+        url=MCP_REDIS_URL,
+        default_collection="financial-reports-mcp-oauth",
+    )
+    # Redact auth token from logs (Redis URLs typically embed `:<token>@`).
+    _safe_redis_target = MCP_REDIS_URL.split("@", 1)[-1] if "@" in MCP_REDIS_URL else MCP_REDIS_URL
+    logger.info("OAuth state -> Redis (%s)", _safe_redis_target)
+else:
+    logger.warning(
+        "MCP_REDIS_URL not set — using FastMCP default DiskStore for OAuth "
+        "state. Refresh tokens will NOT persist across container restarts "
+        "or be shared across replicas; users will be forced to re-auth on "
+        "every deploy."
+    )
+
 auth_provider = AWSCognitoProvider(
     user_pool_id=COGNITO_USER_POOL_ID,
     aws_region=COGNITO_REGION,
@@ -125,6 +161,7 @@ auth_provider = AWSCognitoProvider(
     base_url=MCP_BASE_URL,
     redirect_path="/auth/callback",
     required_scopes=["openid", "email", "profile"],
+    client_storage=_oauth_storage,
 )
 
 mcp = FastMCP(
