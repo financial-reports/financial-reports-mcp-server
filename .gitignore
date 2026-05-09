@@ -211,3 +211,6 @@ src/financial_reports_mcp.py
 *.pyc
 .env.*
 !.env.example
+
+# Playwright MCP captures (interactive debugging artifacts, not source)
+.playwright-mcp/
