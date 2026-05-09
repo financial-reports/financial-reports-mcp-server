@@ -6,7 +6,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialReports](https://financialreports.eu) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. Sourced directly from official regulators — SEC, ESMA, AMF, BaFin, AFM, CMVM, and others.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **43 tools across 9 domains. Free for any FinancialReports account.** Sourced from official regulators.
 
 ---
 
@@ -14,7 +14,7 @@
 
 If you're an analyst, researcher, or anyone who wants to ask Claude about public-company filings:
 
-1. **Sign up** at [financialreports.eu](https://financialreports.eu/pricing/) — Analyst tier or above is required for tool access.
+1. **Create a free account** at [financialreports.eu](https://financialreports.eu/) — the MCP connector is free for any FinancialReports user. No paid plan required.
 2. **Add the connector** in your MCP client:
    - **Claude.ai / Claude Desktop**: Settings → Connectors → Add custom connector → URL: `https://mcp.financialfilings.com/mcp`
    - **Claude Code**: `claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp`
