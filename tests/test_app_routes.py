@@ -308,6 +308,27 @@ def test_initialize_advertises_multi_size_icons(mcp_module) -> None:
     assert ("512x512",) in sizes_advertised
 
 
+def test_advertised_icons_are_same_origin(mcp_module) -> None:
+    """REGRESSION: previously we advertised CDN URLs in MCP `Icon` metadata.
+    FastMCP's auto-generated /consent OAuth page renders that URL as the
+    page logo and our own CSP (img-src 'self' data:) blocks any
+    cross-origin image — so the consent page lost its branding. Some host
+    UIs also prefer same-origin connector icons.
+
+    The /icon-*.png server-relative routes proxy + cache the same CDN
+    bytes, so there's no asset cost in pointing at our own origin.
+    """
+    icons = mcp_module.mcp._mcp_server.icons or []
+    base = mcp_module.MCP_BASE_URL.rstrip("/")
+    for icon in icons:
+        src = str(icon.src)
+        assert src.startswith(base), (
+            f"icon {src!r} is cross-origin; advertise from {base}/icon-*.png "
+            f"so the FastMCP consent page can render it under our own CSP "
+            f"(img-src 'self' data:)"
+        )
+
+
 def test_serverinfo_exposes_website_url(mcp_module) -> None:
     """Reviewers see this in connector listings (`Implementation.websiteUrl`)."""
     assert mcp_module.mcp._mcp_server.website_url == mcp_module.WEBSITE_URL

@@ -298,10 +298,22 @@ mcp = FastMCP(
     auth=auth_provider,
     # Multi-size icons let connector renderers pick the right resolution.
     # Claude.ai connector cards prefer the 192/512 PNG over the 32×32 favicon.
+    #
+    # IMPORTANT: advertise URLs from THIS server's own origin, not the CDN.
+    # Three reasons:
+    #   1. FastMCP's auto-generated /consent OAuth page renders this URL as
+    #      the page logo. Our own CSP (img-src 'self' data:) blocks any
+    #      cross-origin image, so a CDN URL silently breaks the consent
+    #      page branding.
+    #   2. Several MCP host UIs (incl. Claude.ai) prefer same-origin icons
+    #      that match the connector's resource URI — cross-origin
+    #      advertisements may silently fail to render.
+    #   3. The /icon-*.png routes on this server already proxy + cache the
+    #      same CDN bytes, so there's no asset cost — just URL hygiene.
     icons=[
-        Icon(src=ICON_URL, mimeType="image/png", sizes=["32x32"]),
-        Icon(src=ICON_URL_192, mimeType="image/png", sizes=["192x192"]),
-        Icon(src=ICON_URL_512, mimeType="image/png", sizes=["512x512"]),
+        Icon(src=f"{MCP_BASE_URL.rstrip('/')}/icon.png", mimeType="image/png", sizes=["32x32"]),
+        Icon(src=f"{MCP_BASE_URL.rstrip('/')}/icon-192.png", mimeType="image/png", sizes=["192x192"]),
+        Icon(src=f"{MCP_BASE_URL.rstrip('/')}/icon-512.png", mimeType="image/png", sizes=["512x512"]),
     ],
 )
 
