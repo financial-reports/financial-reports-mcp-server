@@ -45,7 +45,7 @@ Key params: `company`, `filing_type`, `filing_category`, `country`, `from_date`,
 
 Returns: `{id, company, filing_type, publication_date, period_end_date, language, source_url, pdf_url}`.
 
-Pitfall: `filing_type` differs by jurisdiction (10-K is SEC; "Annual Report" is generic). Use `filing_categories_list` for cross-jurisdiction queries.
+Pitfall: `filing_type` is jurisdiction-specific (e.g. "10-K" for US issuers vs. "Annual Report" generically). Use `filing_categories_list` for cross-jurisdiction queries — categories normalise across markets.
 
 ### `filings_retrieve`
 Single filing detail. **outputSchema-advertised**.
@@ -110,7 +110,7 @@ Lookups for filtering and labeling. All have `_list` and `_retrieve` variants.
 | `filing_categories_list` / `filing_categories_retrieve` | Cross-jurisdiction categories (annual_report, insider_transaction, etc.) |
 | `filing_types_list` / `filing_types_retrieve` | Jurisdiction-specific types (10-K, DEF 14A, AR-Form, etc.) |
 | `languages_list` / `languages_retrieve` | ISO-639 language codes for filings |
-| `sources_list` / `sources_retrieve` | Source regulators (SEC, ESMA, AMF, BaFin, AFM, CMVM, etc.) |
+| `sources_list` / `sources_retrieve` | Source regulators (the canonical list is returned by the API; treat the response as authoritative rather than hardcoding regulator names) |
 
 Use these for **labeling**, not lookup. Don't call `countries_list` to find country IDs — `companies_list?country=US` accepts ISO codes directly.
 
@@ -167,4 +167,4 @@ Pitfall: `event_types` is restrictive (e.g., `filing.published`, `watchlist.chan
 
 ## Authentication
 
-All tools require an authenticated session via Cognito OAuth (handled by the MCP server). Anonymous calls fail with 401. Watchlist and webhook tools additionally require an active subscription tier.
+All tools require an authenticated session via Cognito OAuth (handled by the MCP server). Anonymous calls fail with 401. **The connector is free** — any FinancialReports account (paid or free) has access. Tools may soft-gate on rare account-status conditions (banned, deactivated); when that happens the response is a markdown link pointing the user back to their dashboard.

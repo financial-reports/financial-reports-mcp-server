@@ -1,6 +1,6 @@
 ---
 name: financial-filings-research
-description: Research public companies' regulatory filings, financial data, and industry context using the FinancialReports MCP server. Use when the user mentions a listed company by name, ticker, or ISIN, asks about 10-Ks, 10-Qs, annual or quarterly reports, financial statements (revenue, EBITDA, debt, cash flow), insider transactions, ESG disclosures, or wants to compare companies, screen by industry (ISIC), or set up filings alerts. Covers SEC, ESMA, AMF, BaFin, AFM, CMVM, and other global regulators.
+description: Research public companies' regulatory filings, financial data, and industry context using the FinancialReports MCP server. Use when the user mentions a listed company by name, ticker, or ISIN, asks about 10-Ks, 10-Qs, annual or quarterly reports, financial statements (revenue, EBITDA, debt, cash flow), insider transactions, ESG disclosures, or wants to compare companies, screen by industry (ISIC), or set up filings alerts. Covers 44 markets and 21 languages, sourced from official regulators worldwide.
 ---
 
 # Financial Filings Research
@@ -112,7 +112,7 @@ When the user wants "alert me when any S&P 100 company files an 8-K":
 - **Pagination.** Most list endpoints cap at 100 per page. For screening, explicitly tell the user how many results exist (`count` field) and that you've taken the top N.
 - **Watchlist requires authentication.** `watchlist_*` and `webhooks_*` operate on the authenticated user. Anonymous calls fail.
 - **Markdown size.** `filings_markdown_retrieve` is capped at 150K characters. Long 10-Ks may be truncated — `filings_retrieve` returns the original PDF URL for full-fidelity retrieval.
-- **Free-tier vs paid.** Some tools soft-gate on subscription tier. If you get a markdown upgrade-link response, surface it to the user without retry-looping.
+- **Account-status soft-gate.** All tools are free for any authenticated FinancialReports user (no paid plan required). If a tool unexpectedly returns a markdown gate response pointing at `financialreports.eu`, the user's account needs attention — surface the link to them and stop, don't retry-loop.
 
 ## Example user queries (and the workflows they trigger)
 

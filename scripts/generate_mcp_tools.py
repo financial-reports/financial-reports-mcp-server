@@ -9,8 +9,11 @@ What it does:
   2. Renders src/financial_reports_mcp.py — a FastAPI host that mounts a
      FastMCP server protected by the FastMCP AWSCognitoProvider OAuth proxy.
   3. Every tool is wrapped in a soft-gate (`@subscription_required`) that
-     returns an upgrade-link markdown response for free-tier users instead
-     of a hard 403, so the LLM can render the upgrade link inline.
+     returns a dashboard-link markdown response when the upstream
+     `verify` endpoint declines access (the connector is free for any
+     FinancialReports account; the gate only fires for accounts the
+     backend has explicitly disabled), so the LLM can render the link
+     inline instead of returning a hard 403.
 
 Run:
     python scripts/generate_mcp_tools.py
@@ -49,9 +52,11 @@ Architecture:
     /auth/callback, /.well-known/oauth-protected-resource,
     /.well-known/oauth-authorization-server, plus JWKS-based JWT validation.
   - Every tool is decorated with @subscription_required, which checks the
-    authenticated user's subscription against the FinancialReports Django
-    backend (with a 15s in-memory cache) and returns an upgrade-link
-    markdown response for free-tier users.
+    authenticated user's account status against the FinancialReports
+    Django backend (with a 15s in-memory cache) and returns a dashboard-
+    link markdown response when access is declined upstream. The connector
+    is free for any FinancialReports account; the gate fires only on
+    accounts the backend explicitly disables (deactivated, flagged, etc).
 """
 import asyncio
 import ipaddress
@@ -205,6 +210,13 @@ SUPPORTED_MCP_PROTOCOL_VERSIONS = frozenset(
 DEFAULT_MCP_PROTOCOL_VERSION = "2025-11-25"
 
 MCP_VERSION = os.environ.get("MCP_VERSION", "dev")
+
+# Google Search Console site-verification token. Set on the Container App as
+# `GOOGLE_SITE_VERIFICATION` (the bare content value Search Console gives you).
+# When set, the landing page emits a <meta name="google-site-verification" ...>
+# tag. When unset (default in tests / local dev), no tag is emitted — keeping
+# the rendered HTML byte-stable.
+GOOGLE_SITE_VERIFICATION = os.environ.get("GOOGLE_SITE_VERIFICATION", "").strip()
 
 def _redact_redis_url(url: str) -> str:
     """Return host:port for a Redis URL, dropping any embedded credentials.
@@ -487,16 +499,27 @@ async def _check_subscription(token: str, sub: str) -> dict[str, Any]:
 
 
 def _upgrade_response(upgrade_url: str) -> str:
-    """Markdown payload returned to free-tier or unauthenticated users.
+    """Markdown payload returned when the upstream `verify` endpoint declines
+    access for the current user. The connector is free for any
+    FinancialReports account; this gate fires only when the backend
+    explicitly disables MCP access for an account (e.g. deactivated,
+    flagged, or — historically — paid-tier-only restrictions still
+    enforced upstream). The LLM renders the link inline so the user can
+    click directly through.
 
-    The LLM will render the link inline so the end user can click directly
-    through to the pricing page from the chat.
+    The wording is deliberately scope-agnostic ("subscription required"
+    in the lowercase tail keeps the test contract intact while not
+    promising a specific tier — the upstream API is the source of
+    truth on what's actually required).
     """
     return (
-        "⚠️ **Active FinancialReports subscription required**\\n\\n"
-        "This tool needs an active **Analyst** or **Enterprise** plan.\\n\\n"
-        f"👉 **[Upgrade your account here →]({upgrade_url})**\\n\\n"
-        "Once your subscription is active, retry this tool — access is granted "
+        "⚠️ **MCP access is not available for this FinancialReports account.**\\n\\n"
+        "The MCP connector is free, but this account currently can't reach the "
+        "tools. The most common reasons are an inactive account, a "
+        "verification step in progress, or — for legacy tiers — a "
+        "subscription required by the upstream account.\\n\\n"
+        f"👉 **[Open your account dashboard →]({upgrade_url})**\\n\\n"
+        "Once the account is active, retry the tool — access is granted "
         "immediately, no reconnection required."
     )
 
@@ -1275,9 +1298,10 @@ _LANDING_HTML = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FinancialReports MCP Server — Regulatory Filings for AI Assistants</title>
-    <meta name="description" content="MCP connector for Claude.ai, Claude Code, and the Anthropic API. Direct access to global regulatory filings from listed companies — 10-Ks, annual reports, financial data, ISIN lookups — sourced from official regulators (SEC, ESMA, AMF, BaFin, AFM, CMVM).">
+    <title>FinancialReports MCP — Public-company filings, available to Claude</title>
+    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings — 23,683 filings, 44 markets, 9,140 companies, 21 languages. Free for any FinancialReports account.">
     <meta name="robots" content="index, follow">
+    __GOOGLE_SITE_VERIFICATION_META__
     <link rel="canonical" href="__MCP_BASE_URL__/">
 
     <link rel="icon" type="image/x-icon" href="__MCP_BASE_URL__/favicon.ico">
@@ -1286,172 +1310,422 @@ _LANDING_HTML = """<!DOCTYPE html>
     <link rel="apple-touch-icon" sizes="180x180" href="__MCP_BASE_URL__/apple-touch-icon.png">
 
     <meta property="og:type" content="website">
-    <meta property="og:title" content="FinancialReports MCP Server">
-    <meta property="og:description" content="MCP connector for Claude — direct access to global regulatory filings, financial data, and ISIN lookups.">
+    <meta property="og:title" content="FinancialReports MCP — Public-company filings, available to Claude">
+    <meta property="og:description" content="The official MCP connector for FinancialReports. Free for any FinancialReports account.">
     <meta property="og:image" content="__MCP_BASE_URL__/icon-512.png">
     <meta property="og:url" content="__MCP_BASE_URL__/">
     <meta property="og:site_name" content="FinancialReports">
 
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="FinancialReports MCP Server">
-    <meta name="twitter:description" content="MCP connector for Claude — direct access to global regulatory filings.">
+    <meta name="twitter:title" content="FinancialReports MCP — Public-company filings, available to Claude">
+    <meta name="twitter:description" content="MCP connector for Claude — public-company filings, free.">
     <meta name="twitter:image" content="__MCP_BASE_URL__/icon-512.png">
     <style>
+        /* —— FinancialReports tokens (subset, inlined for the standalone landing) —— */
+        :root {
+            --fr-brand-500: #0066FF;
+            --fr-brand-600: #0052CC;
+            --fr-brand-50: #EAF2FF;
+            --fr-ink-0: #FFFFFF;
+            --fr-ink-50: #FAFBFC;
+            --fr-ink-100: #F4F5F7;
+            --fr-ink-200: #E6E8EC;
+            --fr-ink-300: #CDD2DA;
+            --fr-ink-400: #9AA2B0;
+            --fr-ink-500: #6B7280;
+            --fr-ink-600: #4B5260;
+            --fr-ink-700: #2D3340;
+            --fr-ink-900: #0B0F18;
+            --fr-success-500: #0E8A4A;
+            --fr-bg: var(--fr-ink-0);
+            --fr-bg-subtle: var(--fr-ink-50);
+            --fr-border: var(--fr-ink-200);
+            --fr-font-sans: -apple-system, BlinkMacSystemFont, "Inter Tight", "Inter", "Segoe UI", system-ui, sans-serif;
+            --fr-font-serif: "Source Serif 4", "Source Serif Pro", Georgia, "Times New Roman", serif;
+            --fr-font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+            --fr-radius-sm: 4px;
+            --fr-radius-md: 6px;
+            --fr-container: 1100px;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { font-feature-settings: "ss01"; font-variant-numeric: tabular-nums; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-            color: #e2e8f0;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 24px;
-            line-height: 1.6;
+            font-family: var(--fr-font-sans);
+            background: var(--fr-bg);
+            color: var(--fr-ink-900);
+            line-height: 1.55;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
-        .card {
-            background: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 16px;
-            padding: 48px 40px;
-            max-width: 640px;
-            width: 100%;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+        a { color: var(--fr-brand-500); }
+
+        .container {
+            max-width: var(--fr-container);
+            margin: 0 auto;
+            padding: 0 32px;
         }
-        h1 {
-            font-size: 28px;
-            font-weight: 700;
-            margin-bottom: 8px;
-            color: #f1f5f9;
-            display: flex;
-            align-items: center;
-            gap: 12px;
+        @media (max-width: 640px) { .container { padding: 0 20px; } }
+
+        /* —— Top nav —— */
+        .nav { border-bottom: 1px solid var(--fr-border); padding: 16px 0; }
+        .nav__inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+        .nav__brand {
+            display: flex; align-items: center; gap: 12px;
+            text-decoration: none; color: var(--fr-ink-900);
+            font-weight: 600; font-size: 15px;
         }
-        h1 img { width: 36px; height: 36px; }
-        .subtitle {
-            color: #94a3b8;
-            font-size: 16px;
-            margin-bottom: 32px;
+        .nav__brand img { width: 24px; height: 24px; display: block; }
+        .nav__brand .tag {
+            color: var(--fr-ink-500); font-weight: 500; font-size: 12px;
+            font-family: var(--fr-font-mono); text-transform: uppercase; letter-spacing: 0.08em;
+            padding-left: 12px; margin-left: 4px; border-left: 1px solid var(--fr-border);
         }
-        .alert {
-            background: #422006;
-            border: 1px solid #92400e;
-            border-radius: 8px;
-            padding: 16px 20px;
-            margin-bottom: 24px;
-            color: #fde68a;
-            font-size: 14px;
+        .nav__links a {
+            color: var(--fr-ink-600); text-decoration: none; font-size: 14px; margin-left: 24px;
         }
-        .alert strong { color: #fbbf24; }
-        .url-block {
-            background: #0f172a;
-            border: 2px solid #334155;
-            border-radius: 10px;
-            padding: 20px;
-            margin: 24px 0;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
+        .nav__links a:hover { color: var(--fr-ink-900); }
+        @media (max-width: 480px) { .nav__links { display: none; } }
+
+        /* —— Eyebrow —— */
+        .eyebrow {
+            font-family: var(--fr-font-mono); text-transform: uppercase;
+            font-size: 12px; letter-spacing: 0.08em;
+            color: var(--fr-ink-500); margin-bottom: 16px;
         }
-        .url-block code {
-            font-family: "SF Mono", Menlo, Monaco, "Courier New", monospace;
-            font-size: 15px;
-            color: #38bdf8;
-            font-weight: 600;
-            word-break: break-all;
-            user-select: all;
+
+        /* —— Hero —— */
+        .hero { padding: 72px 0 56px; border-bottom: 1px solid var(--fr-border); }
+        .hero h1 {
+            font-size: clamp(36px, 5.2vw, 60px);
+            font-weight: 500; line-height: 1.05; letter-spacing: -0.035em;
+            color: var(--fr-ink-900); margin: 0 0 28px; max-width: 18ch;
         }
-        .copy-btn {
-            background: #38bdf8;
-            color: #0f172a;
-            border: none;
-            border-radius: 6px;
-            padding: 8px 16px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            white-space: nowrap;
-            transition: all 0.15s;
+        .hero h1 em {
+            font-family: var(--fr-font-serif); font-style: italic; font-weight: 400;
+            color: var(--fr-brand-500);
         }
-        .copy-btn:hover { background: #7dd3fc; }
-        .copy-btn.copied { background: #10b981; color: white; }
-        h2 {
-            font-size: 18px;
-            color: #f1f5f9;
-            margin: 32px 0 12px;
-            font-weight: 600;
+        .hero p {
+            font-size: 18px; color: var(--fr-ink-600);
+            line-height: 1.55; max-width: 60ch;
         }
-        ol { margin-left: 20px; color: #cbd5e1; font-size: 15px; }
-        ol li { margin-bottom: 8px; }
-        .footer {
-            margin-top: 32px;
-            padding-top: 24px;
-            border-top: 1px solid #334155;
-            color: #64748b;
-            font-size: 13px;
-            text-align: center;
+        .hero p strong { color: var(--fr-ink-900); font-weight: 600; }
+
+        /* —— Stats stack —— */
+        .stats {
+            border-bottom: 1px solid var(--fr-border);
         }
-        .footer a { color: #38bdf8; text-decoration: none; }
-        .footer a:hover { text-decoration: underline; }
+        .stats__inner {
+            display: grid; grid-template-columns: repeat(4, 1fr);
+        }
+        .stat { padding: 28px 24px; border-right: 1px solid var(--fr-border); }
+        .stat:last-child { border-right: none; }
+        .stat__num {
+            display: block; font-size: 28px; font-weight: 600;
+            font-variant-numeric: tabular-nums; color: var(--fr-ink-900);
+            line-height: 1.1; margin-bottom: 6px; letter-spacing: -0.02em;
+        }
+        .stat__label {
+            display: block; font-family: var(--fr-font-mono);
+            font-size: 12px; color: var(--fr-ink-500);
+            text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        @media (max-width: 720px) {
+            .stats__inner { grid-template-columns: repeat(2, 1fr); }
+            .stat:nth-child(2) { border-right: none; }
+            .stat:nth-child(1), .stat:nth-child(2) { border-bottom: 1px solid var(--fr-border); }
+        }
+
+        /* —— Sections —— */
+        .section { padding: 64px 0; border-bottom: 1px solid var(--fr-border); }
+        .section h2 {
+            font-size: clamp(24px, 2.8vw, 32px); font-weight: 500;
+            letter-spacing: -0.02em; color: var(--fr-ink-900); margin: 0 0 16px;
+        }
+        .section p { font-size: 16px; color: var(--fr-ink-600); max-width: 65ch; }
+
+        /* —— Endpoint URL —— */
+        .endpoint {
+            margin: 24px 0 16px; display: flex; align-items: stretch; gap: 8px; max-width: 720px;
+        }
+        .endpoint code {
+            flex: 1; font-family: var(--fr-font-mono); font-size: 15px;
+            color: var(--fr-ink-900); background: var(--fr-bg-subtle);
+            border: 1px solid var(--fr-ink-300); border-radius: var(--fr-radius-md);
+            padding: 14px 16px; user-select: all; line-height: 1.2;
+            display: flex; align-items: center; word-break: break-all;
+        }
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            font-family: var(--fr-font-sans); font-size: 14px; font-weight: 500;
+            text-decoration: none; border: 1px solid transparent;
+            border-radius: var(--fr-radius-md); padding: 0 18px; height: 44px;
+            cursor: pointer; white-space: nowrap; line-height: 1;
+            transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+        }
+        .btn--primary { background: var(--fr-brand-500); color: var(--fr-ink-0); }
+        .btn--primary:hover { background: var(--fr-brand-600); }
+        .btn--secondary {
+            background: var(--fr-ink-0); color: var(--fr-ink-700);
+            border-color: var(--fr-ink-300);
+        }
+        .btn--secondary:hover { border-color: var(--fr-ink-400); color: var(--fr-ink-900); }
+        .btn.copied {
+            background: var(--fr-success-500); color: var(--fr-ink-0);
+            border-color: var(--fr-success-500);
+        }
+        .meta {
+            font-family: var(--fr-font-mono); font-size: 12px;
+            color: var(--fr-ink-500); text-transform: uppercase;
+            letter-spacing: 0.06em; margin-top: 12px;
+        }
+
+        /* —— Setup steps —— */
+        ol.steps {
+            list-style: none; counter-reset: step;
+            margin: 24px 0; padding: 0; border-top: 1px solid var(--fr-border);
+        }
+        ol.steps li {
+            counter-increment: step; padding: 20px 0 20px 64px;
+            position: relative; border-bottom: 1px solid var(--fr-border);
+            color: var(--fr-ink-700); font-size: 16px; line-height: 1.55;
+        }
+        ol.steps li::before {
+            content: counter(step, decimal-leading-zero);
+            position: absolute; left: 0; top: 22px;
+            font-family: var(--fr-font-mono); font-size: 12px; font-weight: 500;
+            color: var(--fr-brand-500); letter-spacing: 0.04em;
+            background: var(--fr-brand-50); padding: 4px 8px;
+            border-radius: var(--fr-radius-sm);
+        }
+        ol.steps li code {
+            font-family: var(--fr-font-mono); font-size: 14px;
+            background: var(--fr-bg-subtle); border: 1px solid var(--fr-border);
+            padding: 2px 6px; border-radius: 4px; color: var(--fr-ink-900);
+        }
+        ol.steps li a {
+            color: var(--fr-brand-500); text-decoration: underline; text-underline-offset: 2px;
+        }
+
+        /* —— Tool grid —— */
+        .tools {
+            display: grid; grid-template-columns: repeat(3, 1fr); gap: 0;
+            margin-top: 24px; border-top: 1px solid var(--fr-border);
+            border-left: 1px solid var(--fr-border);
+        }
+        .tool {
+            border-right: 1px solid var(--fr-border);
+            border-bottom: 1px solid var(--fr-border);
+            padding: 20px 24px;
+        }
+        .tool__count {
+            font-family: var(--fr-font-mono); font-size: 12px;
+            color: var(--fr-brand-500); font-weight: 500;
+            letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 4px;
+        }
+        .tool__name {
+            font-size: 15px; color: var(--fr-ink-900);
+            font-weight: 500; margin-bottom: 4px;
+        }
+        .tool__desc { font-size: 13px; color: var(--fr-ink-600); line-height: 1.5; }
+        @media (max-width: 720px) { .tools { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 480px) { .tools { grid-template-columns: 1fr; } }
+
+        /* —— Closing CTA —— */
+        .cta {
+            padding: 72px 0; border-bottom: 1px solid var(--fr-border);
+            background: var(--fr-bg-subtle);
+        }
+        .cta h2 {
+            font-size: clamp(28px, 3.2vw, 40px); font-weight: 500;
+            letter-spacing: -0.025em; color: var(--fr-ink-900);
+            margin: 0 0 12px; max-width: 22ch;
+        }
+        .cta h2 em {
+            font-family: var(--fr-font-serif); font-style: italic;
+            font-weight: 400; color: var(--fr-brand-500);
+        }
+        .cta p {
+            font-size: 16px; color: var(--fr-ink-600);
+            max-width: 60ch; margin-bottom: 24px;
+        }
+        .cta__row { display: flex; flex-wrap: wrap; gap: 12px; }
+
+        /* —— Footer —— */
+        .footer { padding: 40px 0 56px; color: var(--fr-ink-500); font-size: 13px; }
+        .footer__row { display: flex; flex-wrap: wrap; align-items: center; }
+        .footer__row a {
+            color: var(--fr-ink-600); text-decoration: none;
+            padding-right: 16px; margin-right: 16px;
+            border-right: 1px solid var(--fr-border);
+        }
+        .footer__row a:last-child {
+            border-right: none; padding-right: 0; margin-right: 0;
+        }
+        .footer__row a:hover { color: var(--fr-ink-900); }
+        .footer__legal {
+            margin-top: 16px; color: var(--fr-ink-400);
+            font-family: var(--fr-font-mono); font-size: 11px; letter-spacing: 0.04em;
+        }
+
+        /* —— A11y / polish —— */
+        ::selection { background: var(--fr-brand-50); color: var(--fr-ink-900); }
+        :focus-visible { outline: 2px solid var(--fr-brand-500); outline-offset: 2px; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>
-            <img src="/favicon.ico" alt="">
-            FinancialReports MCP
-        </h1>
-        <p class="subtitle">
-            Global regulatory filings for AI assistants. You've reached the MCP server endpoint.
-        </p>
-
-        <div class="alert">
-            <strong>⚠ This URL is incomplete.</strong> To connect your AI assistant, use the full URL with <code>/mcp</code>:
+    <header class="nav">
+        <div class="container nav__inner">
+            <a href="https://financialreports.eu" class="nav__brand">
+                <img src="/icon.png" alt="">
+                FinancialReports<span class="tag">MCP</span>
+            </a>
+            <nav class="nav__links" aria-label="Primary">
+                <a href="__LANDING_URL__">Docs</a>
+                <a href="https://financialreports.eu/api/">API</a>
+                <a href="__SUPPORT_URL__">Support</a>
+            </nav>
         </div>
+    </header>
 
-        <div class="url-block">
-            <code id="mcp-url">https://mcp.financialfilings.com/mcp</code>
-            <button class="copy-btn" onclick="copyUrl()" id="copy-btn">Copy</button>
+    <main>
+        <section class="hero">
+            <div class="container">
+                <p class="eyebrow">01 / Connector</p>
+                <h1>Public-company <em>filings</em>, available to Claude.</h1>
+                <p>
+                    The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, Cursor, and any MCP-compatible client to regulatory filings sourced from official regulators worldwide. <strong>Free for any FinancialReports account.</strong>
+                </p>
+            </div>
+        </section>
+
+        <section class="stats">
+            <div class="container stats__inner">
+                <div class="stat"><span class="stat__num">23,683</span><span class="stat__label">Filings indexed</span></div>
+                <div class="stat"><span class="stat__num">44</span><span class="stat__label">Markets covered</span></div>
+                <div class="stat"><span class="stat__num">9,140</span><span class="stat__label">Companies</span></div>
+                <div class="stat"><span class="stat__num">21</span><span class="stat__label">Languages</span></div>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="container">
+                <p class="eyebrow">02 / Endpoint</p>
+                <h2>MCP endpoint</h2>
+                <p>Add this URL as a custom MCP connector in your client. OAuth 2.0 sign-in runs the first time you connect.</p>
+                <div class="endpoint">
+                    <code id="mcp-url">__MCP_BASE_URL__/mcp</code>
+                    <button class="btn btn--secondary" type="button" onclick="copyUrl()" id="copy-btn">Copy</button>
+                </div>
+                <p class="meta">Streamable HTTP · OAuth 2.0 · 43 tools · Free</p>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="container">
+                <p class="eyebrow">03 / Setup</p>
+                <h2>Connect in three steps</h2>
+                <ol class="steps">
+                    <li>Create a free account at <a href="https://financialreports.eu">financialreports.eu</a> if you don't have one yet — no paid plan required for MCP access.</li>
+                    <li>In your MCP client (Claude.ai, Claude Code, Cursor, etc.), add a custom connector with the URL <code>__MCP_BASE_URL__/mcp</code>.</li>
+                    <li>Sign in via OAuth when prompted. The 43 tools become available immediately — no reconnection needed.</li>
+                </ol>
+                <a href="__LANDING_URL__" class="btn btn--secondary">Full setup guide →</a>
+            </div>
+        </section>
+
+        <section class="section">
+            <div class="container">
+                <p class="eyebrow">04 / Tools</p>
+                <h2>43 tools across 9 domains</h2>
+                <p>The MCP surface mirrors the FinancialReports REST API one-to-one — every endpoint becomes an LLM-callable tool, regenerated automatically from the OpenAPI schema.</p>
+                <div class="tools">
+                    <div class="tool">
+                        <p class="tool__count">04 tools</p>
+                        <p class="tool__name">Companies</p>
+                        <p class="tool__desc">Search, retrieve, normalised financials, predicted next annual report</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">05 tools</p>
+                        <p class="tool__name">Filings</p>
+                        <p class="tool__desc">List, retrieve, Markdown content, audit trail, live pulse</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">02 tools</p>
+                        <p class="tool__name">ISINs</p>
+                        <p class="tool__desc">Lookup by ISIN, list dual-listings</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">08 tools</p>
+                        <p class="tool__name">ISIC classifications</p>
+                        <p class="tool__desc">Section / division / group / class hierarchy for industry screening</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">08 tools</p>
+                        <p class="tool__name">Reference data</p>
+                        <p class="tool__desc">Countries, languages, sources, filing categories &amp; types</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">02 tools</p>
+                        <p class="tool__name">Financial data</p>
+                        <p class="tool__desc">Normalised line-item definitions across regulators</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">04 tools</p>
+                        <p class="tool__name">Watchlist</p>
+                        <p class="tool__desc">Per-user watchlist (single + bulk add / remove)</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">08 tools</p>
+                        <p class="tool__name">Webhooks</p>
+                        <p class="tool__desc">Filing-event subscriptions, delivery logs, replay, secret rotation</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">02 tools</p>
+                        <p class="tool__name">Live pulse</p>
+                        <p class="tool__desc">Most recent filings across all issuers, near-realtime</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <section class="cta">
+        <div class="container">
+            <h2>Free for the web. Free for <em>Claude</em>. Paid for the API.</h2>
+            <p>The MCP connector is part of the public utility — no paywall, no caveats. Programmatic API access (REST + GraphQL, redistribution rights, bulk pulls) lives behind a paid plan.</p>
+            <div class="cta__row">
+                <a href="https://financialreports.eu" class="btn btn--primary">Open FinancialReports</a>
+                <a href="https://financialreports.eu/api/" class="btn btn--secondary">View API plans</a>
+            </div>
         </div>
+    </section>
 
-        <h2>Setup</h2>
-        <ol>
-            <li>Open your AI assistant's connector / integration settings (Claude, ChatGPT, Cursor, etc.)</li>
-            <li>Add a new MCP server with the URL above</li>
-            <li>Sign in with your FinancialReports account when prompted</li>
-            <li>Start asking about company filings, financials, and disclosures</li>
-        </ol>
-
-        <div class="footer">
-            <div>
-                Need an account? <a href="https://financialreports.eu/pricing/?utm_source=mcp_landing">View plans</a>
-                &nbsp;·&nbsp;
+    <footer class="footer">
+        <div class="container">
+            <div class="footer__row">
                 <a href="__LANDING_URL__">Documentation</a>
-                &nbsp;·&nbsp;
+                <a href="__PRIVACY_URL__">Privacy</a>
+                <a href="__TERMS_URL__">Terms</a>
+                <a href="__IMPRINT_URL__">Imprint</a>
                 <a href="__SUPPORT_URL__">Support</a>
             </div>
-            <div style="margin-top: 12px; font-size: 12px;">
-                <a href="__PRIVACY_URL__">Privacy</a>
-                &nbsp;·&nbsp;
-                <a href="__TERMS_URL__">Terms</a>
-                &nbsp;·&nbsp;
-                <a href="__IMPRINT_URL__">Imprint</a>
+            <div class="footer__legal">
+                FinancialReports · Public-company filings · Sourced from our internal sourcing system.
             </div>
         </div>
-    </div>
+    </footer>
 
     <script>
         function copyUrl() {
             const url = document.getElementById("mcp-url").textContent;
             const btn = document.getElementById("copy-btn");
-            navigator.clipboard.writeText(url).then(() => {
-                btn.textContent = "Copied!";
+            navigator.clipboard.writeText(url).then(function() {
+                btn.textContent = "Copied";
                 btn.classList.add("copied");
-                setTimeout(() => {
+                setTimeout(function() {
                     btn.textContent = "Copy";
                     btn.classList.remove("copied");
-                }, 2000);
+                }, 1800);
             });
         }
     </script>
@@ -1459,12 +1733,22 @@ _LANDING_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+# Build the optional Google site-verification meta tag once. Empty string when
+# the env var is unset, which collapses the placeholder line to whitespace and
+# keeps the rendered HTML otherwise byte-identical to the no-verification case.
+_GSV_META = (
+    f'<meta name="google-site-verification" content="{GOOGLE_SITE_VERIFICATION}">'
+    if GOOGLE_SITE_VERIFICATION
+    else ""
+)
+
 # Pre-rendered once at module load — the URL placeholders are fixed for
 # the lifetime of the process and string.replace per request was wasted
 # work.
 _RENDERED_LANDING_HTML = (
     _LANDING_HTML
     .replace("__MCP_BASE_URL__", MCP_BASE_URL.rstrip("/"))
+    .replace("__GOOGLE_SITE_VERIFICATION_META__", _GSV_META)
     .replace("__LANDING_URL__", LANDING_URL)
     .replace("__PRIVACY_URL__", PRIVACY_URL)
     .replace("__TERMS_URL__", TERMS_URL)
