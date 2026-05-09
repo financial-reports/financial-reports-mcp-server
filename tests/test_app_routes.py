@@ -238,8 +238,15 @@ def test_mcp_echoes_protocol_version_header(mcp_module) -> None:
 
 def test_www_authenticate_includes_scope_param(mcp_module) -> None:
     """Spec SHOULD: 'MCP servers SHOULD include a `scope` parameter in the
-    WWW-Authenticate header.' We add it via middleware since FastMCP's
-    own middleware emits only error/error_description/resource_metadata."""
+    WWW-Authenticate header.' Advertised scopes MUST match what the AS
+    accepts on /register — Claude reads this hint and uses it as the
+    `scope` value on dynamic client registration.
+
+    Originally set to "mcp:read"; that broke production because Cognito
+    has no such scope and DCR rejected every Claude attempt with
+    `invalid_client_metadata`. The user-visible symptom was "Couldn't
+    reach the MCP server". The fix is to advertise the same scopes
+    `scopes_supported` lists (openid email profile)."""
     with TestClient(mcp_module.app) as client:
         resp = client.post(
             "/mcp",
@@ -251,10 +258,43 @@ def test_www_authenticate_includes_scope_param(mcp_module) -> None:
         )
     assert resp.status_code == 401
     www = resp.headers["www-authenticate"]
-    assert 'scope="mcp:read"' in www
+    assert 'scope="openid email profile"' in www
     # Existing fields must still be there — we augment, not replace.
     assert "resource_metadata=" in www
     assert 'error="invalid_token"' in www
+
+
+def test_www_authenticate_scope_is_actually_registerable(mcp_module) -> None:
+    """REGRESSION: prevent advertising a scope on /mcp 401 that /register
+    will reject. Earlier we shipped `scope="mcp:read"` which Cognito
+    didn't recognize; Claude faithfully echoed it on DCR and every
+    registration 400'd. This test ties the WWW-Authenticate hint to the
+    scopes_supported list in /.well-known/oauth-authorization-server."""
+    with TestClient(mcp_module.app) as client:
+        # Pull the WWW-Authenticate scope value from a 401.
+        r = client.post(
+            "/mcp",
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json,text/event-stream",
+            },
+            json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+        )
+    www = r.headers["www-authenticate"]
+    import re as _re
+
+    m = _re.search(r'scope="([^"]+)"', www)
+    assert m, f"no scope= in WWW-Authenticate: {www!r}"
+    advertised = set(m.group(1).split())
+
+    # All advertised scopes MUST be a subset of the AS's scopes_supported,
+    # because Claude will replay them on /register and the MCP shared
+    # register handler rejects anything not in the AS's allowlist.
+    assert advertised.issubset({"openid", "email", "profile"}), (
+        f"WWW-Authenticate advertises {advertised!r} which Cognito doesn't "
+        f"register; DCR will reject it. Either expand Cognito's scopes or "
+        f"narrow the WWW-Authenticate hint."
+    )
 
 
 def test_initialize_advertises_multi_size_icons(mcp_module) -> None:
