@@ -230,6 +230,32 @@ else:
         "every deploy."
     )
 
+# Explicit allowlist of redirect URIs MCP clients (Claude, ChatGPT,
+# Cursor, etc.) may register via Dynamic Client Registration. Passing an
+# explicit list makes the policy auditable for Anthropic's connector
+# review and prevents accidental regression if FastMCP's default ever
+# flips back to localhost-only.
+ALLOWED_CLIENT_REDIRECT_URI_PATTERNS = [
+    # Anthropic — current and legacy hostnames.
+    "https://claude.ai/api/mcp/auth_callback",
+    "https://claude.com/api/mcp/auth_callback",
+    "https://*.claude.ai/*",
+    "https://*.claude.com/*",
+    "https://*.anthropic.com/*",
+    # OpenAI / ChatGPT MCP integrations.
+    "https://chatgpt.com/*",
+    "https://chat.openai.com/*",
+    # Cursor.
+    "https://cursor.sh/*",
+    "https://www.cursor.com/*",
+    "https://*.cursor.com/*",
+    "cursor://*",
+    # Local development (mcp-inspector, dev tools).
+    "http://localhost:*",
+    "http://127.0.0.1:*",
+    "http://[::1]:*",
+]
+
 auth_provider = AWSCognitoProvider(
     user_pool_id=COGNITO_USER_POOL_ID,
     aws_region=COGNITO_REGION,
@@ -238,6 +264,7 @@ auth_provider = AWSCognitoProvider(
     base_url=MCP_BASE_URL,
     redirect_path="/auth/callback",
     required_scopes=["openid", "email", "profile"],
+    allowed_client_redirect_uris=ALLOWED_CLIENT_REDIRECT_URI_PATTERNS,
     client_storage=_oauth_storage,
 )
 
@@ -545,6 +572,86 @@ def _require_auth_context() -> None:
     if not _current_token.get():
         logger.error("tool wrapper called without a token in context")
         raise RuntimeError("Authentication required.")
+
+
+class SubscriptionGateError(RuntimeError):
+    """Raised by structured tools when the caller lacks an active subscription.
+
+    Structured tools (`output_schema=` declared) can't return the markdown
+    upgrade-link soft-gate response that unstructured tools use, because
+    the markdown string would not conform to the declared schema and
+    FastMCP would emit a server error. Instead they raise this; FastMCP
+    surfaces it as a tool error (`isError: true`) with this exception's
+    message as the tool's text content. The LLM sees the upgrade prompt
+    in the same form it would have seen it as a soft-gate.
+    """
+
+
+async def _authorize_or_raise() -> tuple[Any, Any]:
+    """Token-validate + subscription-check for structured tools.
+
+    Same checks `subscription_required` runs, but raises
+    `SubscriptionGateError` instead of returning markdown when the
+    caller is unauthorized. Returns the (token_reset, user_reset)
+    pair the tool body must reset in `finally`.
+    """
+    try:
+        access_token = get_access_token()
+    except Exception as exc:
+        logger.warning("get_access_token raised: %s", exc)
+        raise SubscriptionGateError(_upgrade_response(UPGRADE_URL)) from exc
+
+    if access_token is None:
+        raise SubscriptionGateError(_upgrade_response(UPGRADE_URL))
+
+    claims = getattr(access_token, "claims", {}) or {}
+    sub = claims.get("sub")
+    raw_token = getattr(access_token, "token", None)
+
+    if not sub or not raw_token:
+        raise SubscriptionGateError(_upgrade_response(UPGRADE_URL))
+
+    token_client_id = claims.get("client_id") or getattr(
+        access_token, "client_id", None
+    )
+    if token_client_id != COGNITO_CLIENT_ID:
+        logger.warning(
+            "rejecting token: client_id=%r expected=%r sub=%s",
+            token_client_id,
+            COGNITO_CLIENT_ID,
+            sub[:8],
+        )
+        raise SubscriptionGateError(_upgrade_response(UPGRADE_URL))
+
+    canonical_resource = f"{MCP_BASE_URL.rstrip('/')}/mcp"
+    accepted_audiences = {COGNITO_CLIENT_ID, canonical_resource, MCP_BASE_URL.rstrip("/")}
+    aud_claim = claims.get("aud")
+    if aud_claim is not None:
+        aud_values = aud_claim if isinstance(aud_claim, list) else [aud_claim]
+        if not any(a in accepted_audiences for a in aud_values):
+            logger.warning(
+                "rejecting token: aud=%r not in %r sub=%s",
+                aud_claim,
+                accepted_audiences,
+                sub[:8],
+            )
+            raise SubscriptionGateError(_upgrade_response(UPGRADE_URL))
+
+    check = await _check_subscription(raw_token, sub)
+    if not check.get("authorized"):
+        raise SubscriptionGateError(
+            _upgrade_response(check.get("upgrade_url") or UPGRADE_URL)
+        )
+
+    token_reset = _current_token.set(raw_token)
+    user_reset = _current_user.set(check)
+    return token_reset, user_reset
+
+
+def _release_auth_context(resets: tuple[Any, Any]) -> None:
+    token_reset, user_reset = resets
+    _current_token.reset(token_reset)
+    _current_user.reset(user_reset)
 
 
 def _format_response(response: httpx.Response) -> str:
@@ -1409,6 +1516,73 @@ async def {{ func_name }}(
 '''
 
 
+# Structured-output GET tools. Same shape as GET_TOOL_TEMPLATE but:
+#   - emits `output_schema={...}` on the @mcp.tool decorator, so the
+#     server advertises a JSON Schema for its result;
+#   - returns the parsed-JSON dict on success so FastMCP can emit
+#     `structuredContent` per MCP 2025-11-25 §Tools §Output Schema:
+#       "If an output schema is provided: Servers MUST provide structured
+#        results that conform to this schema. Clients SHOULD validate."
+#   - uses `_authorize_or_raise` instead of `subscription_required` so
+#     the unauthorized soft-gate becomes a tool error (markdown payload
+#     surfaced via the SubscriptionGateError) — markdown can't be
+#     returned alongside a typed schema.
+#   - on upstream HTTP errors raises ToolInputError-shaped messages so
+#     they surface as `isError: true` text content rather than as a
+#     schema-conformance failure.
+STRUCTURED_GET_TOOL_TEMPLATE = '''
+@mcp.tool(
+    tags={{ tags }},
+    annotations=ToolAnnotations(
+        title="{{ title }}",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+    output_schema={{ output_schema_repr }},
+)
+async def {{ func_name }}(
+    {%- for param in params %}
+    {{ param.name }}: {{ param.py_type }}{{ param.default_val }},
+    {%- endfor %}
+) -> dict[str, Any]:
+    """{{ description }}"""
+    resets = await _authorize_or_raise()
+    try:
+        query_params: dict[str, Any] = {
+            {%- for param in params if param.is_query %}
+            "{{ param.original_name }}": {{ param.name }},
+            {%- endfor %}
+        }
+        path_params: dict[str, str] = {}
+        {%- for param in params if param.is_path %}
+        if {{ param.name }} is not None:
+            path_params["{{ param.original_name }}"] = _validate_path_param(
+                "{{ param.original_name }}", {{ param.name }}
+            )
+        {%- endfor %}
+        url = "{{ path }}"
+        if path_params:
+            url = url.format(**path_params)
+
+        response = await _api_client.get(
+            url,
+            params={k: v for k, v in query_params.items() if v is not None},
+        )
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"upstream {{ func_name }} returned {response.status_code}"
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"upstream {{ func_name }} returned non-JSON body") from exc
+    finally:
+        _release_auth_context(resets)
+'''
+
+
 FILE_FOOTER = '''
 
 # ---------------------------------------------------------------------------
@@ -1444,6 +1618,73 @@ def resolve_ref(full_schema: dict, ref: str) -> dict:
     for part in ref[2:].split("/"):
         current = current.get(part, {}) if isinstance(current, dict) else {}
     return current
+
+
+# Tools whose response shape is well-defined and stable enough to commit
+# to as a server-advertised JSON Schema. The MCP 2025-11-25 spec MAKES
+# `outputSchema` optional but, when declared, mandates that returned
+# results conform — so we keep this list narrow on purpose. Adding new
+# tools here is a deliberate spec-contract choice: new tools may be
+# added freely with markdown output (no schema) and only get promoted
+# to the structured set once their response shape is reviewed.
+STRUCTURED_OUTPUT_TOOLS = {
+    "companies_list",
+    "companies_retrieve",
+    "companies_financials_retrieve",
+    "filings_list",
+    "filings_retrieve",
+    "isins_list",
+}
+
+
+def deeply_inline_refs(node: Any, full_schema: dict, _seen: tuple[str, ...] = ()) -> Any:
+    """Walk a JSON-Schema fragment and substitute any `$ref` with the
+    referenced node, inlined.
+
+    OpenAPI uses `$ref` everywhere; the MCP `outputSchema` field is a
+    standalone JSON Schema and renderers can't always follow refs back
+    into a parent document. Inlining produces a self-contained schema.
+
+    Cycle protection: `_seen` tracks the chain of refs we're inside; if
+    we hit one we've already visited, we stop expansion (replace with
+    `{}` so the outer schema is still well-formed). Real OpenAPI rarely
+    cycles in response shapes, but defence in depth.
+    """
+    if isinstance(node, dict):
+        if "$ref" in node and isinstance(node["$ref"], str):
+            ref = node["$ref"]
+            if ref in _seen:
+                # Cycle — stop here. The advertised schema becomes a
+                # permissive object at this point rather than infinite.
+                return {"type": "object", "additionalProperties": True}
+            target = resolve_ref(full_schema, ref)
+            if not target:
+                return {}
+            return deeply_inline_refs(target, full_schema, _seen + (ref,))
+        out: dict[str, Any] = {}
+        for k, v in node.items():
+            if k == "$ref":
+                continue
+            out[k] = deeply_inline_refs(v, full_schema, _seen)
+        return out
+    if isinstance(node, list):
+        return [deeply_inline_refs(item, full_schema, _seen) for item in node]
+    return node
+
+
+def extract_response_schema(operation: dict, full_schema: dict) -> dict | None:
+    """Return the `application/json` 200-response JSON Schema for an
+    operation, with all `$ref`s deeply inlined. None if the operation
+    declares no JSON 200 response."""
+    responses = operation.get("responses") or {}
+    ok = responses.get("200") or responses.get(200)
+    if not isinstance(ok, dict):
+        return None
+    json_content = (ok.get("content") or {}).get("application/json") or {}
+    raw_schema = json_content.get("schema")
+    if not raw_schema:
+        return None
+    return deeply_inline_refs(raw_schema, full_schema)
 
 
 def get_python_type(schema_type, schema_format=None, is_required=True, default=None):
@@ -1695,8 +1936,11 @@ def main() -> None:
 
     env = jinja2.Environment(trim_blocks=False, lstrip_blocks=False)
     get_template = env.from_string(GET_TOOL_TEMPLATE)
+    structured_get_template = env.from_string(STRUCTURED_GET_TOOL_TEMPLATE)
     post_template = env.from_string(POST_TOOL_TEMPLATE)
     markdown_template = env.from_string(MARKDOWN_TOOL_TEMPLATE)
+    structured_count = 0
+    missing_response_schema: list[str] = []
 
     generated_code = [FILE_HEADER_TEMPLATE]
     generated_tools: list[dict] = []
@@ -1759,6 +2003,39 @@ def main() -> None:
                 # Required params first (no default), then optional
                 params.sort(key=lambda p: p["default_val"] != "")
 
+                # Promoted to structured output: emit `output_schema=` with
+                # the OpenAPI 200-response schema deeply inlined, and use
+                # the structured tool template (returns dict, raises on
+                # auth failure so FastMCP surfaces it as a tool error
+                # instead of trying to fit markdown into the JSON Schema).
+                if func_name in STRUCTURED_OUTPUT_TOOLS:
+                    response_schema = extract_response_schema(operation, schema)
+                    if response_schema is None:
+                        missing_response_schema.append(func_name)
+                        # Fall through to the unstructured template.
+                    else:
+                        generated_code.append(
+                            structured_get_template.render(
+                                func_name=func_name,
+                                description=description,
+                                params=params,
+                                path=path,
+                                tags=tags,
+                                title=title,
+                                output_schema_repr=repr(response_schema),
+                            )
+                        )
+                        tool_count += 1
+                        structured_count += 1
+                        generated_tools.append(
+                            {
+                                "func_name": func_name,
+                                "title": title_raw,
+                                "tags": tags_value,
+                            }
+                        )
+                        continue
+
                 generated_code.append(
                     get_template.render(
                         func_name=func_name,
@@ -1809,6 +2086,18 @@ def main() -> None:
         f.write("\n".join(generated_code))
 
     print(f"✅ Generated {tool_count} tools at {OUTPUT_FILE}")
+    if structured_count:
+        print(
+            f"   ↳ {structured_count} of those advertise an `output_schema` "
+            f"(structured-content tools): {sorted(STRUCTURED_OUTPUT_TOOLS)}"
+        )
+    if missing_response_schema:
+        print(
+            f"⚠️  STRUCTURED_OUTPUT_TOOLS includes {missing_response_schema} "
+            "but the OpenAPI doc has no JSON 200 response schema — fell back "
+            "to the unstructured template.",
+            file=sys.stderr,
+        )
     if skipped_no_id:
         print(f"⚠️  Skipped {skipped_no_id} operations with no operationId")
     if skipped_methods:
