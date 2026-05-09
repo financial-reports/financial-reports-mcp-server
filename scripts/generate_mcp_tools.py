@@ -72,7 +72,7 @@ import uvicorn
 from cachetools import TTLCache
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.aws import AWSCognitoProvider
 from fastmcp.server.dependencies import get_access_token
@@ -1200,6 +1200,57 @@ async def apple_touch_icon() -> Response:
     return await _serve_asset(APPLE_TOUCH_URL)
 
 
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt() -> PlainTextResponse:
+    """Permissive robots policy + sitemap pointer.
+
+    Goal: get Google to index `/` (the landing page) so the favicon API
+    starts returning our brand mark. Block JSON-RPC and OAuth endpoints
+    so they don't pollute search results — they have no human-readable
+    content and 401 anyway.
+    """
+    base = MCP_BASE_URL.rstrip("/")
+    body = (
+        "User-agent: *\\n"
+        "Allow: /\\n"
+        "Disallow: /mcp\\n"
+        "Disallow: /authorize\\n"
+        "Disallow: /token\\n"
+        "Disallow: /register\\n"
+        "Disallow: /consent\\n"
+        "\\n"
+        f"Sitemap: {base}/sitemap.xml\\n"
+    )
+    return PlainTextResponse(
+        content=body,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.get("/sitemap.xml")
+async def sitemap_xml() -> Response:
+    """Single-URL sitemap. Only `/` is a public, human-readable page on
+    this subdomain — everything else is JSON-RPC, OAuth, or asset proxies
+    and doesn't belong in search results.
+    """
+    base = MCP_BASE_URL.rstrip("/")
+    body = (
+        '<?xml version="1.0" encoding="UTF-8"?>\\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\\n'
+        "  <url>\\n"
+        f"    <loc>{base}/</loc>\\n"
+        "    <changefreq>weekly</changefreq>\\n"
+        "    <priority>1.0</priority>\\n"
+        "  </url>\\n"
+        "</urlset>\\n"
+    )
+    return Response(
+        content=body,
+        media_type="application/xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.get("/.well-known/oauth-protected-resource")
 async def oauth_protected_resource_root() -> JSONResponse:
     """RFC 9728 fallback for clients that probe the bare path.
@@ -1224,8 +1275,27 @@ _LANDING_HTML = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FinancialReports MCP Server</title>
-    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <title>FinancialReports MCP Server — Regulatory Filings for AI Assistants</title>
+    <meta name="description" content="MCP connector for Claude.ai, Claude Code, and the Anthropic API. Direct access to global regulatory filings from listed companies — 10-Ks, annual reports, financial data, ISIN lookups — sourced from official regulators (SEC, ESMA, AMF, BaFin, AFM, CMVM).">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="__MCP_BASE_URL__/">
+
+    <link rel="icon" type="image/x-icon" href="__MCP_BASE_URL__/favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="__MCP_BASE_URL__/icon-32.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="__MCP_BASE_URL__/icon-192.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="__MCP_BASE_URL__/apple-touch-icon.png">
+
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="FinancialReports MCP Server">
+    <meta property="og:description" content="MCP connector for Claude — direct access to global regulatory filings, financial data, and ISIN lookups.">
+    <meta property="og:image" content="__MCP_BASE_URL__/icon-512.png">
+    <meta property="og:url" content="__MCP_BASE_URL__/">
+    <meta property="og:site_name" content="FinancialReports">
+
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="FinancialReports MCP Server">
+    <meta name="twitter:description" content="MCP connector for Claude — direct access to global regulatory filings.">
+    <meta name="twitter:image" content="__MCP_BASE_URL__/icon-512.png">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1394,6 +1464,7 @@ _LANDING_HTML = """<!DOCTYPE html>
 # work.
 _RENDERED_LANDING_HTML = (
     _LANDING_HTML
+    .replace("__MCP_BASE_URL__", MCP_BASE_URL.rstrip("/"))
     .replace("__LANDING_URL__", LANDING_URL)
     .replace("__PRIVACY_URL__", PRIVACY_URL)
     .replace("__TERMS_URL__", TERMS_URL)

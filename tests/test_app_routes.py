@@ -33,6 +33,72 @@ def test_landing_html_carries_csp(mcp_module) -> None:
     assert "default-src 'none'" in resp.headers["content-security-policy"]
 
 
+def test_robots_txt_allows_crawl_and_points_at_sitemap(mcp_module) -> None:
+    """Google needs to be able to crawl `/` so its favicon API picks up
+    our brand mark. robots.txt must allow root, block JSON-RPC/OAuth
+    paths (no human content there, just 401s), and advertise the
+    sitemap so crawlers don't have to guess.
+    """
+    with TestClient(mcp_module.app) as client:
+        resp = client.get("/robots.txt")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/plain")
+    body = resp.text
+    assert "User-agent: *" in body
+    assert "Allow: /" in body
+    assert "Disallow: /mcp" in body
+    assert "Disallow: /authorize" in body
+    assert "Disallow: /token" in body
+    base = mcp_module.MCP_BASE_URL.rstrip("/")
+    assert f"Sitemap: {base}/sitemap.xml" in body
+
+
+def test_sitemap_xml_lists_landing_page(mcp_module) -> None:
+    """Single-URL sitemap so Search Console has something to index."""
+    with TestClient(mcp_module.app) as client:
+        resp = client.get("/sitemap.xml")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("application/xml")
+    body = resp.text
+    base = mcp_module.MCP_BASE_URL.rstrip("/")
+    assert "<urlset" in body
+    assert f"<loc>{base}/</loc>" in body
+    assert "<changefreq>weekly</changefreq>" in body
+
+
+def test_landing_head_has_seo_and_og_tags(mcp_module) -> None:
+    """REGRESSION: the favicon submitted to Anthropic resolves via
+    Google's favicon API, which uses Google Search's index. For the
+    MCP subdomain to be indexed, the landing page needs a real
+    description, canonical URL, og:image, and absolute-URL favicon
+    links — otherwise Google's signal strength is too weak to bother
+    crawling and indexing the favicon.
+    """
+    with TestClient(mcp_module.app) as client:
+        resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+    base = mcp_module.MCP_BASE_URL.rstrip("/")
+
+    assert '<meta name="description"' in html
+    assert '<meta name="robots" content="index, follow">' in html
+    assert f'<link rel="canonical" href="{base}/">' in html
+
+    assert f'<link rel="icon" type="image/x-icon" href="{base}/favicon.ico">' in html
+    assert f'href="{base}/icon-32.png"' in html
+    assert f'href="{base}/icon-192.png"' in html
+    assert f'<link rel="apple-touch-icon" sizes="180x180" href="{base}/apple-touch-icon.png">' in html
+
+    assert '<meta property="og:type" content="website">' in html
+    assert f'<meta property="og:image" content="{base}/icon-512.png">' in html
+    assert f'<meta property="og:url" content="{base}/">' in html
+    assert '<meta name="twitter:card" content="summary">' in html
+
+    assert "__MCP_BASE_URL__" not in html, (
+        "Placeholder leaked into rendered HTML — substitution missed a token"
+    )
+
+
 def test_well_known_oauth_protected_resource_root(mcp_module) -> None:
     """Bare path mirrors the path-scoped doc for clients that probe / instead of /mcp."""
     with TestClient(mcp_module.app) as client:
