@@ -1299,7 +1299,7 @@ _LANDING_HTML = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FinancialReports MCP — Public-company filings, available to Claude</title>
-    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings — 23,683 filings, 44 markets, 9,140 companies, 21 languages. Free for any FinancialReports account.">
+    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 43 tools across 9 domains. Free for any FinancialReports account.">
     <meta name="robots" content="index, follow">
     __GOOGLE_SITE_VERIFICATION_META__
     <link rel="canonical" href="__MCP_BASE_URL__/">
@@ -1600,10 +1600,10 @@ _LANDING_HTML = """<!DOCTYPE html>
 
         <section class="stats">
             <div class="container stats__inner">
-                <div class="stat"><span class="stat__num">23,683</span><span class="stat__label">Filings indexed</span></div>
-                <div class="stat"><span class="stat__num">44</span><span class="stat__label">Markets covered</span></div>
-                <div class="stat"><span class="stat__num">9,140</span><span class="stat__label">Companies</span></div>
-                <div class="stat"><span class="stat__num">21</span><span class="stat__label">Languages</span></div>
+                <div class="stat"><span class="stat__num">43</span><span class="stat__label">MCP tools</span></div>
+                <div class="stat"><span class="stat__num">9</span><span class="stat__label">Tool domains</span></div>
+                <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FR account</span></div>
+                <div class="stat"><span class="stat__num">OAuth&nbsp;2.0</span><span class="stat__label">PKCE · DCR</span></div>
             </div>
         </section>
 

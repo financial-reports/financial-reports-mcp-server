@@ -6,7 +6,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialReports](https://financialreports.eu) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **23,683 filings · 44 markets · 9,140 companies · 21 languages.** Sourced from official regulators worldwide.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **43 tools across 9 domains. Free for any FinancialReports account.** Sourced from official regulators.
 
 ---
 
