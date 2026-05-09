@@ -982,13 +982,20 @@ class _OriginAndProtocolMiddleware(BaseHTTPMiddleware):
 
         # Augment FastMCP's WWW-Authenticate header with the `scope=`
         # parameter the spec SHOULDs (Authorization §Protected Resource
-        # Metadata Discovery). FastMCP only emits error/error_description/
-        # resource_metadata. Adding scope tells future agentic clients
-        # which scope they need to step up to.
+        # Metadata Discovery). The advertised scopes MUST match what the
+        # authorization server actually accepts on /register and /token,
+        # because RFC-7662-aware clients (Claude) take this as the value
+        # to send on dynamic client registration. We previously
+        # advertised "mcp:read" — Cognito has no such scope, so DCR
+        # rejected every Claude registration with `invalid_client_metadata`
+        # and the user-visible result was "Couldn't reach the MCP server".
+        # Use the same scopes the AS metadata advertises.
         if response.status_code in (401, 403):
             existing = response.headers.get("www-authenticate", "")
             if existing.lower().startswith("bearer") and "scope=" not in existing.lower():
-                response.headers["WWW-Authenticate"] = existing + ', scope="mcp:read"'
+                response.headers["WWW-Authenticate"] = (
+                    existing + ', scope="openid email profile"'
+                )
 
         return response
 
@@ -1029,6 +1036,60 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class _RegisterErrorLogger(BaseHTTPMiddleware):
+    """Log /register 400s with the exact request body and our error
+    response. Kept lightweight (only fires on 400, not on success) so
+    it's not chatty in steady state.
+
+    Why permanent: this is the second time we've shipped a regression
+    that broke DCR (first was the Redis backend; second was the
+    "scope=mcp:read" mismatch). Without seeing the request body, both
+    bugs took multiple deploy cycles to diagnose. The cost of one log
+    line per failed registration is far less than one user complaint.
+    """
+
+    async def dispatch(self, request: Request, call_next: Callable[..., Any]) -> Response:
+        if request.url.path != "/register" or request.method != "POST":
+            return await call_next(request)
+
+        body_bytes = await request.body()
+
+        async def replay_receive():
+            return {"type": "http.request", "body": body_bytes, "more_body": False}
+
+        request._receive = replay_receive  # type: ignore[attr-defined]
+
+        response = await call_next(request)
+
+        if response.status_code == 400:
+            try:
+                req_text = body_bytes.decode("utf-8", errors="replace")[:2000]
+            except Exception:
+                req_text = "<unreadable>"
+
+            resp_chunks: list[bytes] = []
+            async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+                resp_chunks.append(chunk)
+            resp_text = b"".join(resp_chunks).decode("utf-8", errors="replace")[:1000]
+
+            logger.warning(
+                "register_400 ua=%r body=%s resp=%s",
+                request.headers.get("user-agent", "?"),
+                req_text,
+                resp_text,
+            )
+
+            return Response(
+                content=b"".join(resp_chunks),
+                status_code=400,
+                headers=dict(response.headers),
+                media_type=response.media_type,
+            )
+
+        return response
+
+
+app.add_middleware(_RegisterErrorLogger)
 app.add_middleware(_OriginAndProtocolMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
 app.add_middleware(

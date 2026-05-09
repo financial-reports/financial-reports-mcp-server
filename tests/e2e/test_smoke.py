@@ -133,7 +133,10 @@ def test_www_authenticate_includes_scope(
     )
     assert r.status_code == 401
     www = r.headers.get("www-authenticate", "")
-    assert 'scope="mcp:read"' in www
+    # Scopes here MUST match what the AS accepts on /register; Claude
+    # uses this hint as the scope on DCR. Mismatch = registration
+    # rejection = "Couldn't reach the MCP server" for end users.
+    assert 'scope="openid email profile"' in www
     assert "resource_metadata=" in www
 
 
