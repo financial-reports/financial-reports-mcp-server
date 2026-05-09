@@ -111,7 +111,22 @@ UPGRADE_URL = os.environ.get(
 )
 LANDING_URL = os.environ.get(
     "LANDING_URL",
-    "https://financialreports.eu/integrations/mcp/",
+    "https://financialreports.eu/integrations/claude/",
+)
+# Public legal pages — surfaced as a footer on the connector landing
+# page so users (and Anthropic reviewers) can find Privacy / Terms /
+# Imprint without leaving the MCP server origin.
+PRIVACY_URL = os.environ.get(
+    "PRIVACY_URL", "https://financialreports.eu/data-privacy/"
+)
+TERMS_URL = os.environ.get(
+    "TERMS_URL", "https://financialreports.eu/terms/"
+)
+IMPRINT_URL = os.environ.get(
+    "IMPRINT_URL", "https://financialreports.eu/imprint/"
+)
+SUPPORT_URL = os.environ.get(
+    "SUPPORT_URL", "https://financialreports.eu/contact/"
 )
 # Optional. When set, FastMCP's OAuth proxy stores client registrations,
 # transactions, codes, and refresh tokens in Redis (shared across replicas,
@@ -1266,9 +1281,20 @@ _LANDING_HTML = """<!DOCTYPE html>
         </ol>
 
         <div class="footer">
-            Need an account? <a href="https://financialreports.eu/pricing/?utm_source=mcp_landing">View plans</a>
-            &nbsp;·&nbsp;
-            <a href="__LANDING_URL__">Documentation</a>
+            <div>
+                Need an account? <a href="https://financialreports.eu/pricing/?utm_source=mcp_landing">View plans</a>
+                &nbsp;·&nbsp;
+                <a href="__LANDING_URL__">Documentation</a>
+                &nbsp;·&nbsp;
+                <a href="__SUPPORT_URL__">Support</a>
+            </div>
+            <div style="margin-top: 12px; font-size: 12px;">
+                <a href="__PRIVACY_URL__">Privacy</a>
+                &nbsp;·&nbsp;
+                <a href="__TERMS_URL__">Terms</a>
+                &nbsp;·&nbsp;
+                <a href="__IMPRINT_URL__">Imprint</a>
+            </div>
         </div>
     </div>
 
@@ -1290,9 +1316,17 @@ _LANDING_HTML = """<!DOCTYPE html>
 </html>"""
 
 
-# Pre-rendered once at module load — the LANDING_URL value is fixed for the
-# lifetime of the process and string.replace per request was wasted work.
-_RENDERED_LANDING_HTML = _LANDING_HTML.replace("__LANDING_URL__", LANDING_URL)
+# Pre-rendered once at module load — the URL placeholders are fixed for
+# the lifetime of the process and string.replace per request was wasted
+# work.
+_RENDERED_LANDING_HTML = (
+    _LANDING_HTML
+    .replace("__LANDING_URL__", LANDING_URL)
+    .replace("__PRIVACY_URL__", PRIVACY_URL)
+    .replace("__TERMS_URL__", TERMS_URL)
+    .replace("__IMPRINT_URL__", IMPRINT_URL)
+    .replace("__SUPPORT_URL__", SUPPORT_URL)
+)
 
 
 @app.get("/", response_class=HTMLResponse)
