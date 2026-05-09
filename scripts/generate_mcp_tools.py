@@ -126,17 +126,69 @@ LANDING_URL = os.environ.get(
 # Django cache (1).
 MCP_REDIS_URL = os.environ.get("MCP_REDIS_URL")
 
-FAVICON_URL = (
+_CDN_BASE = (
     "https://cdn.financialreports.eu/financialreports/static/"
-    "assets/favicon/new/favicon.ico"
+    "assets/favicon/new"
 )
-# PNG variant advertised in MCP server metadata. Connector UIs (Claude,
+FAVICON_URL = f"{_CDN_BASE}/favicon.ico"
+# PNG variants advertised in MCP server metadata. Connector UIs (Claude,
 # ChatGPT, Cursor) reliably render PNG/SVG icons; ICO is silently dropped
-# by some clients, which is why /favicon.ico alone is not enough.
-ICON_URL = (
-    "https://cdn.financialreports.eu/financialreports/static/"
-    "assets/favicon/new/favicon-32x32.png"
+# by some clients, which is why /favicon.ico alone is not enough. The MCP
+# 2025-11-25 spec uses an `icons` array with `src` / `mimeType` / `sizes`
+# entries; multiple sizes let renderers pick the right resolution
+# (Claude.ai prefers ≥48×48; the connector directory thumbnail wants ≥256).
+ICON_URL = f"{_CDN_BASE}/favicon-32x32.png"
+ICON_URL_192 = f"{_CDN_BASE}/android-chrome-192x192.png"
+ICON_URL_512 = f"{_CDN_BASE}/android-chrome-512x512.png"
+APPLE_TOUCH_URL = f"{_CDN_BASE}/apple-touch-icon.png"
+
+# Public-facing landing for connector users (linked from / and from MCP
+# `serverInfo.websiteUrl`).
+WEBSITE_URL = LANDING_URL
+
+# Allowed `Origin` values on the /mcp Streamable HTTP endpoint. The MCP
+# 2025-11-25 spec REQUIRES servers to validate Origin to prevent
+# DNS-rebinding attacks (Transports §Security Warning); FastMCP doesn't
+# enforce this on its own. Anything not on this list is rejected with
+# HTTP 403.
+#
+# Notes:
+#   - Requests from server-side clients (Claude.ai server, Cursor agent
+#     workers, ChatGPT) typically don't send Origin, so the middleware
+#     only acts when Origin is present.
+#   - We accept exact hosts and any subdomain of *.anthropic.com. Add
+#     entries here if a new connector host appears.
+ALLOWED_MCP_ORIGINS = {
+    "https://claude.ai",
+    "https://claude.com",
+    "https://chatgpt.com",
+    "https://chat.openai.com",
+    "https://www.cursor.com",
+    "https://cursor.sh",
+    # Local dev — strip if you ever proxy a real client through here.
+    "http://localhost",
+    "http://127.0.0.1",
+}
+ALLOWED_MCP_ORIGIN_SUFFIXES = (
+    ".anthropic.com",
+    ".claude.ai",
+    ".claude.com",
 )
+
+# Supported MCP protocol versions. The latest spec (2025-11-25) requires
+# the server to 400 on requests carrying an MCP-Protocol-Version header
+# whose value isn't supported, and to echo the negotiated version on
+# every response after init.
+SUPPORTED_MCP_PROTOCOL_VERSIONS = frozenset(
+    {
+        "2024-11-05",
+        "2025-03-26",
+        "2025-06-18",
+        "2025-11-25",
+    }
+)
+DEFAULT_MCP_PROTOCOL_VERSION = "2025-11-25"
+
 MCP_VERSION = os.environ.get("MCP_VERSION", "dev")
 
 def _redact_redis_url(url: str) -> str:
@@ -191,6 +243,8 @@ auth_provider = AWSCognitoProvider(
 
 mcp = FastMCP(
     name="FinancialReports",
+    version=MCP_VERSION,
+    website_url=WEBSITE_URL,
     instructions=(
         "FinancialReports gives you direct access to regulatory filings from "
         "listed companies worldwide — comparable to S&P Capital IQ or FactSet. "
@@ -200,7 +254,13 @@ mcp = FastMCP(
         "directly from official regulators."
     ),
     auth=auth_provider,
-    icons=[Icon(src=ICON_URL, mimeType="image/png", sizes=["32x32"])],
+    # Multi-size icons let connector renderers pick the right resolution.
+    # Claude.ai connector cards prefer the 192/512 PNG over the 32×32 favicon.
+    icons=[
+        Icon(src=ICON_URL, mimeType="image/png", sizes=["32x32"]),
+        Icon(src=ICON_URL_192, mimeType="image/png", sizes=["192x192"]),
+        Icon(src=ICON_URL_512, mimeType="image/png", sizes=["512x512"]),
+    ],
 )
 
 # ---------------------------------------------------------------------------
@@ -419,15 +479,21 @@ def subscription_required(
             return _upgrade_response(UPGRADE_URL)
 
         # Defense in depth against cross-app-client token replay.
-        # FastMCP's AWSCognitoProvider does not validate the JWT audience, so
-        # any valid token issued to a different app client in the same Cognito
-        # user pool would otherwise pass signature + issuer checks.
         #
-        # Fail closed: read `client_id` directly from the validated JWT
-        # claims (Cognito access tokens always carry this) instead of the
-        # FastMCP attribute, which is implementation-internal and could
-        # silently disappear. Reject tokens missing the claim or carrying
-        # a foreign value.
+        # MCP 2025-11-25 §Authorization mandates: "MCP servers MUST validate
+        # that access tokens were issued specifically for them as the
+        # intended audience". For Cognito access tokens this means checking
+        # both:
+        #   - `client_id` claim matches our Cognito app (so a token minted
+        #     for a *different* app client in the same user pool can't be
+        #     replayed against this server), AND
+        #   - `aud` claim, when present, is either our `client_id` (Cognito's
+        #     default audience) or our canonical resource URI (the form
+        #     reviewers expect per RFC 8707, future-proofing for when we
+        #     migrate to a Cognito Resource Server identifier).
+        #
+        # FastMCP's AWSCognitoProvider doesn't enforce either binding, so we
+        # fail closed here.
         token_client_id = claims.get("client_id") or getattr(
             access_token, "client_id", None
         )
@@ -439,6 +505,20 @@ def subscription_required(
                 sub[:8],
             )
             return _upgrade_response(UPGRADE_URL)
+
+        canonical_resource = f"{MCP_BASE_URL.rstrip('/')}/mcp"
+        accepted_audiences = {COGNITO_CLIENT_ID, canonical_resource, MCP_BASE_URL.rstrip("/")}
+        aud_claim = claims.get("aud")
+        if aud_claim is not None:
+            aud_values = aud_claim if isinstance(aud_claim, list) else [aud_claim]
+            if not any(a in accepted_audiences for a in aud_values):
+                logger.warning(
+                    "rejecting token: aud=%r not in %r sub=%s",
+                    aud_claim,
+                    accepted_audiences,
+                    sub[:8],
+                )
+                return _upgrade_response(UPGRADE_URL)
 
         check = await _check_subscription(raw_token, sub)
         if not check.get("authorized"):
@@ -704,6 +784,93 @@ app = FastAPI(
 )
 
 
+def _origin_allowed(origin: str) -> bool:
+    if origin in ALLOWED_MCP_ORIGINS:
+        return True
+    try:
+        host = urlsplit(origin).hostname or ""
+    except ValueError:
+        return False
+    return any(host.endswith(suffix) for suffix in ALLOWED_MCP_ORIGIN_SUFFIXES)
+
+
+class _OriginAndProtocolMiddleware(BaseHTTPMiddleware):
+    """Two MCP-spec MUST checks the host server is responsible for.
+
+    1. **Origin validation** (Transports §Security Warning, 2025-11-25):
+       reject browser-origin requests carrying a foreign Origin to
+       prevent DNS-rebinding attacks. We only enforce when the header
+       is present, since legitimate server-to-server clients
+       (Claude.ai backend, Cursor agents, ChatGPT) typically don't send
+       one.
+
+    2. **MCP-Protocol-Version handshake** (Transports §Protocol Version
+       Header, 2025-11-25): if the client sent an `MCP-Protocol-Version`
+       header that we don't support, return HTTP 400. Echo the negotiated
+       version on every response so clients can detect downgrades.
+
+    Both checks are scoped to the /mcp path; static endpoints (/, /health,
+    /favicon.ico, /icon.png, /.well-known/*) are unaffected.
+    """
+
+    _PROTECTED_PREFIX = "/mcp"
+
+    async def dispatch(self, request: Request, call_next: Callable[..., Any]) -> Response:
+        path = request.url.path
+        if path == self._PROTECTED_PREFIX or path.startswith(self._PROTECTED_PREFIX + "/"):
+            origin = request.headers.get("origin")
+            if origin and not _origin_allowed(origin):
+                logger.warning("rejecting /mcp request: foreign origin=%r", origin)
+                return JSONResponse(
+                    {"error": "forbidden_origin", "error_description": f"Origin {origin!r} not allowed"},
+                    status_code=403,
+                )
+
+            requested_version = request.headers.get("mcp-protocol-version")
+            if (
+                requested_version
+                and requested_version not in SUPPORTED_MCP_PROTOCOL_VERSIONS
+            ):
+                logger.warning(
+                    "rejecting /mcp request: unsupported MCP-Protocol-Version=%r",
+                    requested_version,
+                )
+                return JSONResponse(
+                    {
+                        "error": "unsupported_protocol_version",
+                        "error_description": (
+                            f"MCP-Protocol-Version {requested_version!r} is not supported. "
+                            f"Server supports: {sorted(SUPPORTED_MCP_PROTOCOL_VERSIONS)}."
+                        ),
+                        "supported_versions": sorted(SUPPORTED_MCP_PROTOCOL_VERSIONS),
+                    },
+                    status_code=400,
+                )
+
+        response: Response = await call_next(request)
+
+        # Echo the negotiated protocol version so clients can detect
+        # downgrades. Per spec, after init the value must be "the version
+        # negotiated during initialization"; outside an init we echo the
+        # server default. FastMCP doesn't surface the per-session value to
+        # middleware, so this is best-effort.
+        if path == self._PROTECTED_PREFIX or path.startswith(self._PROTECTED_PREFIX + "/"):
+            negotiated = request.headers.get("mcp-protocol-version") or DEFAULT_MCP_PROTOCOL_VERSION
+            response.headers.setdefault("MCP-Protocol-Version", negotiated)
+
+        # Augment FastMCP's WWW-Authenticate header with the `scope=`
+        # parameter the spec SHOULDs (Authorization §Protected Resource
+        # Metadata Discovery). FastMCP only emits error/error_description/
+        # resource_metadata. Adding scope tells future agentic clients
+        # which scope they need to step up to.
+        if response.status_code in (401, 403):
+            existing = response.headers.get("www-authenticate", "")
+            if existing.lower().startswith("bearer") and "scope=" not in existing.lower():
+                response.headers["WWW-Authenticate"] = existing + ', scope="mcp:read"'
+
+        return response
+
+
 class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Apply baseline security headers to every response.
 
@@ -740,6 +907,7 @@ class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+app.add_middleware(_OriginAndProtocolMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -759,7 +927,14 @@ app.add_middleware(
         "mcp-session-id",
         "mcp-protocol-version",
     ],
-    expose_headers=["mcp-session-id", "mcp-protocol-version"],
+    # Canonical case per MCP spec, plus lowercase aliases for any client
+    # whose CORS impl is case-sensitive on expose-headers.
+    expose_headers=[
+        "MCP-Session-Id",
+        "MCP-Protocol-Version",
+        "mcp-session-id",
+        "mcp-protocol-version",
+    ],
 )
 
 
@@ -786,14 +961,8 @@ async def favicon() -> Response:
     )
 
 
-@app.get("/icon.png")
-async def icon_png() -> Response:
-    """PNG icon. Some MCP connector UIs (incl. Claude) ignore the Icon
-    advertised in the MCP `initialize` response and instead fetch a
-    server-relative `/icon.png`. We proxy it from the same CDN asset
-    `ICON_URL` advertises so both paths show the same artwork.
-    """
-    asset = await _fetch_asset(ICON_URL, "image/png")
+async def _serve_asset(url: str, fallback_media: str = "image/png") -> Response:
+    asset = await _fetch_asset(url, fallback_media)
     if asset is None:
         return Response(status_code=204)
     data, media = asset
@@ -804,10 +973,36 @@ async def icon_png() -> Response:
     )
 
 
+@app.get("/icon.png")
+async def icon_png() -> Response:
+    """Default PNG icon. Some MCP connector UIs (incl. Claude) ignore the
+    Icon advertised in the MCP `initialize` response and instead fetch a
+    server-relative `/icon.png`. We proxy it from the same CDN asset
+    `ICON_URL` advertises so both paths show the same artwork."""
+    return await _serve_asset(ICON_URL)
+
+
+@app.get("/icon-32.png")
+async def icon_png_32() -> Response:
+    return await _serve_asset(ICON_URL)
+
+
+@app.get("/icon-192.png")
+async def icon_png_192() -> Response:
+    """Larger variant for connector renderers that prefer ≥48×48."""
+    return await _serve_asset(ICON_URL_192)
+
+
+@app.get("/icon-512.png")
+async def icon_png_512() -> Response:
+    """Connector-directory thumbnail size (Claude.ai card)."""
+    return await _serve_asset(ICON_URL_512)
+
+
 @app.get("/apple-touch-icon.png")
 async def apple_touch_icon() -> Response:
     """iOS/touch fallback that some clients probe before /icon.png."""
-    return await icon_png()
+    return await _serve_asset(APPLE_TOUCH_URL)
 
 
 @app.get("/.well-known/oauth-protected-resource")
@@ -1145,7 +1340,7 @@ async def {{ func_name }}(
     For long filings, call this tool repeatedly with increasing `offset` values
     until the response no longer contains the truncation marker. Use a limit
     of 50000 chars (default) for most LLM context windows; the per-call cap
-    is 200000 chars.
+    is 150000 chars (Claude.ai's documented tool-result ceiling).
     """
     try:
         _require_auth_context()
@@ -1154,8 +1349,10 @@ async def {{ func_name }}(
         if offset < 0:
             raise ToolInputError("offset must be >= 0")
         # Clamp `limit` so a misbehaving caller cannot ask the server to
-        # return tens of MB of text in a single call.
-        limit = max(1, min(int(limit), 200000))
+        # return tens of MB of text in a single call. 150k is the Claude.ai/
+        # Claude Desktop documented tool-result ceiling — anything larger
+        # gets truncated by the host anyway.
+        limit = max(1, min(int(limit), 150000))
 
         url = f"/filings/{filing_id}/markdown/"
 

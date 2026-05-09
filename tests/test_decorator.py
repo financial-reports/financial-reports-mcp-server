@@ -107,6 +107,84 @@ async def test_authorized_passes_through(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "aud_claim",
+    [
+        TEST_CLIENT_ID,                                    # Cognito default
+        "https://mcp.test.invalid/mcp",                    # canonical resource URI
+        "https://mcp.test.invalid",                        # base URL form
+        ["https://mcp.test.invalid/mcp", "ignored"],       # list form
+    ],
+)
+async def test_aud_claim_accepts_canonical_audiences(
+    mcp_module, monkeypatch, fake_access_token, aud_claim
+) -> None:
+    """`aud` claim must validate against the Cognito client_id OR the
+    canonical resource URI. Anything else is rejected by the decorator."""
+    at = fake_access_token(client_id=TEST_CLIENT_ID)
+    at.claims = {"sub": "test-sub-12345678", "client_id": TEST_CLIENT_ID, "aud": aud_claim}
+    monkeypatch.setattr(mcp_module, "get_access_token", lambda: at)
+
+    async def fake_check(token, sub):
+        return {"authorized": True}
+
+    monkeypatch.setattr(mcp_module, "_check_subscription", fake_check)
+
+    @mcp_module.subscription_required
+    async def tool() -> str:
+        return "ok"
+
+    out = await tool()
+    assert out == "ok"
+
+
+@pytest.mark.asyncio
+async def test_aud_claim_rejects_foreign_audience(
+    mcp_module, monkeypatch, fake_access_token
+) -> None:
+    """A token with `aud` pointing at a different MCP server (e.g. a token
+    minted for some other Cognito-fronted MCP) must not be accepted here."""
+    at = fake_access_token(client_id=TEST_CLIENT_ID)
+    at.claims = {
+        "sub": "test-sub-12345678",
+        "client_id": TEST_CLIENT_ID,
+        "aud": "https://some-other-mcp.example/mcp",
+    }
+    monkeypatch.setattr(mcp_module, "get_access_token", lambda: at)
+
+    @mcp_module.subscription_required
+    async def tool() -> str:
+        return "leak"
+
+    out = await tool()
+    assert "leak" not in out
+    assert "subscription required" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_aud_claim_optional_when_missing(
+    mcp_module, monkeypatch, fake_access_token
+) -> None:
+    """If the IdP doesn't emit `aud` (some Cognito setups), client_id is the
+    only audience check. We must still let the request through rather than
+    blanket-failing on a missing optional claim."""
+    at = fake_access_token(client_id=TEST_CLIENT_ID)
+    at.claims = {"sub": "test-sub-12345678", "client_id": TEST_CLIENT_ID}  # no aud
+    monkeypatch.setattr(mcp_module, "get_access_token", lambda: at)
+
+    async def fake_check(token, sub):
+        return {"authorized": True}
+
+    monkeypatch.setattr(mcp_module, "_check_subscription", fake_check)
+
+    @mcp_module.subscription_required
+    async def tool() -> str:
+        return "ok"
+
+    assert await tool() == "ok"
+
+
+@pytest.mark.asyncio
 async def test_unauthorized_returns_per_user_upgrade_url(
     mcp_module, monkeypatch, fake_access_token
 ) -> None:

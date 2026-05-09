@@ -61,6 +61,82 @@ def test_apple_touch_icon_serves(
     assert r.status_code == 200
 
 
+def test_icon_192_serves(http: httpx.Client, default_base_url: str) -> None:
+    r = http.get(f"{default_base_url}/icon-192.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/png")
+
+
+def test_icon_512_serves(http: httpx.Client, default_base_url: str) -> None:
+    r = http.get(f"{default_base_url}/icon-512.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("image/png")
+
+
+def test_mcp_rejects_foreign_origin(
+    http: httpx.Client, default_base_url: str
+) -> None:
+    """MCP 2025-11-25 §Transports: 'Servers MUST validate Origin... if
+    invalid, MUST respond with HTTP 403 Forbidden.'"""
+    r = http.post(
+        f"{default_base_url}/mcp",
+        headers={
+            "Origin": "https://evil.example",
+            "Content-Type": "application/json",
+            "Accept": "application/json,text/event-stream",
+        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+    )
+    assert r.status_code == 403
+
+
+def test_mcp_rejects_unsupported_protocol_version(
+    http: httpx.Client, default_base_url: str
+) -> None:
+    r = http.post(
+        f"{default_base_url}/mcp",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json,text/event-stream",
+            "MCP-Protocol-Version": "1999-01-01",
+        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+    )
+    assert r.status_code == 400
+
+
+def test_mcp_echoes_protocol_version(
+    http: httpx.Client, default_base_url: str
+) -> None:
+    r = http.post(
+        f"{default_base_url}/mcp",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json,text/event-stream",
+            "MCP-Protocol-Version": "2025-11-25",
+        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+    )
+    assert r.headers.get("mcp-protocol-version") == "2025-11-25"
+
+
+def test_www_authenticate_includes_scope(
+    http: httpx.Client, default_base_url: str
+) -> None:
+    r = http.post(
+        f"{default_base_url}/mcp",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json,text/event-stream",
+        },
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+    )
+    assert r.status_code == 401
+    www = r.headers.get("www-authenticate", "")
+    assert 'scope="mcp:read"' in www
+    assert "resource_metadata=" in www
+
+
 def test_favicon_serves(http: httpx.Client, default_base_url: str) -> None:
     r = http.get(f"{default_base_url}/favicon.ico")
     assert r.status_code == 200
