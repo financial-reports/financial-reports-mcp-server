@@ -9,8 +9,33 @@ env/
 *.pyc
 __pycache__/
 
-# VSCode
+# Tooling caches (none needed at build time; sneaky context bloat —
+# .mypy_cache alone was ~50 MiB and was timing out ACR uploads)
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Test infrastructure (not needed in the runtime image; the generator
+# bakes everything the server needs at build time)
+tests/
+docker-compose.test.yml
+pytest.ini
+requirements-test.txt
+scripts/test-e2e.sh
+
+# CI / local dev
+.github/
+Makefile
+
+# IDE
 .vscode/
+.idea/
+.DS_Store
 
 # Local secrets
 .env
+.env.local
+.env.production
