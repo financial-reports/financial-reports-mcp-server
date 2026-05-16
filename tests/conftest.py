@@ -32,7 +32,6 @@ TEST_REGION = "eu-central-1"
 TEST_ISSUER = f"https://cognito-idp.{TEST_REGION}.amazonaws.com/{TEST_POOL_ID}"
 TEST_BASE_URL = "https://mcp.test.invalid"
 TEST_API_BASE = "https://api.test.invalid"
-TEST_VERIFY_URL = f"{TEST_API_BASE}/api/mcp/verify/"
 
 
 _OIDC_DOCUMENT = {
@@ -59,7 +58,6 @@ def _env() -> Iterator[None]:
         "COGNITO_REGION": TEST_REGION,
         "MCP_BASE_URL": TEST_BASE_URL,
         "API_BASE_URL": TEST_API_BASE,
-        "VERIFY_URL": TEST_VERIFY_URL,
         "MCP_VERSION": "test",
     }
     saved = {k: os.environ.get(k) for k in overrides}
@@ -102,7 +100,7 @@ def respx_router() -> Iterator[respx.MockRouter]:
 def mcp_module(respx_router: respx.MockRouter):
     """Lazy import of the generated module so the respx context is active first.
 
-    Reloads the module per test so the subscription cache and asset cache
+    Reloads the module per test so the asset cache
     are reset between tests without leaking state.
     """
     import src.financial_reports_mcp as m  # type: ignore
@@ -135,7 +133,7 @@ __all__ = [
     "TEST_CLIENT_ID",
     "TEST_ISSUER",
     "TEST_POOL_ID",
-    "TEST_VERIFY_URL",
+
     "fake_access_token",
     "mcp_module",
     "respx_router",
