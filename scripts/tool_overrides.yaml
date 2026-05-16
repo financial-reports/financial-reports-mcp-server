@@ -1,0 +1,152 @@
+# Tool description overrides for the FinancialReports MCP server.
+#
+# The code generator (generate_mcp_tools.py) merges these into tool
+# docstrings at build time. Each key is the snake_case function name
+# (matching the generated Python function). Fields:
+#
+#   when_to_use      – appended as "**When to use this tool:**"
+#   when_not_to_use  – appended as "**When NOT to use this tool:**"
+#   examples         – appended as a worked-example table
+#
+# Keep descriptions concise — every token here is sent to the LLM on
+# every session.
+
+companies_list:
+  when_to_use: >
+    Use as the **first step** to resolve a company name, ticker, or
+    partial match to a FinancialReports internal ID. Required before
+    calling any per-company tool (financials, filings, watchlist).
+  when_not_to_use: >
+    Don't use if you already have a company ID from a previous call.
+    Don't use for ISIN lookups — use `isins_retrieve` instead.
+  examples:
+    - user_says: "Find Apple"
+      parameters: 'search="Apple"'
+      notes: "Inspect results — 'Apple Inc.' vs 'Apple Hospitality REIT'"
+    - user_says: "German automotive companies"
+      parameters: 'countries="DE", sector="C"'
+      notes: "ISIC Section C = Manufacturing"
+
+companies_retrieve:
+  when_to_use: >
+    Use to get full company metadata (LEI, description, headquarters,
+    social links, stock exchanges, indices) after resolving the ID via
+    `companies_list`.
+  when_not_to_use: >
+    Don't use for financial data — use `companies_financials_retrieve`.
+    Don't use just to confirm a company exists — `companies_list`
+    already returns enough for identification.
+  examples:
+    - user_says: "What's the LEI for ASML?"
+      parameters: "id=<company_id from companies_list>"
+      notes: "Returns lei field"
+
+companies_financials_retrieve:
+  when_to_use: >
+    Use to get standardized financial line items (income statement,
+    balance sheet, cash flow) for a company. Data is deduplicated
+    across filings — the most recently published filing wins.
+  when_not_to_use: >
+    Don't use for filing documents or markdown content — use
+    `filings_list` + `filings_markdown_retrieve`. Don't use without
+    resolving the company ID first via `companies_list`.
+  examples:
+    - user_says: "Munich Re 2024 income statement"
+      parameters: "id=<id>, fiscal_year=2024, statement_type='IS'"
+      notes: "Use depth + parent_code to render Capital IQ-style hierarchy"
+    - user_says: "Compare EBITDA across 3 companies"
+      parameters: "id=<id>, statement_type='IS', line_items='ebitda'"
+      notes: "Call in parallel for each company. Always show currency."
+
+filings_list:
+  when_to_use: >
+    Use to search and filter regulatory filings across companies.
+    Supports filtering by company, filing type, category, country,
+    date range. Returns metadata — not filing content.
+  when_not_to_use: >
+    Don't use to get filing content — use `filings_markdown_retrieve`
+    after getting the filing ID. Don't use for financial KPIs — use
+    `companies_financials_retrieve`.
+  examples:
+    - user_says: "Apple's most recent 10-K"
+      parameters: "company=<id>, filing_type='10-K', ordering='-release_datetime', page_size=1"
+      notes: "filing_type is jurisdiction-specific. Use filing_category for cross-jurisdiction queries."
+    - user_says: "All insider transactions at Tesla in the last 30 days"
+      parameters: "company=<id>, filing_category='insider_transaction', from_date='2026-04-16'"
+
+filings_retrieve:
+  when_to_use: >
+    Use to get full metadata for a single filing — source URL, PDF
+    link, viewer URL, classification confidence, fiscal period. Call
+    after `filings_list` when you need details beyond the list view.
+  when_not_to_use: >
+    Don't use for the actual filing content — use
+    `filings_markdown_retrieve`. Don't use to search for filings —
+    use `filings_list`.
+  examples:
+    - user_says: "Show me the source PDF for this filing"
+      parameters: "id=<filing_id>"
+      notes: "Returns document (raw PDF/ZIP URL) and proxy_url (rendered)"
+
+filings_markdown_retrieve:
+  when_to_use: >
+    Use to get the full text of a filing as Markdown. Supports
+    pagination via offset/limit for long documents. Start with
+    offset=0 and repeat with increasing offsets until no truncation
+    marker appears.
+  when_not_to_use: >
+    Don't use to search for filings — use `filings_list` first. Not
+    every filing has Markdown content; check `filings_retrieve` for
+    the `markdown_url` field first.
+  examples:
+    - user_says: "Show me Apple's 10-K risk factors"
+      parameters: "filing_id=<id>, offset=0, limit=50000"
+      notes: "Summarize specific sections — don't dump the whole document"
+
+filings_live_pulse_retrieve:
+  when_to_use: >
+    Use to see the most recently published filings across all
+    companies — a real-time feed of what just landed.
+  when_not_to_use: >
+    Don't use to search for a specific company's filings — use
+    `filings_list` with a company filter instead.
+  examples:
+    - user_says: "What filings just came in?"
+      parameters: "limit=10"
+    - user_says: "Recent US filings"
+      parameters: "country='US', limit=20"
+
+line_item_definitions_list:
+  when_to_use: >
+    Use to look up what financial line items are available and their
+    formal definitions. Helpful when the user asks "what does EBITDA
+    mean in this dataset?" or "what line items can I query?"
+  when_not_to_use: >
+    Don't use to get actual financial data — use
+    `companies_financials_retrieve`.
+
+isins_retrieve:
+  when_to_use: >
+    Use to resolve an ISIN (12-character code like US0378331005) to a
+    company. Fastest path when the user provides an ISIN directly.
+  when_not_to_use: >
+    Don't use for name or ticker lookups — use `companies_list` with
+    the `search` parameter instead.
+  examples:
+    - user_says: "Look up US0378331005"
+      parameters: "id='US0378331005'"
+      notes: "Returns the company associated with this ISIN"
+
+webhooks_create:
+  when_to_use: >
+    Use to register a new webhook endpoint for filing alerts. The
+    `secret_key` is returned only once in the response — surface it
+    to the user immediately.
+  when_not_to_use: >
+    Don't suggest this for casual monitoring — it requires the user
+    to have a webhook endpoint. For simple tracking, suggest the
+    watchlist tools instead.
+  examples:
+    - user_says: "Alert me when any company files a 10-K"
+      parameters: 'url="https://example.com/webhook", trigger_on_filing_processed=true'
+      notes: "Follow up with webhooks_test_create to verify the endpoint"
