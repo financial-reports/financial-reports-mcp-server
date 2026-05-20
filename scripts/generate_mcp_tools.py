@@ -976,7 +976,7 @@ app.add_middleware(
 )
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health() -> dict[str, str]:
     return {
         "status": "ok",
@@ -985,7 +985,7 @@ async def health() -> dict[str, str]:
     }
 
 
-@app.get("/favicon.ico")
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"])
 async def favicon() -> Response:
     """Serve the FR favicon. CDN-backed, in-process cached, public 24h."""
     asset = await _fetch_asset(FAVICON_URL, "image/x-icon")
@@ -1011,7 +1011,7 @@ async def _serve_asset(url: str, fallback_media: str = "image/png") -> Response:
     )
 
 
-@app.get("/icon.png")
+@app.api_route("/icon.png", methods=["GET", "HEAD"])
 async def icon_png() -> Response:
     """Default PNG icon. Some MCP connector UIs (incl. Claude) ignore the
     Icon advertised in the MCP `initialize` response and instead fetch a
@@ -1020,30 +1020,30 @@ async def icon_png() -> Response:
     return await _serve_asset(ICON_URL)
 
 
-@app.get("/icon-32.png")
+@app.api_route("/icon-32.png", methods=["GET", "HEAD"])
 async def icon_png_32() -> Response:
     return await _serve_asset(ICON_URL)
 
 
-@app.get("/icon-192.png")
+@app.api_route("/icon-192.png", methods=["GET", "HEAD"])
 async def icon_png_192() -> Response:
     """Larger variant for connector renderers that prefer ≥48×48."""
     return await _serve_asset(ICON_URL_192)
 
 
-@app.get("/icon-512.png")
+@app.api_route("/icon-512.png", methods=["GET", "HEAD"])
 async def icon_png_512() -> Response:
     """Connector-directory thumbnail size (Claude.ai card)."""
     return await _serve_asset(ICON_URL_512)
 
 
-@app.get("/apple-touch-icon.png")
+@app.api_route("/apple-touch-icon.png", methods=["GET", "HEAD"])
 async def apple_touch_icon() -> Response:
     """iOS/touch fallback that some clients probe before /icon.png."""
     return await _serve_asset(APPLE_TOUCH_URL)
 
 
-@app.get("/robots.txt", response_class=PlainTextResponse)
+@app.api_route("/robots.txt", methods=["GET", "HEAD"], response_class=PlainTextResponse)
 async def robots_txt() -> PlainTextResponse:
     """Permissive robots policy + sitemap pointer.
 
@@ -1070,7 +1070,7 @@ async def robots_txt() -> PlainTextResponse:
     )
 
 
-@app.get("/sitemap.xml")
+@app.api_route("/sitemap.xml", methods=["GET", "HEAD"])
 async def sitemap_xml() -> Response:
     """Single-URL sitemap. Only `/` is a public, human-readable page on
     this subdomain — everything else is JSON-RPC, OAuth, or asset proxies
@@ -1577,7 +1577,7 @@ _RENDERED_LANDING_HTML = (
 )
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def root_landing() -> HTMLResponse:
     """Self-contained landing page for users who hit the bare domain.
 

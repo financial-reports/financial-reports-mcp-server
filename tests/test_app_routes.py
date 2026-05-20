@@ -15,6 +15,17 @@ def test_health_returns_version(mcp_module) -> None:
     assert body["version"] == "test"
 
 
+def test_get_routes_also_accept_head(mcp_module) -> None:
+    """Crawlers, link-preview fetchers, and uptime monitors HEAD-probe a
+    route before issuing GET. A GET-only route returns 404 to HEAD, which
+    makes favicon/preview discovery (and the connector's brand mark) fail.
+    Every content route must answer HEAD as well as GET."""
+    with TestClient(mcp_module.app) as client:
+        for path in ("/", "/health", "/robots.txt", "/sitemap.xml"):
+            resp = client.head(path)
+            assert resp.status_code == 200, f"HEAD {path} returned {resp.status_code}"
+
+
 def test_security_headers_applied(mcp_module) -> None:
     with TestClient(mcp_module.app) as client:
         resp = client.get("/health")
