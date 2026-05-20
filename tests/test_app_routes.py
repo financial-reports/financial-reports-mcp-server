@@ -99,6 +99,39 @@ def test_landing_head_has_seo_and_og_tags(mcp_module) -> None:
     )
 
 
+def test_landing_omits_gsv_tag_when_env_unset(mcp_module) -> None:
+    """Default test env has no GOOGLE_SITE_VERIFICATION — landing must NOT
+    emit the tag (would force-leak an empty content="" attribute, which
+    Search Console rejects as invalid)."""
+    with TestClient(mcp_module.app) as client:
+        resp = client.get("/")
+    assert "google-site-verification" not in resp.text
+
+
+def test_landing_emits_gsv_tag_when_env_set(monkeypatch, respx_router) -> None:
+    """When GOOGLE_SITE_VERIFICATION is set, the landing page renders the
+    tag with the configured token. Module is reloaded inside the test so
+    the rendered template picks up the new env value. We depend on
+    respx_router so the OIDC discovery call (triggered by module reload)
+    stays mocked instead of hitting the real Cognito endpoint.
+    """
+    import importlib
+
+    import src.financial_reports_mcp as m  # type: ignore
+
+    monkeypatch.setenv("GOOGLE_SITE_VERIFICATION", "TestToken_AbCdEf123456")
+    importlib.reload(m)
+    with TestClient(m.app) as client:
+        resp = client.get("/")
+    assert resp.status_code == 200
+    assert (
+        '<meta name="google-site-verification" content="TestToken_AbCdEf123456">'
+        in resp.text
+    )
+    # monkeypatch undoes the env override on test teardown; subsequent tests
+    # using the mcp_module fixture get a fresh reload with the cleared env.
+
+
 def test_well_known_oauth_protected_resource_root(mcp_module) -> None:
     """Bare path mirrors the path-scoped doc for clients that probe / instead of /mcp."""
     with TestClient(mcp_module.app) as client:
