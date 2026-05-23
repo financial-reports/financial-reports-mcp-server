@@ -229,9 +229,36 @@ if MCP_REDIS_URL:
     # Imported lazily so the redis client isn't required when running in
     # disk mode (dev, smoke tests).
     from key_value.aio.stores.redis import RedisStore
+    from redis.asyncio import Redis
+    from redis.backoff import ExponentialBackoff
+    from redis.exceptions import ConnectionError as RedisConnectionError
+    from redis.exceptions import TimeoutError as RedisTimeoutError
+    from redis.retry import Retry
 
+    # Build the async Redis client with explicit retry on transient connection
+    # errors. Azure Cache for Redis (Standard SKU) recycles idle TLS connections
+    # on maintenance / idle-timeout events. When that happens, the async client
+    # gets a `(104, 'Connection reset by peer')` on the next AUTH read and, by
+    # default, surfaces that all the way to the OAuth handler — which then hangs
+    # every /register and /authorize request indefinitely. The Retry +
+    # retry_on_error config tells redis-py to discard the dead connection, open
+    # a fresh one, and retry the command transparently.
+    #
+    # The URL-level params (health_check_interval, socket_keepalive,
+    # socket_timeout) add a second layer of safety: idle pings detect dead
+    # connections proactively, and a bounded read timeout ensures a single bad
+    # connection cannot hang the handler for minutes.
+    _redis_client = Redis.from_url(
+        MCP_REDIS_URL,
+        retry=Retry(ExponentialBackoff(cap=10, base=1), retries=3),
+        retry_on_error=[RedisConnectionError, RedisTimeoutError],
+        health_check_interval=30,
+        socket_keepalive=True,
+        socket_timeout=10,
+        socket_connect_timeout=10,
+    )
     _oauth_storage = RedisStore(
-        url=MCP_REDIS_URL,
+        client=_redis_client,
         default_collection="financial-reports-mcp-oauth",
     )
     logger.info("OAuth state -> Redis (%s)", _redact_redis_url(MCP_REDIS_URL))
