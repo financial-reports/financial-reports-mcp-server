@@ -256,6 +256,13 @@ if MCP_REDIS_URL:
         socket_keepalive=True,
         socket_timeout=10,
         socket_connect_timeout=10,
+        # REQUIRED: key_value.aio.stores.redis.RedisStore._get_managed_entry
+        # does `if not isinstance(redis_response, str): return None` — so a
+        # client that returns bytes (the redis-py default) makes every read
+        # silently fail with "client not registered", even though writes
+        # succeed. The library's own url= path sets this flag implicitly; we
+        # must set it explicitly when constructing the client ourselves.
+        decode_responses=True,
     )
     _oauth_storage = RedisStore(
         client=_redis_client,
