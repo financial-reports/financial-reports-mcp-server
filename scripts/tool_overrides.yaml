@@ -103,19 +103,6 @@ filings_markdown_retrieve:
       parameters: "filing_id=<id>, offset=0, limit=50000"
       notes: "Summarize specific sections — don't dump the whole document"
 
-filings_live_pulse_retrieve:
-  when_to_use: >
-    Use to see the most recently published filings across all
-    companies — a real-time feed of what just landed.
-  when_not_to_use: >
-    Don't use to search for a specific company's filings — use
-    `filings_list` with a company filter instead.
-  examples:
-    - user_says: "What filings just came in?"
-      parameters: "limit=10"
-    - user_says: "Recent US filings"
-      parameters: "country='US', limit=20"
-
 line_item_definitions_list:
   when_to_use: >
     Use to look up what financial line items are available and their

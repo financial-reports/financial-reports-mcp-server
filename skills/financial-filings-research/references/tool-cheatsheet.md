@@ -1,6 +1,6 @@
 # FinancialReports MCP — Tool Cheatsheet
 
-43 tools across 9 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
+42 tools across 8 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
 
 ## Companies (4)
 
@@ -36,7 +36,7 @@ Key params: `id`.
 
 Returns: `{predicted_date, confidence, basis}`.
 
-## Filings (5)
+## Filings (4)
 
 ### `filings_list`
 List filings across companies. **outputSchema-advertised**.
@@ -67,11 +67,6 @@ Filing content as markdown (capped at **150K characters**).
 Key params: `id`.
 
 Pitfall: long 10-Ks (300+ pages) get truncated. For full text, use the `pdf_url` from `filings_retrieve`.
-
-### `filings_live_pulse_retrieve`
-Most recently published filings across all companies. Useful for "what just landed?"
-
-Key params: `limit` (default 50, max 100), `country`, `filing_type`.
 
 ## ISIC Classifications (8)
 
@@ -160,7 +155,7 @@ Pitfall: `event_types` is restrictive (e.g., `filing.published`, `watchlist.chan
 
 ## Tool annotation summary
 
-- 36 tools have `readOnlyHint=true` (safe to call without confirmation).
+- 35 tools have `readOnlyHint=true` (safe to call without confirmation).
 - 5 tools have `destructiveHint=true` (mutations: watchlist add/remove, webhook create, secret rotation).
 - 2 tools are non-destructive probes (`webhooks_test_create`, `webhooks_deliveries_replay_create`) — they hit the user's external endpoint but don't mutate FinancialReports state.
 - 6 tools advertise `outputSchema` for structured rendering: `companies_list`, `companies_retrieve`, `companies_financials_retrieve`, `filings_list`, `filings_retrieve`, `isins_list`.

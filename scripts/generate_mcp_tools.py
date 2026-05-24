@@ -93,6 +93,15 @@ logger = logging.getLogger("financial-reports-mcp")
 # ---------------------------------------------------------------------------
 # Configuration (env-driven, no hardcoded secrets)
 # ---------------------------------------------------------------------------
+_REQUIRED_ENV = ("COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_CLIENT_SECRET")
+_missing_env = [k for k in _REQUIRED_ENV if not os.environ.get(k)]
+if _missing_env:
+    raise SystemExit(
+        "[financial-reports-mcp] Missing required environment variable(s): "
+        + ", ".join(_missing_env)
+        + ". Copy .env.example to .env and fill in the Cognito values "
+        "(see docs/SELF-HOSTING.md), then export them before starting the server."
+    )
 COGNITO_USER_POOL_ID = os.environ["COGNITO_USER_POOL_ID"]
 COGNITO_CLIENT_ID = os.environ["COGNITO_CLIENT_ID"]
 COGNITO_CLIENT_SECRET = os.environ["COGNITO_CLIENT_SECRET"]
@@ -1153,7 +1162,7 @@ _LANDING_HTML = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FinancialReports MCP — Public-company filings, available to Claude</title>
-    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 43 tools across 9 domains. Free for any FinancialReports account.">
+    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 42 tools across 8 domains. Free for any FinancialReports account.">
     <meta name="robots" content="index, follow">
     __GOOGLE_SITE_VERIFICATION_META__
     <link rel="canonical" href="__MCP_BASE_URL__/">
@@ -1454,7 +1463,7 @@ _LANDING_HTML = """<!DOCTYPE html>
 
         <section class="stats">
             <div class="container stats__inner">
-                <div class="stat"><span class="stat__num">43</span><span class="stat__label">MCP tools</span></div>
+                <div class="stat"><span class="stat__num">42</span><span class="stat__label">MCP tools</span></div>
                 <div class="stat"><span class="stat__num">9</span><span class="stat__label">Tool domains</span></div>
                 <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FR account</span></div>
                 <div class="stat"><span class="stat__num">OAuth&nbsp;2.0</span><span class="stat__label">PKCE · DCR</span></div>
@@ -1470,7 +1479,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                     <code id="mcp-url">__MCP_BASE_URL__/mcp</code>
                     <button class="btn btn--secondary" type="button" onclick="copyUrl()" id="copy-btn">Copy</button>
                 </div>
-                <p class="meta">Streamable HTTP · OAuth 2.0 · 43 tools · Free</p>
+                <p class="meta">Streamable HTTP · OAuth 2.0 · 42 tools · Free</p>
             </div>
         </section>
 
@@ -1481,7 +1490,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                 <ol class="steps">
                     <li>Create a free account at <a href="https://financialreports.eu">financialreports.eu</a> if you don't have one yet — no paid plan required for MCP access.</li>
                     <li>In your MCP client (Claude.ai, Claude Code, Cursor, etc.), add a custom connector with the URL <code>__MCP_BASE_URL__/mcp</code>.</li>
-                    <li>Sign in via OAuth when prompted. The 43 tools become available immediately — no reconnection needed.</li>
+                    <li>Sign in via OAuth when prompted. The 42 tools become available immediately — no reconnection needed.</li>
                 </ol>
                 <a href="__LANDING_URL__" class="btn btn--secondary">Full setup guide →</a>
             </div>
@@ -1490,7 +1499,7 @@ _LANDING_HTML = """<!DOCTYPE html>
         <section class="section">
             <div class="container">
                 <p class="eyebrow">04 / Tools</p>
-                <h2>43 tools across 9 domains</h2>
+                <h2>42 tools across 8 domains</h2>
                 <p>The MCP surface mirrors the FinancialReports REST API one-to-one — every endpoint becomes an LLM-callable tool, regenerated automatically from the OpenAPI schema.</p>
                 <div class="tools">
                     <div class="tool">
@@ -1499,9 +1508,9 @@ _LANDING_HTML = """<!DOCTYPE html>
                         <p class="tool__desc">Search, retrieve, normalised financials, predicted next annual report</p>
                     </div>
                     <div class="tool">
-                        <p class="tool__count">05 tools</p>
+                        <p class="tool__count">04 tools</p>
                         <p class="tool__name">Filings</p>
-                        <p class="tool__desc">List, retrieve, Markdown content, audit trail, live pulse</p>
+                        <p class="tool__desc">List, retrieve, Markdown content, audit trail</p>
                     </div>
                     <div class="tool">
                         <p class="tool__count">02 tools</p>
@@ -1532,11 +1541,6 @@ _LANDING_HTML = """<!DOCTYPE html>
                         <p class="tool__count">08 tools</p>
                         <p class="tool__name">Webhooks</p>
                         <p class="tool__desc">Filing-event subscriptions, delivery logs, replay, secret rotation</p>
-                    </div>
-                    <div class="tool">
-                        <p class="tool__count">02 tools</p>
-                        <p class="tool__name">Live pulse</p>
-                        <p class="tool__desc">Most recent filings across all issuers, near-realtime</p>
                     </div>
                 </div>
             </div>
