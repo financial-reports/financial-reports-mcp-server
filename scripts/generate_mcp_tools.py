@@ -132,6 +132,13 @@ SUPPORT_URL = os.environ.get(
 # Django cache (1).
 MCP_REDIS_URL = os.environ.get("MCP_REDIS_URL")
 
+# Hard cap on the upstream Markdown body that filings_markdown_retrieve will
+# buffer into memory before slicing. ESEF packages can run into the hundreds
+# of MB; pulling that into a single Python string blocks the event loop and
+# balloons replica memory. The user-facing `limit` is far below this; this
+# is a defence-in-depth cap against runaway/malformed upstream responses.
+_MAX_FILING_BYTES = 10_000_000
+
 _CDN_BASE = (
     "https://cdn.financialreports.eu/financialreports/static/"
     "assets/favicon/new"
@@ -1732,12 +1739,6 @@ async def {{ func_name }}(
         logger.exception("{{ func_name }} failed")
         return _safe_error("{{ func_name }}", exc)
 '''
-
-
-# Hard cap on the upstream Markdown body. ESEF packages can run into the
-# hundreds of MB; pulling that into a single Python string blocks the event
-# loop and balloons replica memory. The user-facing limit is far below this.
-_MAX_FILING_BYTES = 10_000_000
 
 
 MARKDOWN_TOOL_TEMPLATE = '''
