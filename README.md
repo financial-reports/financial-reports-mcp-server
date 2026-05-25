@@ -387,6 +387,14 @@ make e2e
 
 ---
 
+## Evaluating changes
+
+This server is benchmarked by [`financial-reports/mcp-evals`](https://github.com/financial-reports/mcp-evals) (private). Cross-model scorecards (task success, tool-selection accuracy, path consistency, tokens/turns/latency) live there, not here. Before merging changes to tool descriptions, Prompts, or the generator, run the harness against either prod or a local dev MCP and compare the scorecard.
+
+What lives in **this** repo: deterministic prompt-registration tests at `tests/eval/` — fast, no API keys, run on every PR. See [`tests/eval/README.md`](tests/eval/README.md) for the cross-repo workflow.
+
+---
+
 ## Security
 
 This server handles OAuth flows and bearer tokens. **Found a vulnerability? Please don't open a public issue.** See [SECURITY.md](SECURITY.md) for the responsible-disclosure process.
