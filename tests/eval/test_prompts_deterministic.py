@@ -17,6 +17,14 @@ EXPECTED_PROMPTS: dict[str, set[str]] = {
     "summarize_recent_filings": {"companies_list", "filings_list"},
 }
 
+# Resource URI → set of substrings the resource body must contain.
+# Add a row here whenever a new @mcp.resource() lands.
+EXPECTED_RESOURCES: dict[str, set[str]] = {
+    "fr://guide/filing-types": {"10-K", "10-K-ESEF", "IR", "ER", "DIRS", "SR", "filing_types_list"},
+    "fr://guide/industry-classification": {"4 levels", "isic_class", "Peer", "companies_list"},
+    "fr://guide/markdown-strategy": {"processing_status", "COMPLETED", "filings_markdown_retrieve"},
+}
+
 
 # Sample arguments for rendering each prompt. The Prompts have required
 # typed arguments; FastMCP raises if any are missing at render time, so we
@@ -67,3 +75,30 @@ async def test_prompt_messages_reference_expected_tools(
     )
     missing = [t for t in expected_tools if t not in rendered]
     assert not missing, f"{prompt_name}: missing tool references {missing}"
+
+
+@pytest.mark.asyncio
+async def test_all_expected_resources_registered(mcp_module) -> None:
+    """Every URI in EXPECTED_RESOURCES must be exposed via resources/list."""
+    resources = await mcp_module.mcp.get_resources()
+    registered = set(resources.keys())
+    missing = set(EXPECTED_RESOURCES) - registered
+    assert not missing, f"Missing resources: {missing}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("uri,must_contain", list(EXPECTED_RESOURCES.items()))
+async def test_resource_body_contains_expected_substrings(
+    mcp_module, uri: str, must_contain: set[str]
+) -> None:
+    """Each resource body must contain the substrings the agent relies on."""
+    resources = await mcp_module.mcp.get_resources()
+    res = resources[uri]
+    body = await res.read()
+    if isinstance(body, (list, tuple)):
+        # Some FastMCP versions return a list of content parts; concatenate.
+        body = " ".join(
+            getattr(part, "text", str(part)) for part in body
+        )
+    missing = [s for s in must_contain if s not in body]
+    assert not missing, f"{uri}: missing substrings {missing}"
