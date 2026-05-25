@@ -93,18 +93,31 @@ logger = logging.getLogger("financial-reports-mcp")
 # ---------------------------------------------------------------------------
 # Configuration (env-driven, no hardcoded secrets)
 # ---------------------------------------------------------------------------
-_REQUIRED_ENV = ("COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_CLIENT_SECRET")
+# Cognito env vars are REQUIRED in production but OPTIONAL when
+# DEV_MODE_API_KEY is set. The dev-mode bypass skips OAuth entirely
+# (AWSCognitoProvider is never constructed), so requiring its creds
+# would defeat the purpose. We do the DEV_MODE check up here, before
+# the requirement check, even though DEV_MODE_API_KEY is also re-read
+# below — the duplicate read is intentional so the audit and prod-
+# hostname guard further down stay self-contained.
+_DEV_MODE_EARLY = os.environ.get("DEV_MODE_API_KEY", "").strip() or None
+_REQUIRED_ENV = (
+    () if _DEV_MODE_EARLY else
+    ("COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_CLIENT_SECRET")
+)
 _missing_env = [k for k in _REQUIRED_ENV if not os.environ.get(k)]
 if _missing_env:
     raise SystemExit(
         "[financial-reports-mcp] Missing required environment variable(s): "
         + ", ".join(_missing_env)
         + ". Copy .env.example to .env and fill in the Cognito values "
-        "(see docs/SELF-HOSTING.md), then export them before starting the server."
+        "(see docs/SELF-HOSTING.md), then export them before starting "
+        "the server. (Or set DEV_MODE_API_KEY for a local-dev bypass — "
+        "see the README.)"
     )
-COGNITO_USER_POOL_ID = os.environ["COGNITO_USER_POOL_ID"]
-COGNITO_CLIENT_ID = os.environ["COGNITO_CLIENT_ID"]
-COGNITO_CLIENT_SECRET = os.environ["COGNITO_CLIENT_SECRET"]
+COGNITO_USER_POOL_ID = os.environ.get("COGNITO_USER_POOL_ID", "")
+COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "")
+COGNITO_CLIENT_SECRET = os.environ.get("COGNITO_CLIENT_SECRET", "")
 COGNITO_REGION = os.environ.get("COGNITO_REGION", "eu-central-1")
 
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.financialfilings.com")
@@ -341,17 +354,29 @@ ALLOWED_CLIENT_REDIRECT_URI_PATTERNS = [
     "http://[::1]:*",
 ]
 
-auth_provider = AWSCognitoProvider(
-    user_pool_id=COGNITO_USER_POOL_ID,
-    aws_region=COGNITO_REGION,
-    client_id=COGNITO_CLIENT_ID,
-    client_secret=COGNITO_CLIENT_SECRET,
-    base_url=MCP_BASE_URL,
-    redirect_path="/auth/callback",
-    required_scopes=["openid", "email", "profile"],
-    allowed_client_redirect_uris=ALLOWED_CLIENT_REDIRECT_URI_PATTERNS,
-    client_storage=_oauth_storage,
-)
+# In production the AWSCognitoProvider constructor makes a live HTTPS
+# call to AWS Cognito's OIDC discovery endpoint, so it cannot run with
+# synthetic creds. When DEV_MODE_API_KEY is active we want a local
+# server that boots without any real Cognito account — so we skip the
+# provider entirely. The `subscription_required` and
+# `_authorize_or_raise` bypasses already accept the request without a
+# JWT in that mode, so removing the provider doesn't open a new hole;
+# it just means the OAuth proxy endpoints (/authorize, /token, etc.)
+# disappear, which is what we want locally.
+if DEV_MODE_API_KEY:
+    auth_provider = None
+else:
+    auth_provider = AWSCognitoProvider(
+        user_pool_id=COGNITO_USER_POOL_ID,
+        aws_region=COGNITO_REGION,
+        client_id=COGNITO_CLIENT_ID,
+        client_secret=COGNITO_CLIENT_SECRET,
+        base_url=MCP_BASE_URL,
+        redirect_path="/auth/callback",
+        required_scopes=["openid", "email", "profile"],
+        allowed_client_redirect_uris=ALLOWED_CLIENT_REDIRECT_URI_PATTERNS,
+        client_storage=_oauth_storage,
+    )
 
 mcp = FastMCP(
     name="FinancialReports",
