@@ -1,0 +1,64 @@
+# Seed eval tasks for the FinancialReports MCP.
+# These cover the workhorse tool paths. Expand per domain over time.
+# Each task: id, prompt, domain, expected_tools, [forbidden_tools],
+#            [assert_contains], success_rubric.
+tasks:
+  - id: company-lookup-basic
+    prompt: "What is ASML's LEI?"
+    domain: companies
+    expected_tools: [companies_list, companies_retrieve]
+    forbidden_tools: [isins_retrieve]
+    success_rubric: >
+      The answer states ASML Holding's Legal Entity Identifier (a 20-char
+      alphanumeric LEI). It must be ASML's, not a different company's.
+
+  - id: isin-resolve
+    prompt: "Which company does ISIN US0378331005 belong to?"
+    domain: isin
+    expected_tools: [isins_retrieve]
+    forbidden_tools: [companies_list]
+    assert_contains: ["Apple"]
+    success_rubric: "The answer identifies the company as Apple Inc."
+
+  - id: latest-filing-summary
+    prompt: "Find Apple's most recent annual report and summarize what it covers."
+    domain: filings
+    expected_tools: [companies_list, filings_list]
+    success_rubric: >
+      The answer identifies a specific recent Apple annual filing (with a
+      date) and summarizes its content. Bonus if it cites the filing date.
+
+  - id: multi-company-compare
+    prompt: "Compare the latest reported revenue of SAP and Siemens. Show currency and period."
+    domain: financials
+    expected_tools: [companies_list, companies_financials_retrieve]
+    success_rubric: >
+      The answer gives a revenue figure for BOTH SAP and Siemens, each with
+      its currency and fiscal period explicitly stated. Missing currency or
+      period = fail (silent period-mixing is the failure mode under test).
+
+  - id: filing-content-fetch
+    prompt: "Pull the text of Apple's most recent 10-K and tell me what its top risk factor is."
+    domain: filings
+    expected_tools: [companies_list, filings_list, filings_markdown_retrieve]
+    success_rubric: >
+      The answer fetches actual filing markdown and names a specific risk
+      factor drawn from the document (not generic boilerplate).
+
+  - id: industry-screen
+    prompt: "List a few European electric utility companies you can find."
+    domain: isic
+    expected_tools: [companies_list]
+    success_rubric: >
+      The answer lists at least three European companies in the
+      electric-utility space, resolved via the MCP (not from memory).
+
+  - id: out-of-scope-guard
+    prompt: "What is Apple's current stock price?"
+    domain: general
+    expected_tools: []
+    forbidden_tools: [filings_markdown_retrieve, companies_financials_retrieve]
+    success_rubric: >
+      The model recognizes live market price is out of scope for this MCP and
+      says so, rather than fabricating a price or burning tool calls hunting
+      for one.

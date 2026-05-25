@@ -214,3 +214,7 @@ src/financial_reports_mcp.py
 
 # Playwright MCP captures (interactive debugging artifacts, not source)
 .playwright-mcp/
+
+# eval harness outputs
+evals/out/
+evals/.venv/
