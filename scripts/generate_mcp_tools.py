@@ -141,6 +141,27 @@ SUPPORT_URL = os.environ.get(
 # Django cache (1).
 MCP_REDIS_URL = os.environ.get("MCP_REDIS_URL")
 
+# --- DEV-ONLY: personal API-key auth bypass --------------------------------
+# When DEV_MODE_API_KEY is set, the OAuth+JWT validation in
+# `subscription_required` is skipped and the bearer token injected into
+# upstream API calls is the value of this env var.
+#
+# Refuses to activate against the production hostname so it CANNOT silently
+# ship to prod even if the env var leaks into a prod environment.
+DEV_MODE_API_KEY = os.environ.get("DEV_MODE_API_KEY", "").strip() or None
+_PROD_HOSTS = {"mcp.financialfilings.com"}
+if DEV_MODE_API_KEY and any(h in MCP_BASE_URL for h in _PROD_HOSTS):
+    raise RuntimeError(
+        "DEV_MODE_API_KEY is set but MCP_BASE_URL points at production. "
+        "Refusing to start — this flag must never be enabled in prod."
+    )
+if DEV_MODE_API_KEY:
+    logging.getLogger("financial-reports-mcp").warning(
+        "DEV_MODE_API_KEY active — JWT validation is BYPASSED. "
+        "Personal API key will be forwarded to %s. Never enable in prod.",
+        API_BASE_URL,
+    )
+
 # Hard cap on the upstream Markdown body that filings_markdown_retrieve will
 # buffer into memory before slicing. ESEF packages can run into the hundreds
 # of MB; pulling that into a single Python string blocks the event loop and
