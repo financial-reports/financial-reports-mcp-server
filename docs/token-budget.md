@@ -1,6 +1,6 @@
 # Token-budget audit
 
-Total tools registered: **42**
+Total tools registered: **44**
 
 | Tool | Description chars | Schema chars | Approx tokens |
 |---|---:|---:|---:|
@@ -21,6 +21,7 @@ Total tools registered: **42**
 | `isic_divisions_list` | 44 | 570 | 153 |
 | `isic_sections_list` | 43 | 495 | 133 |
 | `isins_retrieve` | 430 | 77 | 126 |
+| `companies_api_company_financials_gsheet_export_create` | 329 | 74 | 100 |
 | `filing_types_list` | 56 | 318 | 93 |
 | `webhooks_delivery_detail_retrieve` | 171 | 124 | 73 |
 | `webhooks_list` | 109 | 175 | 70 |
@@ -32,6 +33,7 @@ Total tools registered: **42**
 | `countries_list` | 43 | 175 | 53 |
 | `filings_history_retrieve` | 118 | 74 | 47 |
 | `companies_next_annual_report_retrieve` | 102 | 74 | 43 |
+| `companies_api_company_financials_gsheet_export_retrieve` | 66 | 111 | 43 |
 | `webhooks_retrieve` | 93 | 74 | 41 |
 | `watchlist_companies_create` | 63 | 90 | 37 |
 | `webhooks_deliveries_retrieve` | 77 | 74 | 37 |
@@ -47,7 +49,7 @@ Total tools registered: **42**
 | `countries_retrieve` | 50 | 74 | 30 |
 | `languages_retrieve` | 51 | 74 | 30 |
 
-**Total approx tokens for `tools/list`: 5760**
+**Total approx tokens for `tools/list`: 5903**
 
 > **Methodology**: token count is approximated as `len(chars) // 4`
 > (per-tool description + JSON-serialized parameter schema). The actual

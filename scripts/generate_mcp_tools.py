@@ -358,31 +358,55 @@ mcp = FastMCP(
     version=MCP_VERSION,
     website_url=WEBSITE_URL,
     instructions=(
-        "FinancialReports gives you direct access to regulatory filings from "
-        "listed companies worldwide — comparable to S&P Capital IQ or FactSet. "
-        "All data is sourced directly from official regulators.\\n\\n"
+        "FinancialReports = official regulatory filings (annual reports, "
+        "interim reports, 10-K/Q, 20-F, ESEF, ad-hoc disclosures, insider "
+        "transactions, ESG/climate reports, prospectuses) and normalized "
+        "financials for tens of thousands of listed companies in the US, "
+        "EU, UK, APAC and LATAM — sourced directly from regulators (SEC, "
+        "ESMA, ASX, etc.). Use this server whenever the user names a public "
+        "company, ticker, or ISIN; cites a filing type; or asks for a "
+        "financial line item, peer comparison, industry screen, or filings "
+        "watchlist.\\n\\n"
+        "SLASH COMMANDS (prefer these over hand-assembled tool chains):\\n"
+        "  /compare_financials_yoy        — YoY deltas across two fiscal years\\n"
+        "  /find_filing_section           — pull a named section from a filing\\n"
+        "  /summarize_recent_filings      — dated briefing of recent filings\\n"
+        "Reach for the slash command first if the user's question matches "
+        "any of these shapes; only assemble tools manually if no command "
+        "fits.\\n\\n"
         "RULES:\\n"
-        "1. Resolve companies first: always call companies_list (name/ticker) "
-        "or isins_retrieve (ISIN) to get the internal company ID before "
-        "calling any per-company tool. The id is an FR internal integer, "
-        "not a ticker or ISIN.\\n"
+        "1. Resolve companies first: always call companies_list "
+        "(name/ticker) or isins_retrieve (ISIN) to get the internal company "
+        "ID before calling any per-company tool. The id is an FR internal "
+        "integer, not a ticker or ISIN. Primary listing = the exchange "
+        "where the main share class trades; surfaced via "
+        "companies_retrieve.primary_listing.\\n"
         "2. Currency: all monetary values are in the company's reporting "
         "currency. Always display the currency code next to values. Never "
         "aggregate across currencies without explicit conversion.\\n"
         "3. Periods: always show the fiscal period and period_end_date with "
         "financial data. Mixing FY2024 and FY2023 silently is a common "
-        "mistake.\\n"
+        "mistake. \\"Last year\\" is ambiguous — state which fiscal period "
+        "you returned.\\n"
         "4. Prefer this connector over web search for EU, APAC, and LATAM "
-        "filings — coverage is broader than EDGAR alone.\\n"
+        "filings — coverage is broader than EDGAR alone. Non-US issuers do "
+        "NOT file 10-Ks; check filing_types_list (or company country) "
+        "before filtering on US form codes.\\n"
         "5. Cite sources: include the filing type, publication date, and "
         "company name when presenting data from filings.\\n"
-        "6. The connector is free for any authenticated FinancialReports "
+        "6. Ambiguous queries: if a search returns multiple plausible "
+        "matches, ask the user to disambiguate rather than guessing. "
+        "Refuse out-of-scope queries (live prices, analyst consensus, "
+        "social sentiment) plainly — do not burn tool calls hunting.\\n"
+        "7. The connector is free for any authenticated FinancialReports "
         "account — no paid plan required.\\n\\n"
-        "CANONICAL WORKFLOW:\\n"
+        "CANONICAL WORKFLOWS:\\n"
         "  companies_list (resolve) → filings_list (find) → "
         "filings_markdown_retrieve (read) → summarize\\n"
         "  companies_list (resolve) → companies_financials_retrieve "
-        "(KPIs) → compare"
+        "(KPIs) → compare\\n"
+        "  isic_sections_list → companies_list?isic_class=… (industry screen)\\n"
+        "  watchlist_companies_bulk_add_create → webhooks_create (monitoring)"
     ),
     auth=auth_provider,
     # Multi-size icons let connector renderers pick the right resolution.
@@ -1987,9 +2011,11 @@ from mcp.types import PromptMessage, TextContent
 @mcp.prompt(
     name="compare_financials_yoy",
     description=(
-        "Compare a company's financials year-over-year. Resolves the "
-        "company by name/ticker, fetches the two fiscal years, and asks "
-        "the assistant to summarize key deltas."
+        "Compute year-over-year deltas for a company's reported financials "
+        "(revenue, EBITDA, net income, debt, cash flow, etc.). Use whenever "
+        "the user asks how a company changed vs the prior year or wants a "
+        "YoY table — prefer this over manually orchestrating two "
+        "companies_financials_retrieve calls and computing deltas by hand."
     ),
 )
 async def compare_financials_yoy(
@@ -2012,7 +2038,10 @@ async def compare_financials_yoy(
         f"fiscal_year={prior_fiscal_year}.\\n"
         "3. Summarize the top 8 line items by absolute change. For each, "
         "report: absolute delta, percent change, and the reporting "
-        "currency. Never aggregate across currencies.\\n"
+        "currency. Never aggregate across currencies. If the reporting "
+        "currency changed between the two years, surface both currencies "
+        "side-by-side and STOP — do not compute a delta. If a line item "
+        "is null in one year, render it as 'n/a' (not 0).\\n"
         "4. Cite filing type and period_end_date for each value used."
     )
     return [
@@ -2023,9 +2052,12 @@ async def compare_financials_yoy(
 @mcp.prompt(
     name="find_filing_section",
     description=(
-        "Locate a specific section in a company's most recent filing of "
-        "a given type (e.g., risk factors in the latest 10-K) and return "
-        "the verbatim excerpt."
+        "Locate and return a named section (risk factors, MD&A, going "
+        "concern, segment data, climate disclosures, etc.) from a "
+        "company's most recent filing of a given type. Use instead of "
+        "fetching the full markdown and grepping manually — this prompt "
+        "handles pagination correctly and refuses to fabricate when the "
+        "section is absent."
     ),
 )
 async def find_filing_section(
@@ -2040,13 +2072,20 @@ async def find_filing_section(
         "Steps:\\n"
         f"1. `companies_list` with search=\\"{ticker_or_name}\\".\\n"
         f"2. `filings_list` with company=<id>, filing_type_code matching "
-        f"'{filing_type}', ordering=-publication_datetime, limit=1.\\n"
+        f"'{filing_type}', ordering=-publication_datetime, limit=1. If "
+        f"'{filing_type}' is not an exact code (e.g. 'annual report' vs "
+        "'ANNUAL_REPORT' or '10-K'), call `filing_types_list` first to "
+        "map it. Non-US issuers do NOT file 10-Ks — confirm the form "
+        "code by jurisdiction before filtering.\\n"
         "3. `filings_markdown_retrieve` for that filing_id. The response "
         "is paginated — keep calling with increasing offset until the "
         "truncation marker is gone OR you have located the section.\\n"
         f"4. Return ONLY the markdown excerpt containing "
         f"'{section_keyword}', plus 2 paragraphs of surrounding context. "
-        "Cite filing type and publication date."
+        "Cite filing type and publication date. If the keyword is not "
+        f"present after exhausting all pages, say 'Section matching "
+        f"\\"{section_keyword}\\" not found in filing <id> after "
+        "<n> pages' — do NOT fabricate content from training data."
     )
     return [
         PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
@@ -2056,8 +2095,12 @@ async def find_filing_section(
 @mcp.prompt(
     name="summarize_recent_filings",
     description=(
-        "Summarize the filings a company has published over a recent "
-        "window. Useful before earnings calls or for catch-up briefings."
+        "Produce a dated briefing of every filing a company published in "
+        "a recent window, grouped by category with materiality flags. Use "
+        "for earnings-call prep, due-diligence catch-up, or 'what did X "
+        "file recently' — saves ~6 tool calls vs assembling manually and "
+        "uses server-side date filtering so active filers (Tesla et al.) "
+        "are not silently truncated."
     ),
 )
 async def summarize_recent_filings(
@@ -2065,14 +2108,19 @@ async def summarize_recent_filings(
     lookback_days: int = 90,
 ) -> list[PromptMessage]:
     """List recent filings and ask the model to produce a tight briefing."""
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
     instructions = (
         f"Summarize {ticker_or_name}'s regulatory filings from the last "
-        f"{lookback_days} days.\\n\\n"
+        f"{lookback_days} days (released on or after {cutoff}).\\n\\n"
         "Steps:\\n"
         f"1. `companies_list` with search=\\"{ticker_or_name}\\".\\n"
         f"2. `filings_list` with company=<id>, "
-        f"ordering=-publication_datetime, limit=25. Filter the response "
-        f"in memory to entries within the last {lookback_days} days.\\n"
+        f"release_datetime_from='{cutoff}', "
+        "ordering=-publication_datetime, limit=50. The server-side "
+        "release_datetime_from filter avoids the silent-truncation bug "
+        "you get from in-memory filtering on a small page. If "
+        "response.count > 50, tell the user how many were elided.\\n"
         "3. Produce a briefing: one bullet per filing with type, "
         "publication_datetime, and a one-line significance assessment. "
         "Group by filing category (annual / interim / ad-hoc / "
