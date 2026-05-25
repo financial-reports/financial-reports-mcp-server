@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "financialreports": {
+      "type": "http",
+      "url": "https://mcp.financialfilings.com/mcp",
+      "note": "Official FinancialReports MCP server. Uses OAuth — on first connection you will be prompted to sign in with your FinancialReports account. Free for any authenticated user."
+    },
+    "financialreports-local": {
+      "type": "http",
+      "url": "http://localhost:8000/mcp",
+      "note": "Local dev. Requires DEV_MODE_API_KEY in .env and `make regen && uvicorn src.financial_reports_mcp:app --host 0.0.0.0 --port 8000`. Refuses to start against the production hostname."
+    }
+  }
+}

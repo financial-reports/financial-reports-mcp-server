@@ -93,18 +93,31 @@ logger = logging.getLogger("financial-reports-mcp")
 # ---------------------------------------------------------------------------
 # Configuration (env-driven, no hardcoded secrets)
 # ---------------------------------------------------------------------------
-_REQUIRED_ENV = ("COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_CLIENT_SECRET")
+# Cognito env vars are REQUIRED in production but OPTIONAL when
+# DEV_MODE_API_KEY is set. The dev-mode bypass skips OAuth entirely
+# (AWSCognitoProvider is never constructed), so requiring its creds
+# would defeat the purpose. We do the DEV_MODE check up here, before
+# the requirement check, even though DEV_MODE_API_KEY is also re-read
+# below — the duplicate read is intentional so the audit and prod-
+# hostname guard further down stay self-contained.
+_DEV_MODE_EARLY = os.environ.get("DEV_MODE_API_KEY", "").strip() or None
+_REQUIRED_ENV = (
+    () if _DEV_MODE_EARLY else
+    ("COGNITO_USER_POOL_ID", "COGNITO_CLIENT_ID", "COGNITO_CLIENT_SECRET")
+)
 _missing_env = [k for k in _REQUIRED_ENV if not os.environ.get(k)]
 if _missing_env:
     raise SystemExit(
         "[financial-reports-mcp] Missing required environment variable(s): "
         + ", ".join(_missing_env)
         + ". Copy .env.example to .env and fill in the Cognito values "
-        "(see docs/SELF-HOSTING.md), then export them before starting the server."
+        "(see docs/SELF-HOSTING.md), then export them before starting "
+        "the server. (Or set DEV_MODE_API_KEY for a local-dev bypass — "
+        "see the README.)"
     )
-COGNITO_USER_POOL_ID = os.environ["COGNITO_USER_POOL_ID"]
-COGNITO_CLIENT_ID = os.environ["COGNITO_CLIENT_ID"]
-COGNITO_CLIENT_SECRET = os.environ["COGNITO_CLIENT_SECRET"]
+COGNITO_USER_POOL_ID = os.environ.get("COGNITO_USER_POOL_ID", "")
+COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "")
+COGNITO_CLIENT_SECRET = os.environ.get("COGNITO_CLIENT_SECRET", "")
 COGNITO_REGION = os.environ.get("COGNITO_REGION", "eu-central-1")
 
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.financialfilings.com")
@@ -140,6 +153,28 @@ SUPPORT_URL = os.environ.get(
 # Use a dedicated DB number that does not collide with Celery (0) or the
 # Django cache (1).
 MCP_REDIS_URL = os.environ.get("MCP_REDIS_URL")
+
+# --- DEV-ONLY: personal API-key auth bypass --------------------------------
+# When DEV_MODE_API_KEY is set, the OAuth+JWT validation in
+# `subscription_required` (and `_authorize_or_raise` for structured tools)
+# is skipped and the key is forwarded as `X-API-Key` to upstream API calls
+# (not as a Bearer token).
+#
+# Refuses to activate against the production hostname so it CANNOT silently
+# ship to prod even if the env var leaks into a prod environment.
+DEV_MODE_API_KEY = os.environ.get("DEV_MODE_API_KEY", "").strip() or None
+_PROD_HOSTS = {"mcp.financialfilings.com"}
+if DEV_MODE_API_KEY and any(h in MCP_BASE_URL for h in _PROD_HOSTS):
+    raise RuntimeError(
+        "DEV_MODE_API_KEY is set but MCP_BASE_URL points at production. "
+        "Refusing to start — this flag must never be enabled in prod."
+    )
+if DEV_MODE_API_KEY:
+    logging.getLogger("financial-reports-mcp").warning(
+        "DEV_MODE_API_KEY active — JWT validation is BYPASSED. "
+        "Personal API key will be forwarded to %s. Never enable in prod.",
+        API_BASE_URL,
+    )
 
 # Hard cap on the upstream Markdown body that filings_markdown_retrieve will
 # buffer into memory before slicing. ESEF packages can run into the hundreds
@@ -319,48 +354,93 @@ ALLOWED_CLIENT_REDIRECT_URI_PATTERNS = [
     "http://[::1]:*",
 ]
 
-auth_provider = AWSCognitoProvider(
-    user_pool_id=COGNITO_USER_POOL_ID,
-    aws_region=COGNITO_REGION,
-    client_id=COGNITO_CLIENT_ID,
-    client_secret=COGNITO_CLIENT_SECRET,
-    base_url=MCP_BASE_URL,
-    redirect_path="/auth/callback",
-    required_scopes=["openid", "email", "profile"],
-    allowed_client_redirect_uris=ALLOWED_CLIENT_REDIRECT_URI_PATTERNS,
-    client_storage=_oauth_storage,
-)
+# In production the AWSCognitoProvider constructor makes a live HTTPS
+# call to AWS Cognito's OIDC discovery endpoint, so it cannot run with
+# synthetic creds. When DEV_MODE_API_KEY is active we want a local
+# server that boots without any real Cognito account — so we skip the
+# provider entirely. The `subscription_required` and
+# `_authorize_or_raise` bypasses already accept the request without a
+# JWT in that mode, so removing the provider doesn't open a new hole;
+# it just means the OAuth proxy endpoints (/authorize, /token, etc.)
+# disappear, which is what we want locally.
+if DEV_MODE_API_KEY:
+    auth_provider = None
+else:
+    auth_provider = AWSCognitoProvider(
+        user_pool_id=COGNITO_USER_POOL_ID,
+        aws_region=COGNITO_REGION,
+        client_id=COGNITO_CLIENT_ID,
+        client_secret=COGNITO_CLIENT_SECRET,
+        base_url=MCP_BASE_URL,
+        redirect_path="/auth/callback",
+        required_scopes=["openid", "email", "profile"],
+        allowed_client_redirect_uris=ALLOWED_CLIENT_REDIRECT_URI_PATTERNS,
+        client_storage=_oauth_storage,
+    )
 
 mcp = FastMCP(
     name="FinancialReports",
     version=MCP_VERSION,
     website_url=WEBSITE_URL,
     instructions=(
-        "FinancialReports gives you direct access to regulatory filings from "
-        "listed companies worldwide — comparable to S&P Capital IQ or FactSet. "
-        "All data is sourced directly from official regulators.\\n\\n"
-        "RULES:\\n"
-        "1. Resolve companies first: always call companies_list (name/ticker) "
-        "or isins_retrieve (ISIN) to get the internal company ID before "
-        "calling any per-company tool. The id is an FR internal integer, "
-        "not a ticker or ISIN.\\n"
-        "2. Currency: all monetary values are in the company's reporting "
-        "currency. Always display the currency code next to values. Never "
-        "aggregate across currencies without explicit conversion.\\n"
-        "3. Periods: always show the fiscal period and period_end_date with "
-        "financial data. Mixing FY2024 and FY2023 silently is a common "
-        "mistake.\\n"
-        "4. Prefer this connector over web search for EU, APAC, and LATAM "
-        "filings — coverage is broader than EDGAR alone.\\n"
-        "5. Cite sources: include the filing type, publication date, and "
-        "company name when presenting data from filings.\\n"
-        "6. The connector is free for any authenticated FinancialReports "
-        "account — no paid plan required.\\n\\n"
-        "CANONICAL WORKFLOW:\\n"
-        "  companies_list (resolve) → filings_list (find) → "
-        "filings_markdown_retrieve (read) → summarize\\n"
-        "  companies_list (resolve) → companies_financials_retrieve "
-        "(KPIs) → compare"
+        "FinancialReports = official regulatory filings (annual reports, "
+        "interim reports, 10-K/Q, 20-F, ESEF, ad-hoc disclosures, insider "
+        "transactions, ESG/climate reports, prospectuses) and normalized "
+        "financials for tens of thousands of listed companies in the US, "
+        "EU, UK, APAC and LATAM — sourced directly from regulators (SEC, "
+        "ESMA, ASX, etc.). Use this server whenever the user names a public "
+        "company, ticker, or ISIN; cites a filing type; or asks for a "
+        "financial line item, peer comparison, industry screen, or filings "
+        "watchlist.\\n\\n"
+        "SLASH COMMANDS (prefer these over hand-assembled tool chains):\\n"
+        "  /compare_financials_yoy        — YoY deltas across two fiscal years\\n"
+        "  /find_filing_section           — pull a named section from a filing\\n"
+        "  /summarize_recent_filings      — dated briefing of recent filings\\n"
+        "Reach for the slash command first if the user's question matches "
+        "any of these shapes; only assemble tools manually if no command "
+        "fits.\\n\\n"
+        "CORE RULES:\\n"
+        "1. Resolve company first: companies_list (name/ticker) or "
+        "isins_retrieve (ISIN) → use the returned internal integer id "
+        "for per-company tools (NOT the ticker or ISIN itself).\\n"
+        "2. Currency: always display the reporting currency next to "
+        "every monetary value. Never aggregate USD/EUR/CHF/etc. without "
+        "explicit FX conversion.\\n"
+        "3. Periods: always state the fiscal period and period_end_date "
+        "with financial data. \\"Last year\\" is ambiguous — name the "
+        "fiscal period you returned.\\n"
+        "4. Filing type codes (most common — pass via filing_type_code "
+        "on filings_list):\\n"
+        "     10-K       Annual Report (US, AND foreign-private-issuer "
+        "20-F filings — FR rolls them up under 10-K)\\n"
+        "     10-K-ESEF  Annual Report (EU/ESEF issuers)\\n"
+        "     IR         Interim / Quarterly Report (10-Q, half-year, Q1-Q4)\\n"
+        "     ER         Earnings Release\\n"
+        "     MDA        Management Discussion & Analysis\\n"
+        "     DIRS       Director's Dealing (insider transactions)\\n"
+        "   For ESG/governance/M&A/etc, fetch the resource "
+        "`fr://guide/filing-types` for the full 31-code table.\\n"
+        "5. Ambiguity / scope: ask the user to disambiguate when a search "
+        "returns multiple plausible matches. Refuse out-of-scope queries "
+        "(stock prices, analyst consensus, sentiment) plainly — do not "
+        "burn tool calls hunting.\\n\\n"
+        "READ THESE RESOURCES BEFORE COMPLEX QUERIES:\\n"
+        "  fr://guide/filing-types            — full 31-code filing-type "
+        "table (read for ESG, governance, M&A, dividends, transcripts).\\n"
+        "  fr://guide/industry-classification — ISIC 4-level hierarchy "
+        "+ all 22 sections + peer-query recipe (read for sector / "
+        "industry / peer queries).\\n"
+        "  fr://guide/markdown-strategy       — when to fall back to "
+        "filings_markdown_retrieve, processing_status gating, "
+        "pagination (read whenever you need a value the normalised "
+        "financials dataset doesn't have).\\n\\n"
+        "CANONICAL WORKFLOWS (one-liners; full recipes in the resources):\\n"
+        "  resolve → filings_list (processing_status='COMPLETED', "
+        "filing_type_code=…) → filings_markdown_retrieve → summarize\\n"
+        "  resolve → companies_financials_retrieve → if value missing, "
+        "fr://guide/markdown-strategy\\n"
+        "  industry/peer queries → fr://guide/industry-classification\\n"
+        "  watchlist_companies_bulk_add_create → webhooks_create"
     ),
     auth=auth_provider,
     # Multi-size icons let connector renderers pick the right resolution.
@@ -394,11 +474,15 @@ _current_token: ContextVar[str] = ContextVar("_current_token", default="")
 # Shared HTTP client — module-level for connection-pool reuse
 # ---------------------------------------------------------------------------
 async def _inject_auth(request: httpx.Request) -> None:
-    """Add Authorization from `_current_token` if not already set on the request."""
-    if "Authorization" not in request.headers:
-        token = _current_token.get()
-        if token:
-            request.headers["Authorization"] = f"Bearer {token}"
+    """Add upstream auth header from `_current_token`. Format depends on
+    whether the dev API-key bypass is active."""
+    token = _current_token.get()
+    if not token:
+        return
+    if DEV_MODE_API_KEY:
+        request.headers.setdefault("X-API-Key", token)
+    elif "Authorization" not in request.headers:
+        request.headers["Authorization"] = f"Bearer {token}"
 
 
 # A single AsyncClient per process. Connection pool + HTTP keep-alive are
@@ -441,6 +525,17 @@ def subscription_required(
 
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> str:
+        # DEV-ONLY bypass: when DEV_MODE_API_KEY is set, skip JWT validation
+        # entirely and forward the personal API key to the backend. The prod
+        # hostname guard at module import time prevents this from ever being
+        # active in production.
+        if DEV_MODE_API_KEY:
+            token_reset = _current_token.set(DEV_MODE_API_KEY)
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                _current_token.reset(token_reset)
+
         try:
             access_token = get_access_token()
         except Exception as exc:
@@ -523,6 +618,15 @@ async def _authorize_or_raise() -> tuple[Any, ...]:
     """Token-validate for structured tools. Raises AuthenticationError
     if authentication fails. Returns a tuple of context resets.
     """
+    # DEV-ONLY bypass: mirror the bypass in `subscription_required`. When
+    # DEV_MODE_API_KEY is set, skip JWT validation entirely and return a
+    # context-reset tuple that `_release_auth_context` understands. The prod
+    # hostname guard at module import time prevents this from ever being
+    # active in production.
+    if DEV_MODE_API_KEY:
+        token_reset = _current_token.set(DEV_MODE_API_KEY)
+        return (token_reset,)
+
     try:
         access_token = get_access_token()
     except Exception as exc:
@@ -1923,6 +2027,373 @@ if __name__ == "__main__":
 
 
 # ---------------------------------------------------------------------------
+# MCP Resources block — long-form reference content (filing-type taxonomy,
+# ISIC industry hierarchy, markdown-fetch strategy) that the assistant
+# fetches on demand via resources/read. Kept out of instructions= so the
+# per-session token cost stays low; the model loads only what it needs.
+# Each resource returns a markdown string.
+# ---------------------------------------------------------------------------
+RESOURCES_BLOCK = '''
+
+@mcp.resource(
+    uri="fr://guide/filing-types",
+    name="FR filing-type taxonomy",
+    description=(
+        "All 31 filing-type codes the FinancialReports backend uses, with "
+        "categories and one-line descriptions. Read this whenever a user "
+        "asks about a filing type that isn't in the top-6 inline list "
+        "(10-K, 10-K-ESEF, IR, ER, MDA, DIRS) — e.g. ESG, governance, "
+        "M&A, dividend notices, call transcripts, investor presentations."
+    ),
+    mime_type="text/markdown",
+)
+def _resource_filing_types() -> str:
+    return (
+        "# FR filing-type codes (31 total)\\n\\n"
+        "Pass these via the `filing_type_code` query param on "
+        "`filings_list`. The first column is the code; the third is the "
+        "FR taxonomy category.\\n\\n"
+        "**20-F note:** foreign private issuers filing 20-F with the SEC "
+        "are rolled up under `10-K` in this dataset. Don't search for "
+        "`20-F` as a code — it doesn't exist.\\n\\n"
+        "| Code | Name | Category |\\n"
+        "|---|---|---|\\n"
+        "| 10-K | Annual Report (US + 20-F) | Financial Reporting & Info |\\n"
+        "| 10-K-ESEF | Annual Report (ESEF, EU) | Financial Reporting & Info |\\n"
+        "| IR | Interim / Quarterly Report | Financial Reporting & Info |\\n"
+        "| ER | Earnings Release | Financial Reporting & Info |\\n"
+        "| XLSX | Financial Supplement Data | Financial Reporting & Info |\\n"
+        "| AR | Audit Report / Information | Financial Reporting & Info |\\n"
+        "| MDA | Management Reports / MD&A | Management & Remuneration |\\n"
+        "| MANG | Board/Management Information | Management & Remuneration |\\n"
+        "| DEF 14A | Remuneration Information | Management & Remuneration |\\n"
+        "| DIRS | Director's Dealing (insider transactions) | Management & Remuneration |\\n"
+        "| SR | Environmental & Social Information (ESG) | ESG Information |\\n"
+        "| CGR | Governance Information | ESG Information |\\n"
+        "| CT | Call Transcript (earnings calls) | Investor Communication |\\n"
+        "| IP | Investor Presentation | Investor Communication |\\n"
+        "| RPA | Report Publication Announcement | Investor Communication |\\n"
+        "| TAR | M&A Activity | M&A, Partnerships & Legal |\\n"
+        "| MA | Merger & Acquisition | M&A, Partnerships & Legal |\\n"
+        "| LTR | Legal Proceedings Report | M&A, Partnerships & Legal |\\n"
+        "| AGM-R | AGM Information | Annual General Meeting |\\n"
+        "| DVA | Voting Results & Voting Rights | Annual General Meeting |\\n"
+        "| PSI | Proxy Solicitation & Information Statement | Annual General Meeting |\\n"
+        "| CAP | Capital/Financing Update | Debt Information |\\n"
+        "| IRAT | Interest Rate Update/Notice | Debt Information |\\n"
+        "| MRQ | Major Shareholding Notification | Equity Information |\\n"
+        "| DIV | Notice of Dividend Amount | Equity Information |\\n"
+        "| SHA | Share Issue/Capital Change | Equity Information |\\n"
+        "| POS | Transaction in Own Shares | Equity Information |\\n"
+        "| FS | Fund Information / Factsheet | Investment Vehicle Info |\\n"
+        "| NAV | Net Asset Value | Investment Vehicle Info |\\n"
+        "| DLST | Delisting Announcement | Listing/Delisting |\\n"
+        "| RNS | Regulatory Filings | Other |\\n"
+        "\\n"
+        "If you need the source of truth at runtime (e.g. a new code was "
+        "added since this resource was written), call `filing_types_list` "
+        "— it returns the live list."
+    )
+
+
+@mcp.resource(
+    uri="fr://guide/industry-classification",
+    name="FR industry classification (ISIC)",
+    description=(
+        "ISIC 4-level industry hierarchy used by the FinancialReports "
+        "backend, with all 22 sections and a peer-query recipe. Read "
+        "this whenever a user asks about a sector, industry, peer "
+        "comparison, peer median, or wants to screen companies by "
+        "business activity."
+    ),
+    mime_type="text/markdown",
+)
+def _resource_industry() -> str:
+    return (
+        "# Industry classification (ISIC, 4 levels)\\n\\n"
+        "Hierarchy from broad to specific:\\n"
+        "- **Section**  (1 letter, 22 total)    drills down to →\\n"
+        "- **Division** (2 digits, 87 total)    drills down to →\\n"
+        "- **Group**    (3 digits, 258 total)   drills down to →\\n"
+        "- **Class**    (4 digits, 463 total)   ← companies are tagged here\\n\\n"
+        "Each company has `isic_class` on the `companies_*` responses.\\n\\n"
+        "## Navigation\\n\\n"
+        "Top-down: `isic_sections_list` → `isic_divisions_list` → "
+        "`isic_groups_list` → `isic_classes_list`. Use the `_retrieve` "
+        "endpoints to inspect a single node.\\n\\n"
+        "Direct filter on companies: `companies_list?isic_class=<4-digit-code>`.\\n\\n"
+        "## The 22 sections\\n\\n"
+        "| Section | Activity |\\n"
+        "|---|---|\\n"
+        "| A | Agriculture, forestry & fishing |\\n"
+        "| B | Mining & quarrying |\\n"
+        "| C | Manufacturing |\\n"
+        "| D | Electricity, gas, steam |\\n"
+        "| E | Water, sewerage, waste |\\n"
+        "| F | Construction |\\n"
+        "| G | Wholesale & retail trade |\\n"
+        "| H | Transportation & storage |\\n"
+        "| I | Accommodation & food service |\\n"
+        "| J | Publishing, broadcasting, media (note: this taxonomy keeps media here, NOT IT) |\\n"
+        "| K | Telecom, IT, software, consultancy (note: software is K here, not J) |\\n"
+        "| L | Financial & insurance |\\n"
+        "| M | Real estate |\\n"
+        "| N | Professional, scientific & technical |\\n"
+        "| O | Administrative & support |\\n"
+        "| P | Public administration |\\n"
+        "| Q | Education |\\n"
+        "| R | Human health & social work |\\n"
+        "| S | Arts, sports, recreation |\\n"
+        "| T | Other services |\\n"
+        "| U | Households as employers |\\n"
+        "| V | Extraterritorial organizations |\\n\\n"
+        "## Peer / sector query recipe\\n\\n"
+        "There is **no aggregator endpoint** — compute peer statistics "
+        "manually:\\n\\n"
+        "1. Resolve target company → get its `isic_class` from "
+        "`companies_retrieve`.\\n"
+        "2. `companies_list?isic_class=<code>` → list of peers.\\n"
+        "3. For each peer, `companies_financials_retrieve` → the line "
+        "item of interest.\\n"
+        "4. Compute median / mean / quartiles in your response. NEVER "
+        "aggregate across currencies — group peers by reporting "
+        "currency first, or report per-currency aggregates separately.\\n"
+        "5. State sample size explicitly: 'median across 12 peers with "
+        "reported revenue in EUR' beats 'industry median'.\\n\\n"
+        "## Combining with country filter\\n\\n"
+        "For \\"semiconductor manufacturers in Asia\\" — first identify the "
+        "ISIC class (drill: Section C → Division 26 → Group 261 → Class "
+        "for semiconductors; use `isic_classes_list?search=semiconductor` "
+        "to find the exact code), then "
+        "`companies_list?isic_class=<code>&country=<ISO2>`."
+    )
+
+
+@mcp.resource(
+    uri="fr://guide/markdown-strategy",
+    name="FR markdown-fetch strategy",
+    description=(
+        "When and how to use filings_markdown_retrieve effectively. "
+        "Covers (1) processing_status gating (only COMPLETED filings "
+        "have markdown), (2) fallback from companies_financials_retrieve "
+        "when a line item is missing, (3) pagination semantics. Read "
+        "before fetching markdown content."
+    ),
+    mime_type="text/markdown",
+)
+def _resource_markdown() -> str:
+    return (
+        "# Markdown-fetch strategy\\n\\n"
+        "## When to use filings_markdown_retrieve\\n\\n"
+        "Markdown has *broader* coverage than the normalised financials "
+        "dataset. Reach for it when:\\n\\n"
+        "- `companies_financials_retrieve` returns null/missing for a "
+        "line item the user asked for (debt schedules, segment data, "
+        "non-IFRS metrics, capex breakdowns, etc.).\\n"
+        "- The user wants a *section* of a filing (risk factors, MD&A, "
+        "going concern, climate disclosures) — use the "
+        "/find_filing_section slash command.\\n"
+        "- The user wants verbatim language from the filing.\\n\\n"
+        "Do NOT reach for markdown when:\\n\\n"
+        "- The user wants a single normalised KPI for a single period "
+        "and `companies_financials_retrieve` has it.\\n"
+        "- The user just wants to know what was filed and when — use "
+        "/summarize_recent_filings instead.\\n\\n"
+        "## processing_status gate\\n\\n"
+        "Every filing has `processing_status`. Markdown is only "
+        "available when this == `'COMPLETED'`. Other values you may "
+        "see: `PROCESSING`, `PENDING`, `FAILED`.\\n\\n"
+        "Two ways to avoid wasted calls:\\n\\n"
+        "1. Filter the list call: `filings_list?processing_status="
+        "'COMPLETED'&...`. Recommended for any list query that "
+        "precedes a markdown fetch.\\n"
+        "2. Read the `processing_status` field on each filing returned "
+        "by filings_list / filings_retrieve before calling markdown.\\n\\n"
+        "Calling markdown on a non-COMPLETED filing wastes one tool call "
+        "and returns nothing useful.\\n\\n"
+        "## Pagination\\n\\n"
+        "Long filings (ESEF annual reports can be 100+ pages) come back "
+        "paginated. `filings_markdown_retrieve` accepts `offset` and "
+        "`limit` (default limit 50000 chars, per-call cap 150000). "
+        "When the response contains a truncation marker, call again "
+        "with an increased `offset` until either the marker is gone or "
+        "you've located the section you needed.\\n\\n"
+        "Don't blindly fetch every page — if you've found the answer "
+        "(e.g. located the risk-factor section the user asked for), "
+        "stop.\\n\\n"
+        "## Markdown-fallback workflow\\n\\n"
+        "User asks: \\"What's Roche's free cash flow for FY2024?\\"\\n\\n"
+        "1. resolve: `companies_list?search=Roche` → company id.\\n"
+        "2. try the structured path: `companies_financials_retrieve("
+        "company_id, fiscal_year=2024)`.\\n"
+        "3. if free_cash_flow is null/missing in that response: "
+        "`filings_list?company=<id>&filing_type_code=10-K-ESEF"
+        "&processing_status=COMPLETED&ordering=-publication_datetime"
+        "&limit=1`.\\n"
+        "4. `filings_markdown_retrieve` on that filing_id, paginate "
+        "until you hit the cash-flow statement.\\n"
+        "5. Extract the value, cite the filing (type + publication "
+        "date + page-ish location)."
+    )
+'''
+
+
+# ---------------------------------------------------------------------------
+# MCP Prompts block — appended after tool functions, before FILE_FOOTER.
+# Each prompt is a typed server-defined slash command that guides the
+# assistant through a recurring analytical workflow over the FR tools.
+# Adding a prompt here = remember to add it to EXPECTED_PROMPTS in
+# tests/eval/test_prompts_deterministic.py so the deterministic suite
+# verifies it stays registered.
+# ---------------------------------------------------------------------------
+PROMPTS_BLOCK = '''
+# ---------------------------------------------------------------------------
+# MCP Prompts — server-defined slash commands for recurring workflows.
+# Registered via @mcp.prompt(); surface in MCP clients as slash commands.
+# ---------------------------------------------------------------------------
+from mcp.types import PromptMessage, TextContent
+
+
+@mcp.prompt(
+    name="compare_financials_yoy",
+    description=(
+        "Compute year-over-year deltas for a company's reported financials "
+        "(revenue, EBITDA, net income, debt, cash flow, etc.). Use whenever "
+        "the user asks how a company changed vs the prior year or wants a "
+        "YoY table — prefer this over manually orchestrating two "
+        "companies_financials_retrieve calls and computing deltas by hand."
+    ),
+)
+async def compare_financials_yoy(
+    ticker_or_name: str,
+    current_fiscal_year: int,
+    prior_fiscal_year: int,
+) -> list[PromptMessage]:
+    """Guided message sequence for a YoY financial comparison workflow."""
+    instructions = (
+        f"You will compare {ticker_or_name}'s financials for FY"
+        f"{current_fiscal_year} vs FY{prior_fiscal_year} using ONLY the "
+        "FinancialReports MCP server.\\n\\n"
+        "Steps:\\n"
+        f"1. Call `companies_list` with search=\\"{ticker_or_name}\\" to "
+        "resolve the company. If multiple results, pick the one whose "
+        "primary listing matches the user's intent; if ambiguous, ask "
+        "the user.\\n"
+        "2. Call `companies_financials_retrieve` twice — once with "
+        f"fiscal_year={current_fiscal_year} and once with "
+        f"fiscal_year={prior_fiscal_year}.\\n"
+        "3. Summarize the top 8 line items by absolute change. For each, "
+        "report: absolute delta, percent change, and the reporting "
+        "currency. Never aggregate across currencies. If the reporting "
+        "currency changed between the two years, surface both currencies "
+        "side-by-side and STOP — do not compute a delta. If a line item "
+        "is null in one year, render it as 'n/a' (not 0).\\n"
+        "4. Cite filing type and period_end_date for each value used."
+    )
+    return [
+        PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
+    ]
+
+
+@mcp.prompt(
+    name="find_filing_section",
+    description=(
+        "Locate and return a named section (risk factors, MD&A, going "
+        "concern, segment data, climate disclosures, etc.) from a "
+        "company's most recent filing of a given type. Use instead of "
+        "fetching the full markdown and grepping manually — this prompt "
+        "handles pagination correctly and refuses to fabricate when the "
+        "section is absent."
+    ),
+)
+async def find_filing_section(
+    ticker_or_name: str,
+    filing_type: str,
+    section_keyword: str,
+) -> list[PromptMessage]:
+    """Guide the assistant through resolve → list → markdown → grep."""
+    instructions = (
+        f"Find the section in {ticker_or_name}'s most recent {filing_type} "
+        f"that discusses '{section_keyword}'.\\n\\n"
+        "Steps:\\n"
+        f"1. `companies_list` with search=\\"{ticker_or_name}\\".\\n"
+        f"2. Map '{filing_type}' to a filing_type_code. Common mappings:\\n"
+        "   annual report / 10-K / 20-F   →  '10-K'\\n"
+        "   ESEF annual / EU annual       →  '10-K-ESEF'\\n"
+        "   10-Q / quarterly / interim    →  'IR'\\n"
+        "   earnings release              →  'ER'\\n"
+        "   MD&A                          →  'MDA'\\n"
+        "   ESG / sustainability          →  'SR'\\n"
+        "   governance                    →  'CGR'\\n"
+        "   call transcript               →  'CT'\\n"
+        "   investor presentation         →  'IP'\\n"
+        "   M&A                           →  'TAR' or 'MA'\\n"
+        "   insider transactions          →  'DIRS'\\n"
+        "   For anything else, call `filing_types_list` first.\\n"
+        f"3. `filings_list` with company=<id>, filing_type_code=<mapped>, "
+        "processing_status='COMPLETED', ordering=-publication_datetime, "
+        "limit=1. The processing_status filter avoids returning a filing "
+        "whose markdown isn't ready yet.\\n"
+        "4. `filings_markdown_retrieve` for that filing_id. The response "
+        "is paginated — keep calling with increasing offset until the "
+        "truncation marker is gone OR you have located the section.\\n"
+        f"5. Return ONLY the markdown excerpt containing "
+        f"'{section_keyword}', plus 2 paragraphs of surrounding context. "
+        "Cite filing type and publication date. If the keyword is not "
+        f"present after exhausting all pages, say 'Section matching "
+        f"\\"{section_keyword}\\" not found in filing <id> after "
+        "<n> pages' — do NOT fabricate content from training data."
+    )
+    return [
+        PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
+    ]
+
+
+@mcp.prompt(
+    name="summarize_recent_filings",
+    description=(
+        "Produce a dated briefing of every filing a company published in "
+        "a recent window, grouped by category with materiality flags. Use "
+        "for earnings-call prep, due-diligence catch-up, or 'what did X "
+        "file recently' — saves ~6 tool calls vs assembling manually and "
+        "uses server-side date filtering so active filers (Tesla et al.) "
+        "are not silently truncated."
+    ),
+)
+async def summarize_recent_filings(
+    ticker_or_name: str,
+    lookback_days: int = 90,
+) -> list[PromptMessage]:
+    """List recent filings and ask the model to produce a tight briefing."""
+    from datetime import date, timedelta
+    cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
+    instructions = (
+        f"Summarize {ticker_or_name}'s regulatory filings from the last "
+        f"{lookback_days} days (released on or after {cutoff}).\\n\\n"
+        "Steps:\\n"
+        f"1. `companies_list` with search=\\"{ticker_or_name}\\".\\n"
+        f"2. `filings_list` with company=<id>, "
+        f"release_datetime_from='{cutoff}', "
+        "ordering=-publication_datetime, limit=50. The server-side "
+        "release_datetime_from filter avoids the silent-truncation bug "
+        "you get from in-memory filtering on a small page. If "
+        "response.count > 50, tell the user how many were elided.\\n"
+        "3. Produce a briefing: one bullet per filing with type, "
+        "publication_datetime, and a one-line significance assessment. "
+        "Group by filing category (annual / interim / ad-hoc / "
+        "insider).\\n"
+        "4. Highlight anything that looks material (guidance changes, "
+        "M&A language, going-concern flags) and call it out in a "
+        "'Watch items' section. Do NOT fetch markdown bodies unless the "
+        "user asks."
+    )
+    return [
+        PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
+    ]
+'''
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -2503,6 +2974,11 @@ def main() -> None:
                     {"func_name": func_name, "title": title_raw, "tags": tags_value}
                 )
 
+    # Resources and Prompts go after all tools, before the uvicorn
+    # entrypoint. Order matters: both blocks' decorators reference the
+    # `mcp` instance defined inside FILE_HEADER_TEMPLATE.
+    generated_code.append(RESOURCES_BLOCK)
+    generated_code.append(PROMPTS_BLOCK)
     generated_code.append(FILE_FOOTER)
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
