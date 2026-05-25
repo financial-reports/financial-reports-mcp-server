@@ -462,6 +462,17 @@ def subscription_required(
 
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> str:
+        # DEV-ONLY bypass: when DEV_MODE_API_KEY is set, skip JWT validation
+        # entirely and forward the personal API key to the backend. The prod
+        # hostname guard at module import time prevents this from ever being
+        # active in production.
+        if DEV_MODE_API_KEY:
+            token_reset = _current_token.set(DEV_MODE_API_KEY)
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                _current_token.reset(token_reset)
+
         try:
             access_token = get_access_token()
         except Exception as exc:
