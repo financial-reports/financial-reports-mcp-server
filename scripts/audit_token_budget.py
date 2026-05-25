@@ -18,7 +18,6 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -76,7 +75,11 @@ async def main() -> None:
 
         tools = await m.mcp.get_tools()  # FastMCP exposes this
 
-    print(f"# Token-budget audit — {datetime.now(timezone.utc).isoformat()}")
+    # No timestamp in the output: the git commit time on docs/token-budget.md
+    # is the authoritative "when was this baseline taken." Including a wall-clock
+    # timestamp here would force every regeneration to diff, which breaks the
+    # CI drift check (see .github/workflows/ci.yml).
+    print("# Token-budget audit")
     print()
     print(f"Total tools registered: **{len(tools)}**")
     print()
@@ -96,6 +99,13 @@ async def main() -> None:
         print(f"| `{name}` | {d} | {s} | {t} |")
     print()
     print(f"**Total approx tokens for `tools/list`: {total_tokens}**")
+    print()
+    print("> **Methodology**: token count is approximated as `len(chars) // 4`")
+    print("> (per-tool description + JSON-serialized parameter schema). The actual")
+    print("> tiktoken/Claude-tokenizer count for JSON-dense schemas is typically")
+    print("> 10–30% higher than this heuristic. Use this report for *relative*")
+    print("> comparisons (which tool is biggest, did a change make things worse)")
+    print("> rather than as an absolute budget against client context windows.")
     print()
     print("Reference budgets (anecdotal, 2026):")
     print("- < 5k tokens: lean")

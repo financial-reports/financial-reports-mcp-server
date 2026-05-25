@@ -1,4 +1,4 @@
-# Token-budget audit — 2026-05-25T08:56:48.769776+00:00
+# Token-budget audit
 
 Total tools registered: **42**
 
@@ -48,6 +48,13 @@ Total tools registered: **42**
 | `languages_retrieve` | 51 | 74 | 30 |
 
 **Total approx tokens for `tools/list`: 5760**
+
+> **Methodology**: token count is approximated as `len(chars) // 4`
+> (per-tool description + JSON-serialized parameter schema). The actual
+> tiktoken/Claude-tokenizer count for JSON-dense schemas is typically
+> 10–30% higher than this heuristic. Use this report for *relative*
+> comparisons (which tool is biggest, did a change make things worse)
+> rather than as an absolute budget against client context windows.
 
 Reference budgets (anecdotal, 2026):
 - < 5k tokens: lean

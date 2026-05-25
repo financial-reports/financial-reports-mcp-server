@@ -24,6 +24,9 @@ help:
 	@echo "  logs            follow the mcp container logs"
 	@echo "  probe           hit /health, /icon.png, /.well-known/* against :8000"
 	@echo "  regen           re-render src/financial_reports_mcp.py from the live OpenAPI"
+	@echo "  audit           measure tools/list token budget → docs/token-budget.md"
+	@echo "  eval-fast       deterministic prompt-registration tests (CI subset)"
+	@echo "  eval            full LLM-backed eval (requires EVALS_DIR + ANTHROPIC_API_KEY)"
 
 dev: check-env
 	@test -d $(VENV) || python3 -m venv $(VENV)
