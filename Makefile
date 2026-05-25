@@ -2,7 +2,7 @@
 # Run `make help` for a summary.
 
 .PHONY: help dev check-env install test test-unit test-e2e test-e2e-redis test-e2e-all \
-        build up up-redis down logs probe regen audit
+        build up up-redis down logs probe regen audit eval eval-fast
 
 VENV ?= .venv
 PY := $(VENV)/bin/python
@@ -88,3 +88,23 @@ regen:
 audit:
 	./venv/bin/python scripts/audit_token_budget.py > docs/token-budget.md
 	@echo "Baseline written to docs/token-budget.md"
+
+# Fast, deterministic prompt-registration tests. Run on every PR.
+eval-fast:
+	./venv/bin/python -m pytest tests/eval/ -v
+
+# LLM-backed eval against the local MCP. Requires:
+#   - DEV_MODE_API_KEY set in .env and the local server running on :8000
+#   - A sibling checkout of financial-reports/mcp-evals at ../mcp-evals
+#     (override with EVALS_DIR=/path/to/mcp-evals)
+#   - ANTHROPIC_API_KEY in the environment
+EVALS_DIR ?= ../mcp-evals
+eval:
+	@if [ ! -d "$(EVALS_DIR)" ]; then \
+	  echo "ERROR: $(EVALS_DIR) not found. Clone financial-reports/mcp-evals or pass EVALS_DIR=..."; \
+	  exit 1; \
+	fi
+	cd $(EVALS_DIR) && \
+	  FR_MCP_URL=http://localhost:8000/mcp \
+	  FR_MCP_TOKEN=dev-mode-bypass \
+	  python run_eval.py --models claude --runs 3
