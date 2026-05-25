@@ -415,11 +415,15 @@ _current_token: ContextVar[str] = ContextVar("_current_token", default="")
 # Shared HTTP client — module-level for connection-pool reuse
 # ---------------------------------------------------------------------------
 async def _inject_auth(request: httpx.Request) -> None:
-    """Add Authorization from `_current_token` if not already set on the request."""
-    if "Authorization" not in request.headers:
-        token = _current_token.get()
-        if token:
-            request.headers["Authorization"] = f"Bearer {token}"
+    """Add upstream auth header from `_current_token`. Format depends on
+    whether the dev API-key bypass is active."""
+    token = _current_token.get()
+    if not token:
+        return
+    if DEV_MODE_API_KEY:
+        request.headers.setdefault("X-API-Key", token)
+    elif "Authorization" not in request.headers:
+        request.headers["Authorization"] = f"Bearer {token}"
 
 
 # A single AsyncClient per process. Connection pool + HTTP keep-alive are

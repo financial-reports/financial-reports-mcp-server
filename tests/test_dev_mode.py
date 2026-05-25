@@ -67,3 +67,26 @@ def test_prod_hostname_guard(monkeypatch) -> None:
     sys.modules.pop("src.financial_reports_mcp", None)
     with pytest.raises(RuntimeError, match="never be enabled in prod"):
         import src.financial_reports_mcp  # noqa: F401
+
+
+@pytest.mark.asyncio
+async def test_dev_mode_injects_xapikey_header(dev_mode_module, respx_router) -> None:
+    """In dev mode the upstream call carries X-API-Key, not Bearer."""
+    import httpx
+    captured: dict[str, str] = {}
+
+    def capture(request):
+        captured["auth"] = request.headers.get("Authorization", "")
+        captured["xapikey"] = request.headers.get("X-API-Key", "")
+        return httpx.Response(200, json={"ok": True})
+
+    respx_router.get("https://api.test.invalid/probe").mock(side_effect=capture)
+
+    token_reset = dev_mode_module._current_token.set(dev_mode_module.DEV_MODE_API_KEY)
+    try:
+        resp = await dev_mode_module._api_client.get("/probe")
+    finally:
+        dev_mode_module._current_token.reset(token_reset)
+    assert resp.status_code == 200
+    assert captured["xapikey"] == "fr_test_devkey_abc123"
+    assert captured["auth"] == ""  # bearer NOT set in dev mode
