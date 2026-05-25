@@ -143,8 +143,9 @@ MCP_REDIS_URL = os.environ.get("MCP_REDIS_URL")
 
 # --- DEV-ONLY: personal API-key auth bypass --------------------------------
 # When DEV_MODE_API_KEY is set, the OAuth+JWT validation in
-# `subscription_required` is skipped and the bearer token injected into
-# upstream API calls is the value of this env var.
+# `subscription_required` (and `_authorize_or_raise` for structured tools)
+# is skipped and the key is forwarded as `X-API-Key` to upstream API calls
+# (not as a Bearer token).
 #
 # Refuses to activate against the production hostname so it CANNOT silently
 # ship to prod even if the env var leaks into a prod environment.
@@ -559,6 +560,15 @@ async def _authorize_or_raise() -> tuple[Any, ...]:
     """Token-validate for structured tools. Raises AuthenticationError
     if authentication fails. Returns a tuple of context resets.
     """
+    # DEV-ONLY bypass: mirror the bypass in `subscription_required`. When
+    # DEV_MODE_API_KEY is set, skip JWT validation entirely and return a
+    # context-reset tuple that `_release_auth_context` understands. The prod
+    # hostname guard at module import time prevents this from ever being
+    # active in production.
+    if DEV_MODE_API_KEY:
+        token_reset = _current_token.set(DEV_MODE_API_KEY)
+        return (token_reset,)
+
     try:
         access_token = get_access_token()
     except Exception as exc:

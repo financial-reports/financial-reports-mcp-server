@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import importlib
-import os
 import sys
 from collections.abc import Iterator
 
@@ -90,3 +89,45 @@ async def test_dev_mode_injects_xapikey_header(dev_mode_module, respx_router) ->
     assert resp.status_code == 200
     assert captured["xapikey"] == "fr_test_devkey_abc123"
     assert captured["auth"] == ""  # bearer NOT set in dev mode
+
+
+@pytest.mark.asyncio
+async def test_dev_mode_bypasses_authorize_or_raise(dev_mode_module) -> None:
+    """Structured-output tools (which use `_authorize_or_raise`, not
+    `subscription_required`) also honor DEV_MODE_API_KEY."""
+    def boom():  # pragma: no cover — should not run
+        raise AssertionError("get_access_token must not be called in dev mode")
+
+    dev_mode_module.get_access_token = boom  # type: ignore[attr-defined]
+
+    resets = await dev_mode_module._authorize_or_raise()
+    try:
+        assert dev_mode_module._current_token.get() == "fr_test_devkey_abc123"
+    finally:
+        dev_mode_module._release_auth_context(resets)
+
+    # After release, the contextvar must be reset.
+    assert dev_mode_module._current_token.get() == ""
+
+
+@pytest.mark.asyncio
+async def test_normal_mode_injects_bearer_header(mcp_module, respx_router) -> None:
+    """When DEV_MODE_API_KEY is NOT set, `_inject_auth` adds Authorization: Bearer."""
+    import httpx
+    captured: dict[str, str] = {}
+
+    def capture(request):
+        captured["auth"] = request.headers.get("Authorization", "")
+        captured["xapikey"] = request.headers.get("X-API-Key", "")
+        return httpx.Response(200, json={"ok": True})
+
+    respx_router.get("https://api.test.invalid/probe").mock(side_effect=capture)
+
+    token_reset = mcp_module._current_token.set("real-jwt-token")
+    try:
+        resp = await mcp_module._api_client.get("/probe")
+    finally:
+        mcp_module._current_token.reset(token_reset)
+    assert resp.status_code == 200
+    assert captured["auth"] == "Bearer real-jwt-token"
+    assert captured["xapikey"] == ""
