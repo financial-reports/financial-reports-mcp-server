@@ -24,19 +24,24 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 # Force a synthetic env so the module imports without real Cognito creds.
-# Values mirror tests/conftest.py so the respx intercepts line up.
-_AUDIT_POOL_ID = "eu-central-1_AUDITPOOL"
-_AUDIT_REGION = "eu-central-1"
+# setdefault preserves whatever the caller / CI already set, so we read
+# the effective values back out below to build the mock URLs against the
+# SAME pool ID the AWSCognitoProvider will request. Hardcoding the mock
+# URL caused CI failures because CI sets COGNITO_USER_POOL_ID to its own
+# synthetic value (eu-central-1_CITESTPOOL) and the hardcoded mock URL
+# pointed at a different pool — leaving the real OIDC call un-mocked.
+os.environ.setdefault("COGNITO_USER_POOL_ID", "eu-central-1_AUDITPOOL")
+os.environ.setdefault("COGNITO_CLIENT_ID", "audit_client")
+os.environ.setdefault("COGNITO_CLIENT_SECRET", "audit_secret")
+os.environ.setdefault("COGNITO_REGION", "eu-central-1")
+os.environ.setdefault("MCP_BASE_URL", "http://localhost:8000")
+os.environ.setdefault("API_BASE_URL", "http://localhost:8001")
+
+_AUDIT_POOL_ID = os.environ["COGNITO_USER_POOL_ID"]
+_AUDIT_REGION = os.environ["COGNITO_REGION"]
 _AUDIT_ISSUER = (
     f"https://cognito-idp.{_AUDIT_REGION}.amazonaws.com/{_AUDIT_POOL_ID}"
 )
-
-os.environ.setdefault("COGNITO_USER_POOL_ID", _AUDIT_POOL_ID)
-os.environ.setdefault("COGNITO_CLIENT_ID", "audit_client")
-os.environ.setdefault("COGNITO_CLIENT_SECRET", "audit_secret")
-os.environ.setdefault("COGNITO_REGION", _AUDIT_REGION)
-os.environ.setdefault("MCP_BASE_URL", "http://localhost:8000")
-os.environ.setdefault("API_BASE_URL", "http://localhost:8001")
 
 
 _OIDC_DOCUMENT = {
