@@ -1969,6 +1969,126 @@ if __name__ == "__main__":
 
 
 # ---------------------------------------------------------------------------
+# MCP Prompts block — appended after tool functions, before FILE_FOOTER.
+# Each prompt is a typed server-defined slash command that guides the
+# assistant through a recurring analytical workflow over the FR tools.
+# Adding a prompt here = remember to add it to EXPECTED_PROMPTS in
+# tests/eval/test_prompts_deterministic.py so the deterministic suite
+# verifies it stays registered.
+# ---------------------------------------------------------------------------
+PROMPTS_BLOCK = '''
+# ---------------------------------------------------------------------------
+# MCP Prompts — server-defined slash commands for recurring workflows.
+# Registered via @mcp.prompt(); surface in MCP clients as slash commands.
+# ---------------------------------------------------------------------------
+from mcp.types import PromptMessage, TextContent
+
+
+@mcp.prompt(
+    name="compare_financials_yoy",
+    description=(
+        "Compare a company's financials year-over-year. Resolves the "
+        "company by name/ticker, fetches the two fiscal years, and asks "
+        "the assistant to summarize key deltas."
+    ),
+)
+async def compare_financials_yoy(
+    ticker_or_name: str,
+    current_fiscal_year: int,
+    prior_fiscal_year: int,
+) -> list[PromptMessage]:
+    """Guided message sequence for a YoY financial comparison workflow."""
+    instructions = (
+        f"You will compare {ticker_or_name}'s financials for FY"
+        f"{current_fiscal_year} vs FY{prior_fiscal_year} using ONLY the "
+        "FinancialReports MCP server.\\n\\n"
+        "Steps:\\n"
+        f"1. Call `companies_list` with search=\\"{ticker_or_name}\\" to "
+        "resolve the company. If multiple results, pick the one whose "
+        "primary listing matches the user's intent; if ambiguous, ask "
+        "the user.\\n"
+        "2. Call `companies_financials_retrieve` twice — once with "
+        f"fiscal_year={current_fiscal_year} and once with "
+        f"fiscal_year={prior_fiscal_year}.\\n"
+        "3. Summarize the top 8 line items by absolute change. For each, "
+        "report: absolute delta, percent change, and the reporting "
+        "currency. Never aggregate across currencies.\\n"
+        "4. Cite filing type and period_end_date for each value used."
+    )
+    return [
+        PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
+    ]
+
+
+@mcp.prompt(
+    name="find_filing_section",
+    description=(
+        "Locate a specific section in a company's most recent filing of "
+        "a given type (e.g., risk factors in the latest 10-K) and return "
+        "the verbatim excerpt."
+    ),
+)
+async def find_filing_section(
+    ticker_or_name: str,
+    filing_type: str,
+    section_keyword: str,
+) -> list[PromptMessage]:
+    """Guide the assistant through resolve → list → markdown → grep."""
+    instructions = (
+        f"Find the section in {ticker_or_name}'s most recent {filing_type} "
+        f"that discusses '{section_keyword}'.\\n\\n"
+        "Steps:\\n"
+        f"1. `companies_list` with search=\\"{ticker_or_name}\\".\\n"
+        f"2. `filings_list` with company=<id>, filing_type_code matching "
+        f"'{filing_type}', ordering=-publication_datetime, limit=1.\\n"
+        "3. `filings_markdown_retrieve` for that filing_id. The response "
+        "is paginated — keep calling with increasing offset until the "
+        "truncation marker is gone OR you have located the section.\\n"
+        f"4. Return ONLY the markdown excerpt containing "
+        f"'{section_keyword}', plus 2 paragraphs of surrounding context. "
+        "Cite filing type and publication date."
+    )
+    return [
+        PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
+    ]
+
+
+@mcp.prompt(
+    name="summarize_recent_filings",
+    description=(
+        "Summarize the filings a company has published over a recent "
+        "window. Useful before earnings calls or for catch-up briefings."
+    ),
+)
+async def summarize_recent_filings(
+    ticker_or_name: str,
+    lookback_days: int = 90,
+) -> list[PromptMessage]:
+    """List recent filings and ask the model to produce a tight briefing."""
+    instructions = (
+        f"Summarize {ticker_or_name}'s regulatory filings from the last "
+        f"{lookback_days} days.\\n\\n"
+        "Steps:\\n"
+        f"1. `companies_list` with search=\\"{ticker_or_name}\\".\\n"
+        f"2. `filings_list` with company=<id>, "
+        f"ordering=-publication_datetime, limit=25. Filter the response "
+        f"in memory to entries within the last {lookback_days} days.\\n"
+        "3. Produce a briefing: one bullet per filing with type, "
+        "publication_datetime, and a one-line significance assessment. "
+        "Group by filing category (annual / interim / ad-hoc / "
+        "insider).\\n"
+        "4. Highlight anything that looks material (guidance changes, "
+        "M&A language, going-concern flags) and call it out in a "
+        "'Watch items' section. Do NOT fetch markdown bodies unless the "
+        "user asks."
+    )
+    return [
+        PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
+    ]
+'''
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -2549,6 +2669,10 @@ def main() -> None:
                     {"func_name": func_name, "title": title_raw, "tags": tags_value}
                 )
 
+    # Prompts go after all tools, before the uvicorn entrypoint. Order
+    # matters: the @mcp.prompt() decorators in PROMPTS_BLOCK reference the
+    # `mcp` instance defined inside FILE_HEADER_TEMPLATE.
+    generated_code.append(PROMPTS_BLOCK)
     generated_code.append(FILE_FOOTER)
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
