@@ -2,7 +2,7 @@
 # Run `make help` for a summary.
 
 .PHONY: help dev check-env install test test-unit test-e2e test-e2e-redis test-e2e-all \
-        build up up-redis down logs probe regen
+        build up up-redis down logs probe regen audit
 
 VENV ?= .venv
 PY := $(VENV)/bin/python
@@ -84,3 +84,7 @@ probe:
 
 regen:
 	python scripts/generate_mcp_tools.py
+
+audit:
+	./venv/bin/python scripts/audit_token_budget.py > docs/token-budget.md
+	@echo "Baseline written to docs/token-budget.md"
