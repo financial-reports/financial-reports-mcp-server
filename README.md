@@ -6,7 +6,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialReports](https://financialreports.eu) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **43 tools across 9 domains. Free for any FinancialReports account.** Sourced from official regulators.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **42 tools across 8 domains. Free for any FinancialReports account.** Sourced from official regulators.
 
 ---
 
@@ -15,24 +15,146 @@
 If you're an analyst, researcher, or anyone who wants to ask Claude about public-company filings:
 
 1. **Create a free account** at [financialreports.eu](https://financialreports.eu/) — the MCP connector is free for any FinancialReports user. No paid plan required.
-2. **Add the connector** in your MCP client:
+2. **Add the connector** in your MCP client — pick yours under [Connect your client](#connect-your-client) below. The two most common:
    - **Claude.ai / Claude Desktop**: Settings → Connectors → Add custom connector → URL: `https://mcp.financialfilings.com/mcp`
    - **Claude Code**: `claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp`
-   - **Cursor / Windsurf / other**: same URL, OAuth flow runs in the browser.
 3. **Sign in** with your FinancialReports account when prompted. That's it.
 
 Full setup walkthrough with screenshots: [financialreports.eu/integrations/claude/](https://financialreports.eu/integrations/claude/).
 
 ---
 
+## Connect your client
+
+This is a **remote** MCP server — Streamable HTTP with OAuth (PKCE + Dynamic Client Registration). There is **no API key to copy and no secret to store**: connecting opens a browser sign-in with your FinancialReports account.
+
+**Endpoint:** `https://mcp.financialfilings.com/mcp`
+
+Find your client below. If it isn't listed, use the [**Generic**](#generic-any-mcp-client) block at the end — the endpoint and OAuth flow are identical everywhere; only the config file differs.
+
+### Claude.ai / Claude Desktop
+
+Settings → Connectors → **Add custom connector** → URL: `https://mcp.financialfilings.com/mcp`. Sign in when prompted.
+
+### Claude Code
+
+```bash
+claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp
+```
+
+Run `/mcp` in-session to complete the browser sign-in.
+
+### Codex (OpenAI)
+
+Codex uses TOML. Add to `~/.codex/config.toml` (or a project `.codex/config.toml`):
+
+```toml
+[mcp_servers.financialreports]
+url = "https://mcp.financialfilings.com/mcp"
+```
+
+Then authenticate — Codex runs the OAuth browser flow for servers that support it:
+
+```bash
+codex mcp login financialreports
+```
+
+### Cursor
+
+`~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per project):
+
+```json
+{
+  "mcpServers": {
+    "financialreports": { "url": "https://mcp.financialfilings.com/mcp" }
+  }
+}
+```
+
+OAuth runs in the browser on first use.
+
+### Kilo Code
+
+Project `.kilocode/mcp.json` (or the global MCP settings file):
+
+```json
+{
+  "mcpServers": {
+    "financialreports": {
+      "type": "remote",
+      "url": "https://mcp.financialfilings.com/mcp"
+    }
+  }
+}
+```
+
+### opencode
+
+`opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "financialreports": {
+      "type": "remote",
+      "url": "https://mcp.financialfilings.com/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+### Gemini CLI
+
+`~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "financialreports": { "httpUrl": "https://mcp.financialfilings.com/mcp" }
+  }
+}
+```
+
+### Hermes
+
+`mcp_servers` in your Hermes config (YAML):
+
+```yaml
+mcp_servers:
+  financialreports:
+    url: "https://mcp.financialfilings.com/mcp"
+    auth: oauth
+```
+
+### Generic (any MCP client)
+
+Most MCP-aware harnesses accept a `mcpServers` object. Point it at the endpoint over Streamable HTTP:
+
+```json
+{
+  "mcpServers": {
+    "financialreports": {
+      "type": "streamable-http",
+      "url": "https://mcp.financialfilings.com/mcp"
+    }
+  }
+}
+```
+
+Clients with native remote-MCP OAuth (Claude, Cursor, Windsurf, VS Code, opencode, Codex via `codex mcp login`) run the sign-in in a browser automatically. For **OpenClaw** and other MCP-aware harnesses, use this block with the connector URL and complete OAuth when prompted — see your client's own MCP configuration docs for the exact file location.
+
+---
+
 ## What you get
 
-**43 LLM-callable tools** across nine domains:
+**42 LLM-callable tools** across eight domains:
 
 | Domain | Tools | Use cases |
 |---|---|---|
 | Companies | 4 | Search by name/ticker/ISIN, retrieve full company profiles, get normalized financials, predict next annual report |
-| Filings | 5 | List, retrieve, fetch markdown content (capped at 150K chars), audit trail, "live pulse" of recent filings across all issuers |
+| Filings | 4 | List, retrieve, fetch markdown content (capped at 150K chars), audit trail |
 | ISINs | 2 | Lookup by ISIN, list dual-listings |
 | ISIC industry classifications | 8 | Section/division/group/class hierarchy for industry screening |
 | Reference data | 8 | Countries, languages, sources (regulators), filing categories, filing types |
@@ -44,7 +166,7 @@ All tools are auto-generated from the [FinancialReports OpenAPI schema](https://
 
 ### Companion skill
 
-The repository ships an [Agent Skill](skills/financial-filings-research/) — `financial-filings-research` — that teaches Claude how to compose these 43 tools into the workflows analysts actually run: company lookup, filing summarization, multi-company financial comparison, ISIC industry screening, and filings monitoring. It activates automatically when the user mentions a company name, ticker, ISIN, filing type, or financial metric.
+The repository ships an [Agent Skill](skills/financial-filings-research/) — `financial-filings-research` — that teaches Claude how to compose these 42 tools into the workflows analysts actually run: company lookup, filing summarization, multi-company financial comparison, ISIC industry screening, and filings monitoring. It activates automatically when the user mentions a company name, ticker, ISIN, filing type, or financial metric.
 
 ---
 
@@ -63,7 +185,7 @@ The repository ships an [Agent Skill](skills/financial-filings-research/) — `f
 │  (FastAPI +      │                                       ▼
 │   FastMCP)       │     proxy bearer token         ┌──────────────────┐
 │                  │  ─────────────────────────►    │  api.            │
-│  43 tools        │                                │  financial-      │
+│  42 tools        │                                │  financial-      │
 │  generated from  │                                │  reports.eu      │
 │  OpenAPI schema  │                                │  (first-party)   │
 └──────────────────┘                                └──────────────────┘
@@ -195,6 +317,16 @@ Detailed self-hosting docs (Docker, Cognito setup, env vars, CDN/icon configurat
 
 ## Development
 
+One-shot bootstrap (venv → deps → env check → generate → run):
+
+```bash
+cp .env.example .env   # fill in Cognito values first; see docs/SELF-HOSTING.md
+make dev               # creates .venv, installs, validates env, regenerates, serves on :8000
+# MCP endpoint: http://localhost:8000/mcp
+```
+
+Or step by step:
+
 ```bash
 # 1. Setup
 python3 -m venv venv
@@ -257,7 +389,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development se
 - **Production**: live at `https://mcp.financialfilings.com/mcp`
 - **MCP Directory**: submitted for inclusion (May 2026)
 - **Spec compliance**: MCP 2025-11-25
-- **Tested with**: Claude.ai, Claude Code, Claude Desktop, Cursor, Windsurf
+- **Tested with**: Claude.ai, Claude Code, Claude Desktop, Cursor, Windsurf. Config snippets also provided for Codex, Kilo Code, opencode, Gemini CLI, and Hermes (see [Connect your client](#connect-your-client)).
 
 ---
 

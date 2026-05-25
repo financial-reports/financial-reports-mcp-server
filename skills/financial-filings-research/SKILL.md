@@ -1,11 +1,11 @@
 ---
 name: financial-filings-research
-description: Research public companies' regulatory filings, financial data, and industry context using the FinancialReports MCP server. Use when the user mentions a listed company by name, ticker, or ISIN, asks about 10-Ks, 10-Qs, annual or quarterly reports, financial statements (revenue, EBITDA, debt, cash flow), insider transactions, ESG disclosures, or wants to compare companies, screen by industry (ISIC), or set up filings alerts. The connector exposes 43 tools sourced from official regulators worldwide.
+description: Research public companies' regulatory filings, financial data, and industry context using the FinancialReports MCP server. Use when the user mentions a listed company by name, ticker, or ISIN, asks about 10-Ks, 10-Qs, annual or quarterly reports, financial statements (revenue, EBITDA, debt, cash flow), insider transactions, ESG disclosures, or wants to compare companies, screen by industry (ISIC), or set up filings alerts. The connector exposes 42 tools sourced from official regulators worldwide.
 ---
 
 # Financial Filings Research
 
-This skill teaches Claude how to combine the 43 tools exposed by the FinancialReports MCP server into the workflows analysts actually run — company lookup, filings retrieval, multi-company comparison, industry screening, and ongoing monitoring.
+This skill teaches Claude how to combine the 42 tools exposed by the FinancialReports MCP server into the workflows analysts actually run — company lookup, filings retrieval, multi-company comparison, industry screening, and ongoing monitoring.
 
 The MCP server is the data layer. This skill is the workflow layer.
 
@@ -32,7 +32,6 @@ For the full catalog with input parameters and gotchas see `references/tool-chea
 | Resolve an ISIN | `isins_retrieve` (ISIN → company) |
 | Get filings | `filings_list` → `filings_retrieve` → `filings_markdown_retrieve` for content |
 | Track filing revisions | `filings_history_retrieve` (audit trail of amendments) |
-| See what just landed | `filings_live_pulse_retrieve` (most recent across all companies) |
 | Get financials | `companies_financials_retrieve` (annual or quarterly, normalized line items) |
 | Predict next report | `companies_next_annual_report_retrieve` |
 | Industry screening | `isic_sections_list` → `isic_classes_list` → `companies_list?isic_class=…` |
