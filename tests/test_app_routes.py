@@ -44,6 +44,15 @@ def test_landing_html_carries_csp(mcp_module) -> None:
     assert "default-src 'none'" in resp.headers["content-security-policy"]
 
 
+def test_openai_apps_challenge_returns_token(mcp_module) -> None:
+    """OpenAI MCP marketplace domain verification endpoint."""
+    with TestClient(mcp_module.app) as client:
+        resp = client.get("/.well-known/openai-apps-challenge")
+    assert resp.status_code == 200
+    assert resp.text == "Mcv7iyGhqKQDgaTjw0lYNBICDf2mp2FZIm-Bfc4rCIk"
+    assert resp.headers["content-type"].startswith("text/plain")
+
+
 def test_robots_txt_allows_crawl_and_points_at_sitemap(mcp_module) -> None:
     """Google needs to be able to crawl `/` so its favicon API picks up
     our brand mark. robots.txt must allow root, block JSON-RPC/OAuth
