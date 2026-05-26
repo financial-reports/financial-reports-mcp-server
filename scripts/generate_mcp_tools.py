@@ -1267,6 +1267,12 @@ async def oauth_protected_resource_root() -> JSONResponse:
     )
 
 
+@app.get("/.well-known/openai-apps-challenge")
+async def openai_apps_challenge() -> PlainTextResponse:
+    """OpenAI MCP marketplace domain verification token."""
+    return PlainTextResponse("Mcv7iyGhqKQDgaTjw0lYNBICDf2mp2FZIm-Bfc4rCIk")
+
+
 _LANDING_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
