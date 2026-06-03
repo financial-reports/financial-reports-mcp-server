@@ -32,6 +32,8 @@ Copy `.env.example` to `.env` and populate:
 | `MCP_VERSION` | optional | Version label exposed at `/health` |
 | `MCP_REDIS_URL` | optional | `rediss://:<token>@host:6380/0` for persistent OAuth state. Without it, FastMCP's per-replica DiskStore is used (refresh tokens are lost on deploy/restart) |
 | `GOOGLE_SITE_VERIFICATION` | optional | If set, the landing page emits `<meta name="google-site-verification" content="...">` for Search Console verification |
+| `MCP_ANALYTICS_INGEST_URL` | optional | Backend endpoint for usage-analytics events (e.g. `<API_BASE_URL>/api/internal/mcp-events/`). Capture is inert unless this and `MCP_INGEST_SHARED_SECRET` are both set |
+| `MCP_INGEST_SHARED_SECRET` | optional | Shared secret sent as `X-Internal-Token` to the ingest endpoint; must match the Django backend's `MCP_INGEST_SHARED_SECRET` |
 
 The full list with sensible defaults lives in [`.env.example`](../.env.example).
 
