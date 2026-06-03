@@ -78,6 +78,8 @@ from fastmcp.server.dependencies import get_access_token
 from mcp.types import Icon, ToolAnnotations
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from src.usage_analytics import UsageAnalyticsMiddleware, build_emitter_from_env
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -823,6 +825,15 @@ def _safe_error(func_name: str, exc: BaseException) -> str:
 # FastMCP returns a Starlette app that already serves /mcp + all OAuth
 # endpoints. We mount it at root, with a few FastAPI routes (health, favicon,
 # browser landing) declared first so they win the route match.
+
+# Usage analytics: capture every tool/prompt call (sub + tool + sanitized args
+# + host + status + latency) and fire-and-forward to the web backend's internal
+# ingest endpoint. Inert unless MCP_ANALYTICS_INGEST_URL + MCP_INGEST_SHARED_SECRET
+# are set. Registered on the MCP-protocol layer (mcp.add_middleware) — NOT the
+# FastAPI app — because it needs tool/prompt semantics, not raw HTTP.
+_usage_emitter = build_emitter_from_env()
+mcp.add_middleware(UsageAnalyticsMiddleware(_usage_emitter, server_version=MCP_VERSION))
+
 mcp_app = mcp.http_app(path="/mcp")
 
 
@@ -892,11 +903,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             logger.exception("Redis ping failed — failing fast at startup")
             raise
 
+    await _usage_emitter.start()
+
     try:
         async with mcp_app.lifespan(app):
             yield
     finally:
         await _api_client.aclose()
+        await _usage_emitter.aclose()
         close = getattr(_oauth_storage, "aclose", None)
         if callable(close):
             try:
