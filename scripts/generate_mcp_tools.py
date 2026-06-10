@@ -18,6 +18,7 @@ Run:
 This script is invoked at Docker build time (see Dockerfile).
 """
 
+import os
 import re
 import sys
 import time
@@ -166,10 +167,17 @@ MCP_REDIS_URL = os.environ.get("MCP_REDIS_URL")
 # ship to prod even if the env var leaks into a prod environment.
 DEV_MODE_API_KEY = os.environ.get("DEV_MODE_API_KEY", "").strip() or None
 _PROD_HOSTS = {"mcp.financialfilings.com"}
-if DEV_MODE_API_KEY and any(h in MCP_BASE_URL for h in _PROD_HOSTS):
+# Fail CLOSED: the dev bypass (single shared key, no JWT validation) may ONLY run
+# against an explicit local/dev base URL. The old guard checked only for the prod
+# hostname, so an EMPTY or Azure-native MCP_BASE_URL slipped through and silently
+# left the bypass active. Require an allow-listed dev marker instead.
+_DEV_HOST_MARKERS = ("localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal")
+if DEV_MODE_API_KEY and not any(m in MCP_BASE_URL for m in _DEV_HOST_MARKERS):
     raise RuntimeError(
-        "DEV_MODE_API_KEY is set but MCP_BASE_URL points at production. "
-        "Refusing to start — this flag must never be enabled in prod."
+        "DEV_MODE_API_KEY is set but MCP_BASE_URL is not a recognised local/dev "
+        f"host ({MCP_BASE_URL!r}). Refusing to start — the dev key bypass must "
+        "never be active outside local development (an empty or production/Azure "
+        "MCP_BASE_URL is exactly the case this guards)."
     )
 if DEV_MODE_API_KEY:
     logging.getLogger("financial-reports-mcp").warning(
@@ -476,10 +484,13 @@ _current_token: ContextVar[str] = ContextVar("_current_token", default="")
 # Shared HTTP client — module-level for connection-pool reuse
 # ---------------------------------------------------------------------------
 async def _inject_auth(request: httpx.Request) -> None:
-    """Add upstream auth header from `_current_token`. Format depends on
-    whether the dev API-key bypass is active."""
+    """Add upstream auth header from `_current_token`. Format depends on whether
+    the dev API-key bypass is active. Scoped to the FR API host so a caller
+    credential is never forwarded to the CDN or any other host the client touches."""
     token = _current_token.get()
     if not token:
+        return
+    if request.url.host and request.url.host != httpx.URL(API_BASE_URL).host:
         return
     if DEV_MODE_API_KEY:
         request.headers.setdefault("X-API-Key", token)
@@ -2823,7 +2834,23 @@ def update_readme_tool_table(repo_root: Path, body: str) -> None:
 def main() -> None:
     schema = None
     last_exc: Exception | None = None
-    for attempt in range(1, 4):
+    # PROD FREEZE: FR_PIN_SCHEMA=1 + a committed openapi.snapshot.json disables the
+    # build-time live OpenAPI fetch, so the generated tool surface is DETERMINISTIC
+    # and REVIEWED (no silent drift on the next rebuild). Bump the snapshot via an
+    # explicit, reviewed PR. The prod Dockerfile should set FR_PIN_SCHEMA=1.
+    _pinned = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "openapi.snapshot.json")
+    if os.environ.get("FR_PIN_SCHEMA", "0") == "1":
+        if not os.path.exists(_pinned):
+            print("FR_PIN_SCHEMA=1 but openapi.snapshot.json is missing — commit a "
+                  "reviewed snapshot first.", file=sys.stderr)
+            sys.exit(1)
+        import json as _json
+        with open(_pinned) as _pf:
+            schema = _json.load(_pf)
+        print("Using PINNED schema openapi.snapshot.json (no live fetch).",
+              file=sys.stderr)
+    for attempt in (range(1, 4) if schema is None else []):
         try:
             print(f"Fetching schema (attempt {attempt}/3)...", file=sys.stderr)
             response = httpx.get(
