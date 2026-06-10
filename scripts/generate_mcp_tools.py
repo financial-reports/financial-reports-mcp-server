@@ -1967,6 +1967,19 @@ async def {{ func_name }}(
 
         full_text = buf.decode("utf-8", errors="replace")
         total_length = len(full_text)
+        # Huge-filing conditional pointer: on the first chunk of a very long
+        # filing, tell the model (in the RESULT) to search instead of paging it
+        # all into context.
+        _nav_hint = ""
+        if offset == 0 and total_length > 120000:
+            _nav_hint = (
+                "HUGE FILING: " + str(total_length) + " chars (~"
+                + str(total_length // 2500) + " pages). Do NOT page through all of it. "
+                "To find a specific figure, line item, or section, call "
+                "filings_markdown_search(filing_id=" + str(filing_id)
+                + ", query='<what you need, e.g. total revenue>') — it returns only the "
+                "matching passages with their offsets.\\n\\n"
+            )
         if offset >= total_length:
             return (
                 f"--- MARKDOWN CONTENT (chars {offset} to {total_length} of {total_length}) ---\\n"
@@ -1988,7 +2001,7 @@ async def {{ func_name }}(
                 "tail was discarded. ---\\n"
             )
 
-        return header + "\\n" + chunk
+        return _nav_hint + header + "\\n" + chunk
     except ToolInputError as exc:
         return _safe_error("filings_markdown_retrieve", exc)
     except Exception as exc:
@@ -2302,6 +2315,92 @@ def _resource_markdown() -> str:
 # tests/eval/test_prompts_deterministic.py so the deterministic suite
 # verifies it stays registered.
 # ---------------------------------------------------------------------------
+# Synthetic huge-filing search tool (not OpenAPI-derived). Fetches a filing's full
+# markdown once and returns only the passages matching a query — so the model can jump
+# to a figure in a 200-page filing instead of paging the whole thing into context.
+MARKDOWN_SEARCH_TOOL_BLOCK = '''
+
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="Search Filing Document",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+@subscription_required
+async def filings_markdown_search(
+    filing_id: int,
+    query: str,
+    max_hits: int = 5,
+) -> str:
+    """Search a filing's processed Markdown for `query` and return ONLY the matching
+    passages with their character offsets — use this INSTEAD of paging a long filing
+    to find a specific figure, line item, or section (e.g. query='total revenue').
+    Case-insensitive. Each hit shows ~440 chars of context and an offset you can pass
+    to filings_markdown_retrieve to read more around it."""
+    try:
+        _require_auth_context()
+        if not isinstance(filing_id, int) or filing_id <= 0:
+            raise ToolInputError("filing_id must be a positive integer")
+        if not query or not query.strip():
+            raise ToolInputError("query must be a non-empty string")
+        url = f"/filings/{filing_id}/markdown/"
+        async with _api_client.stream("GET", url) as response:
+            if response.status_code != 200:
+                body = await response.aread()
+                return f"Error {response.status_code}: {body[:300].decode('utf-8', errors='replace')}"
+            buf = bytearray()
+            async for _chunk in response.aiter_bytes():
+                if len(buf) + len(_chunk) > _MAX_FILING_BYTES:
+                    buf.extend(_chunk[: _MAX_FILING_BYTES - len(buf)])
+                    break
+                buf.extend(_chunk)
+        full_text = buf.decode("utf-8", errors="replace")
+        raw = query.strip()
+        cap = max(1, min(int(max_hits), 10))
+        # Number queries: also try the thousands-comma form, since filings render
+        # figures as e.g. "19,409" — so a query of "19409" still finds it.
+        cands = [raw]
+        _bare = raw.replace(",", "")
+        if _bare.isdigit() and len(_bare) >= 4:
+            cands = [_bare, format(int(_bare), ",")]
+        hay_l = full_text.lower()
+        hits = []
+        for cand in dict.fromkeys(cands):
+            cl = cand.lower()
+            start = 0
+            while len(hits) < cap:
+                i = hay_l.find(cl, start)
+                if i < 0:
+                    break
+                lo = max(0, i - 200)
+                hi = min(len(full_text), i + len(cand) + 240)
+                hits.append((i, full_text[lo:hi]))
+                start = i + len(cand)
+            if hits:
+                break
+        if not hits:
+            return (
+                f"No match for {query!r} in filing {filing_id} ({len(full_text)} chars). "
+                "Try a shorter or different query (e.g. a single key term), or page the "
+                "document with filings_markdown_retrieve."
+            )
+        parts = [f"{len(hits)} match(es) for {query!r} in filing {filing_id} "
+                 f"(document is {len(full_text)} chars):"]
+        for off, span in hits:
+            parts.append(f"\\n--- match near offset {off} ---\\n...{span}...")
+        return "\\n".join(parts)
+    except ToolInputError as exc:
+        return _safe_error("filings_markdown_search", exc)
+    except Exception as exc:
+        logger.exception("filings_markdown_search failed")
+        return _safe_error("filings_markdown_search", exc)
+'''
+
+
 # Guide TOOLS — the fr://guide/* resource content exposed ALSO as tools, for
 # tool-only MCP clients that can't read MCP resources. Emitted on the pruned
 # default surface (they stand in for the dropped ISIC/reference tools).
@@ -3105,6 +3204,9 @@ def main() -> None:
     # ISIC/reference tools for tool-only clients that can't read MCP resources.
     if PRUNE_DEFAULT:
         generated_code.append(GUIDE_TOOLS_BLOCK)
+    # Huge-filing search tool (synthetic) — emitted on every surface; pairs with
+    # the in-result pointer filings_markdown_retrieve adds on big (>120k) filings.
+    generated_code.append(MARKDOWN_SEARCH_TOOL_BLOCK)
     generated_code.append(PROMPTS_BLOCK)
     generated_code.append(FILE_FOOTER)
 
