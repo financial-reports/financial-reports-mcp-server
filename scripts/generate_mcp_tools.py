@@ -33,6 +33,31 @@ SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
 OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 
+# --- Default tool-surface prune (the eval-validated 14-tool surface) --------
+# The default generated surface drops cold per-item reference singletons, the
+# ISIC hierarchy family (folded into the get_fr_industry_classification guide
+# tool), and webhooks/watchlist (real features, off the default surface per the
+# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full ~42-tool surface.
+_PRUNED_EXCLUDE = {
+    "countries_list", "countries_retrieve",
+    "languages_list", "languages_retrieve",
+    "line_item_definitions_list", "line_item_definitions_retrieve",
+    "sources_list", "sources_retrieve",
+    "filing_categories_retrieve", "filing_types_retrieve",
+    "filings_history_retrieve",
+    "isic_classes_list", "isic_classes_retrieve",
+    "isic_divisions_list", "isic_divisions_retrieve",
+    "isic_groups_list", "isic_groups_retrieve",
+    "isic_sections_list", "isic_sections_retrieve",
+    "webhooks_create", "webhooks_deliveries_replay_create",
+    "webhooks_deliveries_retrieve", "webhooks_delivery_detail_retrieve",
+    "webhooks_list", "webhooks_regenerate_secret_create",
+    "webhooks_retrieve", "webhooks_test_create",
+    "watchlist_companies_bulk_add_create", "watchlist_companies_bulk_remove_create",
+    "watchlist_companies_create", "watchlist_retrieve",
+}
+PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
+
 
 # ---------------------------------------------------------------------------
 # FILE HEADER — everything above the generated tool functions
@@ -2277,6 +2302,54 @@ def _resource_markdown() -> str:
 # tests/eval/test_prompts_deterministic.py so the deterministic suite
 # verifies it stays registered.
 # ---------------------------------------------------------------------------
+# Guide TOOLS — the fr://guide/* resource content exposed ALSO as tools, for
+# tool-only MCP clients that can't read MCP resources. Emitted on the pruned
+# default surface (they stand in for the dropped ISIC/reference tools).
+GUIDE_TOOLS_BLOCK = '''
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="FR filing-type taxonomy",
+        readOnlyHint=True, destructiveHint=False,
+        idempotentHint=True, openWorldHint=False,
+    ),
+)
+async def get_fr_filing_type_taxonomy() -> str:
+    """The full 31-code filing-type taxonomy (codes + categories). Read before
+    filtering filings by type — especially for ESG, governance, M&A, dividends,
+    transcripts, or any type beyond 10-K / IR / ER / MDA / DIRS."""
+    return _resource_filing_types()
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="FR industry classification (ISIC)",
+        readOnlyHint=True, destructiveHint=False,
+        idempotentHint=True, openWorldHint=False,
+    ),
+)
+async def get_fr_industry_classification_isic() -> str:
+    """The ISIC industry hierarchy (sections/divisions/groups/classes) and how
+    to screen peers. Read for any sector, industry, or peer-comparison query,
+    then screen with companies_list(sector=...)."""
+    return _resource_industry()
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="FR markdown-fetch strategy",
+        readOnlyHint=True, destructiveHint=False,
+        idempotentHint=True, openWorldHint=False,
+    ),
+)
+async def get_fr_markdown_fetch_strategy() -> str:
+    """When and how to fall back to filings_markdown_retrieve for values the
+    normalized financials dataset doesn't carry, including processing_status
+    gating and pagination."""
+    return _resource_markdown()
+'''
+
+
 PROMPTS_BLOCK = '''
 # ---------------------------------------------------------------------------
 # MCP Prompts — server-defined slash commands for recurring workflows.
@@ -2912,6 +2985,8 @@ def main() -> None:
                 continue
 
             func_name = snake_case(operation_id)
+            if PRUNE_DEFAULT and func_name in _PRUNED_EXCLUDE:
+                continue
             description = sanitize_description(
                 operation.get("description") or operation.get("summary") or ""
             )
@@ -3025,6 +3100,11 @@ def main() -> None:
     # entrypoint. Order matters: both blocks' decorators reference the
     # `mcp` instance defined inside FILE_HEADER_TEMPLATE.
     generated_code.append(RESOURCES_BLOCK)
+    # Guide tools must follow RESOURCES_BLOCK (they call its _resource_* fns).
+    # Emitted only on the pruned default surface, where they replace the dropped
+    # ISIC/reference tools for tool-only clients that can't read MCP resources.
+    if PRUNE_DEFAULT:
+        generated_code.append(GUIDE_TOOLS_BLOCK)
     generated_code.append(PROMPTS_BLOCK)
     generated_code.append(FILE_FOOTER)
 
