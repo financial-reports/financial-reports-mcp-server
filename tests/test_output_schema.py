@@ -42,7 +42,7 @@ def test_structured_tool_advertises_output_schema(mcp_module, tool_name) -> None
 
 def test_unstructured_tools_only_get_fastmcp_default_wrapper(mcp_module) -> None:
     tm = mcp_module.mcp._tool_manager
-    for name in ("countries_list", "filing_types_list", "languages_list"):
+    for name in ("filing_types_list", "filing_categories_list", "isins_retrieve"):
         tool = tm._tools.get(name)
         assert tool is not None
         schema = tool.output_schema or {}

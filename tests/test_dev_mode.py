@@ -60,12 +60,16 @@ async def test_dev_mode_clears_token_after_call(dev_mode_module) -> None:
 
 
 def test_prod_hostname_guard(monkeypatch) -> None:
-    """Setting DEV_MODE_API_KEY against the prod hostname refuses to import."""
-    monkeypatch.setenv("DEV_MODE_API_KEY", "leak_attempt")
-    monkeypatch.setenv("MCP_BASE_URL", "https://mcp.financialfilings.com")
+    """The dev-key bypass fails CLOSED: it refuses to import unless MCP_BASE_URL is
+    an allow-listed local/dev host. Covers the prod hostname AND the empty-URL case
+    (an empty/Azure-native base URL previously slipped the prod-host-only check)."""
+    for bad_url in ("https://mcp.financialfilings.com", ""):
+        monkeypatch.setenv("DEV_MODE_API_KEY", "leak_attempt")
+        monkeypatch.setenv("MCP_BASE_URL", bad_url)
+        sys.modules.pop("src.financial_reports_mcp", None)
+        with pytest.raises(RuntimeError, match="not a recognised local/dev host"):
+            import src.financial_reports_mcp  # noqa: F401
     sys.modules.pop("src.financial_reports_mcp", None)
-    with pytest.raises(RuntimeError, match="never be enabled in prod"):
-        import src.financial_reports_mcp  # noqa: F401
 
 
 @pytest.mark.asyncio
