@@ -24,6 +24,12 @@ on:
 permissions:
   contents: read
 
+# Generate from the committed, reviewed schema snapshot (scripts/openapi.snapshot.json)
+# instead of a build-time live OpenAPI fetch, so CI tests exactly the deterministic
+# surface prod ships. See FR_PIN_SCHEMA in scripts/generate_mcp_tools.py.
+env:
+  FR_PIN_SCHEMA: "1"
+
 jobs:
   unit:
     name: Unit tests
