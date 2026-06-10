@@ -4,7 +4,7 @@ Agent-facing guide for the **FinancialReports MCP server** repo. This file is th
 
 ## What this repo is
 
-The official remote [Model Context Protocol](https://modelcontextprotocol.io) server for the [FinancialReports](https://financialreports.eu) API. It exposes **42 LLM-callable tools** (regulatory filings, financials, company data, ISIC industry classification, watchlists, webhooks), auto-generated from the live OpenAPI schema. It runs as a FastAPI host that mounts a FastMCP server behind an AWS Cognito OAuth proxy. Production: `https://mcp.financialfilings.com/mcp`.
+The official remote [Model Context Protocol](https://modelcontextprotocol.io) server for the [FinancialReports](https://financialreports.eu) API. It exposes **15 LLM-callable tools by default** (regulatory filings, financials, company data, in-filing search, plus guide tools); set `MCP_FULL_SURFACE=1` to restore the full **42-tool** surface (adds ISIC industry classification, watchlists, webhooks, and the rest of the reference data). The OpenAPI-derived tools are generated from a committed, reviewed schema snapshot (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build). It runs as a FastAPI host that mounts a FastMCP server behind an AWS Cognito OAuth proxy. Production: `https://mcp.financialfilings.com/mcp`.
 
 ## The one rule that matters: `src/` is generated
 
@@ -18,18 +18,22 @@ To change tool behavior, descriptions, or the server itself:
 
 The tool catalog in `README.md` (between the `AUTO-GENERATED TOOL LIST` markers) is also produced by the generator — don't hand-edit it.
 
+### Accepted exception: synthetic (non-schema) emitted code
+
+Most tools are generated from the OpenAPI schema, but some emitted code is **not** schema-derived and lives as inline `*_BLOCK` string templates inside `scripts/generate_mcp_tools.py`: the MCP resources (`RESOURCES_BLOCK`), prompts (`PROMPTS_BLOCK`), the guide tools (`GUIDE_TOOLS_BLOCK`), and the in-filing search tool (`MARKDOWN_SEARCH_TOOL_BLOCK`). These are still **emitted into `src/` by the generator** like everything else — they are NOT hand-edits to `src/`, and the "never edit `src/`" rule applies to them unchanged. Edit them in the generator. Trade-off worth knowing: an inline-string body isn't seen by `ruff`/`black`/`mypy` in source form (it is import/type-checked when the generated module loads in the test suite). Extracting all `*_BLOCK` bodies into separate lintable template files the generator reads is a reasonable future cleanup — do it for **all** of them or none, to keep a single pattern.
+
 ## Build / test / run
 
 ```bash
 make dev          # one-shot: venv -> install -> check-env -> regen -> serve on :8000
 make check-env    # verify required Cognito env vars are set
 make install      # install runtime + test deps
-make regen        # regenerate src/financial_reports_mcp.py from the live OpenAPI schema
+make regen        # regenerate src/ (live schema; CI/Docker set FR_PIN_SCHEMA=1 -> committed snapshot)
 pytest tests/test_*.py    # fast unit tests (no docker)
 make e2e          # docker-compose end-to-end suite (Redis); slow, needs docker
 ```
 
-Required env vars (see `.env.example`, full setup in `docs/SELF-HOSTING.md`): `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_CLIENT_SECRET`. Generation reads the public schema at `https://financialreports.eu/api/schema/` and needs no secrets; *running* the server needs the Cognito values.
+Required env vars (see `.env.example`, full setup in `docs/SELF-HOSTING.md`): `COGNITO_USER_POOL_ID`, `COGNITO_CLIENT_ID`, `COGNITO_CLIENT_SECRET`. Generation reads the public schema at `https://financialreports.eu/api/schema/` — or the committed `scripts/openapi.snapshot.json` when `FR_PIN_SCHEMA=1` (as CI and the Docker build do) — and needs no secrets; *running* the server needs the Cognito values.
 
 ## Code style
 
@@ -41,7 +45,7 @@ End users don't build anything — they point their harness at the hosted endpoi
 
 ## Using the analyst workflows on any harness
 
-The repo ships a Claude Agent Skill at `skills/financial-filings-research/`. Its underlying guidance — how to compose the 42 tools into real research workflows (company lookup, filing retrieval/summarization, multi-company comparison, ISIC screening, monitoring) — is harness-agnostic and lives in **[`docs/WORKFLOWS.md`](docs/WORKFLOWS.md)**. If you're an agent on any harness with this MCP connected, read that file to use the tools well.
+The repo ships a Claude Agent Skill at `skills/financial-filings-research/`. Its underlying guidance — how to compose these tools into real research workflows (company lookup, filing retrieval/summarization, multi-company comparison, ISIC screening, monitoring) — is harness-agnostic and lives in **[`docs/WORKFLOWS.md`](docs/WORKFLOWS.md)**. If you're an agent on any harness with this MCP connected, read that file to use the tools well.
 
 ## Security
 
@@ -50,5 +54,5 @@ This server handles OAuth flows and bearer tokens. Bearer tokens are proxied per
 ## What gets rejected in review
 
 - Hand-edits to `src/financial_reports_mcp.py` (it's generated).
-- New tools invented in docs/skills that aren't in the served OpenAPI surface — the tool list must match what the generator emits from the live schema.
+- New tools invented in docs/skills that aren't actually served — the tool list must match what the generator emits (the schema-derived tools plus the documented synthetic `*_BLOCK` tools), not an aspirational set.
 - Secrets, internal hostnames, or machine-specific paths in committed files.

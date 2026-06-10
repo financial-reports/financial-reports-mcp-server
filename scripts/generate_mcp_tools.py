@@ -150,6 +150,17 @@ COGNITO_REGION = os.environ.get("COGNITO_REGION", "eu-central-1")
 
 MCP_BASE_URL = os.environ.get("MCP_BASE_URL", "https://mcp.financialfilings.com")
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://api.financialreports.eu")
+# Parse the upstream host ONCE at boot. `_inject_auth` scopes the forwarded caller
+# credential to this host on every outbound request; computing it per-request via
+# httpx.URL(API_BASE_URL) raises httpx.InvalidURL (NOT a falsy return) on an empty or
+# malformed API_BASE_URL, which would kill every tool call with an unhandled exception.
+# Fail fast here instead. urlsplit("").hostname is None, so an empty value is caught.
+_API_HOST = urlsplit(API_BASE_URL).hostname
+if not _API_HOST:
+    raise RuntimeError(
+        f"API_BASE_URL must be an absolute URL with a host; got {API_BASE_URL!r}. "
+        "Refusing to start."
+    )
 LANDING_URL = os.environ.get(
     "LANDING_URL",
     "https://financialreports.eu/integrations/claude/",
@@ -196,13 +207,19 @@ _PROD_HOSTS = {"mcp.financialfilings.com"}
 # against an explicit local/dev base URL. The old guard checked only for the prod
 # hostname, so an EMPTY or Azure-native MCP_BASE_URL slipped through and silently
 # left the bypass active. Require an allow-listed dev marker instead.
-_DEV_HOST_MARKERS = ("localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal")
-if DEV_MODE_API_KEY and not any(m in MCP_BASE_URL for m in _DEV_HOST_MARKERS):
+_DEV_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}
+# Parse the hostname and match it EXACTLY. A substring check (`"localhost" in url`)
+# is bypassable: URLs like https://evil-localhost.example.com or https://not-a-
+# localhost.com contain a marker as a substring and would re-open the single-shared-
+# key bypass in prod. urlsplit("").hostname is None (no throw), so an empty URL fails
+# closed too.
+_dev_host = urlsplit(MCP_BASE_URL).hostname
+if DEV_MODE_API_KEY and _dev_host not in _DEV_HOSTS:
     raise RuntimeError(
-        "DEV_MODE_API_KEY is set but MCP_BASE_URL is not a recognised local/dev "
-        f"host ({MCP_BASE_URL!r}). Refusing to start — the dev key bypass must "
-        "never be active outside local development (an empty or production/Azure "
-        "MCP_BASE_URL is exactly the case this guards)."
+        "DEV_MODE_API_KEY is set but MCP_BASE_URL host is not a recognised local/dev "
+        f"host ({MCP_BASE_URL!r} -> host {_dev_host!r}). Refusing to start — the dev "
+        "key bypass must never be active outside local development (an empty, "
+        "production, or Azure-native MCP_BASE_URL is exactly the case this guards)."
     )
 if DEV_MODE_API_KEY:
     logging.getLogger("financial-reports-mcp").warning(
@@ -515,7 +532,7 @@ async def _inject_auth(request: httpx.Request) -> None:
     token = _current_token.get()
     if not token:
         return
-    if request.url.host and request.url.host != httpx.URL(API_BASE_URL).host:
+    if request.url.host and request.url.host != _API_HOST:
         return
     if DEV_MODE_API_KEY:
         request.headers.setdefault("X-API-Key", token)
@@ -1973,11 +1990,10 @@ async def {{ func_name }}(
         _nav_hint = ""
         if offset == 0 and total_length > 120000:
             _nav_hint = (
-                "HUGE FILING: " + str(total_length) + " chars (~"
-                + str(total_length // 2500) + " pages). Do NOT page through all of it. "
-                "To find a specific figure, line item, or section, call "
-                "filings_markdown_search(filing_id=" + str(filing_id)
-                + ", query='<what you need, e.g. total revenue>') — it returns only the "
+                f"HUGE FILING: {total_length} chars (~{total_length // 2500} pages). "
+                "Do NOT page through all of it. To find a specific figure, line item, "
+                f"or section, call filings_markdown_search(filing_id={filing_id}, "
+                "query='<what you need, e.g. total revenue>') — it returns only the "
                 "matching passages with their offsets.\\n\\n"
             )
         if offset >= total_length:
@@ -2360,7 +2376,10 @@ async def filings_markdown_search(
                 buf.extend(_chunk)
         full_text = buf.decode("utf-8", errors="replace")
         raw = query.strip()
-        cap = max(1, min(int(max_hits), 10))
+        try:
+            cap = max(1, min(int(max_hits), 10))
+        except (TypeError, ValueError):
+            raise ToolInputError("max_hits must be an integer between 1 and 10")
         # Number queries: also try the thousands-comma form, since filings render
         # figures as e.g. "19,409" — so a query of "19409" still finds it.
         cands = [raw]

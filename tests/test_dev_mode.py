@@ -60,16 +60,39 @@ async def test_dev_mode_clears_token_after_call(dev_mode_module) -> None:
 
 
 def test_prod_hostname_guard(monkeypatch) -> None:
-    """The dev-key bypass fails CLOSED: it refuses to import unless MCP_BASE_URL is
-    an allow-listed local/dev host. Covers the prod hostname AND the empty-URL case
-    (an empty/Azure-native base URL previously slipped the prod-host-only check)."""
-    for bad_url in ("https://mcp.financialfilings.com", ""):
-        monkeypatch.setenv("DEV_MODE_API_KEY", "leak_attempt")
+    """The dev-key bypass fails CLOSED: it refuses to import unless the MCP_BASE_URL
+    *host* is an allow-listed local/dev host. The guard parses the hostname and matches
+    it EXACTLY — a substring check (`"localhost" in url`) would let an embedded-marker
+    URL slip through and re-open the single-shared-key bypass in prod."""
+    monkeypatch.setenv("DEV_MODE_API_KEY", "leak_attempt")
+
+    # Must REFUSE to import: prod host, empty/Azure-native, and embedded-marker URLs
+    # whose *hostname* is not exactly an allow-listed dev host.
+    bad_urls = (
+        "https://mcp.financialfilings.com",    # prod
+        "",                                     # empty slips a prod-host-only check
+        "https://evil-localhost.example.com",   # 'localhost' as a substring, not the host
+        "https://not-a-localhost.com",          # ditto
+        "https://localhost.evil.com",           # 'localhost' as a label, not the host
+        "https://127.0.0.1.evil.com",           # ip-looking substring, not the host
+    )
+    for bad_url in bad_urls:
         monkeypatch.setenv("MCP_BASE_URL", bad_url)
         sys.modules.pop("src.financial_reports_mcp", None)
         with pytest.raises(RuntimeError, match="not a recognised local/dev host"):
             import src.financial_reports_mcp  # noqa: F401
-    sys.modules.pop("src.financial_reports_mcp", None)
+        sys.modules.pop("src.financial_reports_mcp", None)
+
+    # Positive control: genuine local/dev hosts (with ports) import cleanly.
+    for ok_url in (
+        "http://localhost:8000",
+        "http://127.0.0.1:9000",
+        "http://host.docker.internal:8000",
+    ):
+        monkeypatch.setenv("MCP_BASE_URL", ok_url)
+        sys.modules.pop("src.financial_reports_mcp", None)
+        import src.financial_reports_mcp  # noqa: F401  — must NOT raise
+        sys.modules.pop("src.financial_reports_mcp", None)
 
 
 @pytest.mark.asyncio
