@@ -14,10 +14,12 @@ RUN uv venv /app/venv && \
     uv pip install -r requirements.txt --no-cache-dir
 
 # Copy source + generator and pre-render the MCP tools file at build time.
-# This bakes the live OpenAPI schema into the image so cold starts are instant.
+# FR_PIN_SCHEMA=1 generates from the committed, reviewed schema snapshot
+# (scripts/openapi.snapshot.json) — no build-time live OpenAPI fetch, so the
+# tool surface is deterministic and reviewed (no silent drift on rebuild).
 COPY src/ ./src/
 COPY scripts/ ./scripts/
-RUN . /app/venv/bin/activate && python scripts/generate_mcp_tools.py
+RUN . /app/venv/bin/activate && FR_PIN_SCHEMA=1 python scripts/generate_mcp_tools.py
 
 
 # --- Stage 2: Runtime ---

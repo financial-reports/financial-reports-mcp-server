@@ -16,6 +16,12 @@ companies_list:
     Use as the **first step** to resolve a company name, ticker, or
     partial match to a FinancialReports internal ID. Required before
     calling any per-company tool (financials, filings, watchlist).
+    CONFIRM the match — state the resolved company's full name and country
+    before reporting data ("Apple" can surface "Apple Hospitality REIT").
+    PEER / SCREENING LISTS: include ONLY companies whose requested data you
+    actually retrieved this session; if a candidate's data comes back empty,
+    mark it "no data available" or drop it — never invent a figure to complete
+    the list. A short honest list beats a long fabricated one.
   when_not_to_use: >
     Don't use if you already have a company ID from a previous call.
     Don't use for ISIN lookups — use `isins_retrieve` instead.
@@ -46,6 +52,13 @@ companies_financials_retrieve:
     Use to get standardized financial line items (income statement,
     balance sheet, cash flow) for a company. Data is deduplicated
     across filings — the most recently published filing wins.
+    SOURCING: attribute every figure to its fiscal period + period_end_date and
+    reporting currency. GROUNDEDNESS (critical): report ONLY values present in
+    the `periods` this call returns; if `period_count` is 0 or `periods` is
+    empty, FinancialReports has NO structured financials for this company — say
+    exactly that and STOP. Never estimate, recall a figure from training
+    knowledge, or attach a filing citation to a number you did not read from a
+    tool result this session.
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without

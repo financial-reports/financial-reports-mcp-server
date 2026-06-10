@@ -6,7 +6,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialReports](https://financialreports.eu) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **42 tools across 8 domains. Free for any FinancialReports account.** Sourced from official regulators.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **15 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 42-tool surface). **Free for any FinancialReports account.** Sourced from official regulators.
 
 ---
 
@@ -149,24 +149,23 @@ Clients with native remote-MCP OAuth (Claude, Cursor, Windsurf, VS Code, opencod
 
 ## What you get
 
-**42 LLM-callable tools** across eight domains:
+**15 LLM-callable tools by default** — the curated surface analysts actually use:
 
 | Domain | Tools | Use cases |
 |---|---|---|
 | Companies | 4 | Search by name/ticker/ISIN, retrieve full company profiles, get normalized financials, predict next annual report |
-| Filings | 4 | List, retrieve, fetch markdown content (capped at 150K chars), audit trail |
+| Filings | 4 | List, retrieve, fetch markdown content (capped at 150K chars), keyword-search inside a single filing |
 | ISINs | 2 | Lookup by ISIN, list dual-listings |
-| ISIC industry classifications | 8 | Section/division/group/class hierarchy for industry screening |
-| Reference data | 8 | Countries, languages, sources (regulators), filing categories, filing types |
-| Financial data | 2 | Normalized line-item definitions across regulators |
-| Watchlist | 4 | Per-user company watchlist (single + bulk operations) |
-| Webhooks | 8 | Filing-event subscriptions, delivery logs, replay, secret rotation |
+| Reference taxonomy | 2 | Filing categories and filing types |
+| Guides | 3 | Filing-type taxonomy, ISIC industry classification, and markdown-fetch strategy — callable references for tool-only clients that can't read MCP resources |
 
-All tools are auto-generated from the [FinancialReports OpenAPI schema](https://financialreports.eu/api/schema/) so the MCP surface never drifts from the underlying API.
+Set `MCP_FULL_SURFACE=1` to restore the full **42-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, and webhook subscriptions.
+
+The shipped surface is generated from a committed, reviewed snapshot of the [FinancialReports OpenAPI schema](https://financialreports.eu/api/schema/) (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build), so it's deterministic and never drifts silently on a rebuild.
 
 ### Companion skill
 
-The repository ships an [Agent Skill](skills/financial-filings-research/) — `financial-filings-research` — that teaches Claude how to compose these 42 tools into the workflows analysts actually run: company lookup, filing summarization, multi-company financial comparison, ISIC industry screening, and filings monitoring. It activates automatically when the user mentions a company name, ticker, ISIN, filing type, or financial metric.
+The repository ships an [Agent Skill](skills/financial-filings-research/) — `financial-filings-research` — that teaches Claude how to compose these tools into the workflows analysts actually run: company lookup, filing summarization, multi-company financial comparison, ISIC industry screening, and filings monitoring. It activates automatically when the user mentions a company name, ticker, ISIN, filing type, or financial metric.
 
 ---
 
@@ -185,7 +184,7 @@ The repository ships an [Agent Skill](skills/financial-filings-research/) — `f
 │  (FastAPI +      │                                       ▼
 │   FastMCP)       │     proxy bearer token         ┌──────────────────┐
 │                  │  ─────────────────────────►    │  api.            │
-│  42 tools        │                                │  financial-      │
+│  15 tools        │                                │  financial-      │
 │  generated from  │                                │  reports.eu      │
 │  OpenAPI schema  │                                │  (first-party)   │
 └──────────────────┘                                └──────────────────┘
@@ -193,7 +192,7 @@ The repository ships an [Agent Skill](skills/financial-filings-research/) — `f
 
 **Key design decisions:**
 
-- **Tools are generated, not hand-written.** `scripts/generate_mcp_tools.py` reads the live OpenAPI schema and emits `src/financial_reports_mcp.py`. Adding an endpoint to the API automatically gives Claude a new tool on the next regen.
+- **Tools are generated, not hand-written.** `scripts/generate_mcp_tools.py` reads the OpenAPI schema — pinned to a committed snapshot via `FR_PIN_SCHEMA=1` in CI and the Docker build — and emits `src/financial_reports_mcp.py`. The default surface is curated to a focused 15-tool set; `MCP_FULL_SURFACE=1` emits the full surface.
 - **Bearer-token proxy, not session storage.** The user's Cognito access token is forwarded to the upstream API on every call. No conversation data, no API responses cached server-side.
 - **Subscription gating in-process.** A 15-second LRU cache holds Cognito `sub` → tier mappings to avoid hammering the FR API on every tool call.
 - **Same-origin asset proxy.** `/favicon.ico`, `/icon.png`, `/icon-{32,192,512}.png` are served from this origin (proxied + cached from CDN) so connector UIs and the `/consent` page render without cross-origin CSP friction.
@@ -229,69 +228,20 @@ The list below is regenerated by `scripts/generate_mcp_tools.py` on every build.
 * `companies_next_annual_report_retrieve` — Predict Next Annual Report
 * `companies_retrieve` — Retrieve Company Details
 
-### Countries
-* `countries_list` — List Countries
-* `countries_retrieve` — Retrieve Country
-
 ### Filing Categories
 * `filing_categories_list` — List Filing Categories
-* `filing_categories_retrieve` — Retrieve Filing Category
 
 ### Filing Types
 * `filing_types_list` — List Filing Types
-* `filing_types_retrieve` — Retrieve Filing Type
 
 ### Filings
-* `filings_history_retrieve` — Retrieve Filing History (Audit Trail)
 * `filings_list` — List Filings
 * `filings_markdown_retrieve` — Retrieve Filing Markdown
 * `filings_retrieve` — Retrieve Filing Details
 
-### Financial Data
-* `line_item_definitions_list` — List Line Item Definitions
-* `line_item_definitions_retrieve` — Retrieve Line Item Definition
-
-### ISIC Classifications
-* `isic_classes_list` — List ISIC Classes
-* `isic_classes_retrieve` — Retrieve ISIC Class
-* `isic_divisions_list` — List ISIC Divisions
-* `isic_divisions_retrieve` — Retrieve ISIC Division
-* `isic_groups_list` — List ISIC Groups
-* `isic_groups_retrieve` — Retrieve ISIC Group
-* `isic_sections_list` — List ISIC Sections
-* `isic_sections_retrieve` — Retrieve ISIC Section
-
 ### ISINs
 * `isins_list` — List ISINs
 * `isins_retrieve` — Retrieve ISIN
-
-### Languages
-* `languages_list` — List Languages
-* `languages_retrieve` — Retrieve Language
-
-### Sources
-* `sources_list` — List Data Sources
-* `sources_retrieve` — Retrieve Data Source
-
-### Watchlist
-* `watchlist_companies_bulk_add_create` — Bulk Add Companies to Watchlist
-* `watchlist_companies_bulk_remove_create` — Bulk Remove Companies from Watchlist
-* `watchlist_companies_create` — Add Company to Watchlist
-* `watchlist_retrieve` — Get User's Watchlist
-
-### Webhooks (Management)
-* `webhooks_create` — Create Webhook
-* `webhooks_deliveries_replay_create` — Replay Delivery
-* `webhooks_deliveries_retrieve` — List Delivery Logs
-* `webhooks_delivery_detail_retrieve` — Retrieve Delivery Detail
-* `webhooks_list` — List Webhooks
-* `webhooks_regenerate_secret_create` — Regenerate Secret Key
-* `webhooks_retrieve` — Retrieve Webhook
-* `webhooks_test_create` — Test Webhook
-
-### companies
-* `companies_api_company_financials_gsheet_export_create` — Companies Api Company Financials Gsheet Export Create
-* `companies_api_company_financials_gsheet_export_retrieve` — Companies Api Company Financials Gsheet Export Retrieve
 
 <!-- END AUTO-GENERATED TOOL LIST -->
 
