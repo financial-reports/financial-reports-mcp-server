@@ -22,7 +22,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import httpx
@@ -55,6 +57,20 @@ DENY_ARG_SUBSTRINGS = (
 REDACTED = "<redacted>"
 MAX_ARG_STRLEN = 256
 MAX_ARG_KEYS = 40
+
+# Error-detail capture (issue #32): the exception *message* is the part the
+# dashboard was missing — but it may quote a credential, so scrub anything
+# JWT- or bearer-shaped before it leaves the process.
+MAX_ERROR_DETAIL = 300
+_JWT_SHAPED_RE = re.compile(r"[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}")
+_BEARER_RE = re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}")
+
+
+def sanitize_error_detail(detail: str) -> str:
+    """Redact token-shaped substrings from an exception message, truncate."""
+    cleaned = _JWT_SHAPED_RE.sub("<redacted-jwt>", detail)
+    cleaned = _BEARER_RE.sub("<redacted-bearer>", cleaned)
+    return cleaned[:MAX_ERROR_DETAIL]
 
 
 def _truncate(value: Any) -> Any:
@@ -177,6 +193,27 @@ def build_emitter_from_env() -> UsageAnalyticsEmitter:
 
 # --- middleware: capture tool + prompt calls ---
 
+@dataclass(frozen=True)
+class _ErrorInfo:
+    """Sanitized error context extracted from a tool/prompt exception."""
+
+    error_type: Optional[str] = None
+    detail: Optional[str] = None
+    upstream_status: Optional[int] = None
+    request_id: Optional[str] = None
+
+    @classmethod
+    def from_exception(cls, exc: BaseException) -> "_ErrorInfo":
+        upstream_status = getattr(exc, "upstream_status", None)
+        request_id = getattr(exc, "request_id", None)
+        return cls(
+            error_type=type(exc).__name__,
+            detail=sanitize_error_detail(str(exc)),
+            upstream_status=upstream_status if isinstance(upstream_status, int) else None,
+            request_id=request_id if isinstance(request_id, str) else None,
+        )
+
+
 class UsageAnalyticsMiddleware(Middleware):
     """Captures every tool call and prompt fetch and hands it to the emitter.
 
@@ -191,37 +228,35 @@ class UsageAnalyticsMiddleware(Middleware):
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
-        status, error_type = "ok", None
+        status, err = "ok", _ErrorInfo()
         try:
             return await call_next(context)
         except Exception as exc:
-            status, error_type = "error", type(exc).__name__
+            status, err = "error", _ErrorInfo.from_exception(exc)
             raise
         finally:
-            self._safe_emit(context, kind="tool", status=status,
-                            error_type=error_type,
+            self._safe_emit(context, kind="tool", status=status, err=err,
                             latency_ms=int((time.monotonic() - started) * 1000))
 
     async def on_get_prompt(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
-        status, error_type = "ok", None
+        status, err = "ok", _ErrorInfo()
         try:
             return await call_next(context)
         except Exception as exc:
-            status, error_type = "error", type(exc).__name__
+            status, err = "error", _ErrorInfo.from_exception(exc)
             raise
         finally:
-            self._safe_emit(context, kind="prompt", status=status,
-                            error_type=error_type,
+            self._safe_emit(context, kind="prompt", status=status, err=err,
                             latency_ms=int((time.monotonic() - started) * 1000))
 
-    def _safe_emit(self, context, *, kind, status, error_type, latency_ms) -> None:
+    def _safe_emit(self, context, *, kind, status, err, latency_ms) -> None:
         try:
-            self._emitter.emit(self._build_event(context, kind, status, error_type, latency_ms))
+            self._emitter.emit(self._build_event(context, kind, status, err, latency_ms))
         except Exception:
             logger.debug("usage analytics build/emit skipped", exc_info=True)
 
-    def _build_event(self, context, kind, status, error_type, latency_ms) -> dict:
+    def _build_event(self, context, kind, status, err, latency_ms) -> dict:
         message = getattr(context, "message", None)
         name = getattr(message, "name", "") or ""
         arguments = getattr(message, "arguments", None) or {}
@@ -236,8 +271,10 @@ class UsageAnalyticsMiddleware(Middleware):
             "name": name,
             "arguments": sanitize_mcp_arguments(arguments),
             "status": status,
-            "upstream_status": None,
-            "error_type": error_type or "",
+            "upstream_status": err.upstream_status,
+            "upstream_request_id": err.request_id or "",
+            "error_type": err.error_type or "",
+            "error_detail": err.detail or "",
             "latency_ms": latency_ms,
             "server_version": self._server_version,
             "protocol_version": "",

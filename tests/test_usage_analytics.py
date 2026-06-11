@@ -189,3 +189,78 @@ async def test_middleware_survives_missing_identity():
     ev = emitter.events[0]
     assert ev["sub"] == ""
     assert ev["host_name"] == ""
+
+
+# --- error context (issue #32) ----------------------------------------------
+
+
+async def test_middleware_records_upstream_status_and_detail(_fake_token):
+    """A typed upstream error must land in the event as a real status + detail."""
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _fake_context()
+
+    class _UpstreamError(RuntimeError):
+        def __init__(self):
+            super().__init__("upstream companies_list returned 403 (request-id: req-1)")
+            self.upstream_status = 403
+            self.request_id = "req-1"
+
+    async def call_next(_):
+        raise _UpstreamError()
+
+    with pytest.raises(_UpstreamError):
+        await mw.on_call_tool(ctx, call_next)
+
+    ev = emitter.events[0]
+    assert ev["status"] == "error"
+    assert ev["upstream_status"] == 403
+    assert ev["upstream_request_id"] == "req-1"
+    assert "returned 403" in ev["error_detail"]
+
+
+async def test_middleware_error_detail_redacts_jwt(_fake_token):
+    """A JWT-shaped substring in an exception message must never reach the DB."""
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _fake_context()
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4eHh4In0.c2lnbmF0dXJlLXh4eHg"
+
+    async def call_next(_):
+        raise RuntimeError(f"rejected bearer {jwt} by upstream")
+
+    with pytest.raises(RuntimeError):
+        await mw.on_call_tool(ctx, call_next)
+
+    ev = emitter.events[0]
+    assert jwt not in ev["error_detail"]
+    assert "<redacted" in ev["error_detail"]
+
+
+async def test_middleware_error_detail_truncated(_fake_token):
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _fake_context()
+
+    async def call_next(_):
+        raise RuntimeError("x" * 5000)
+
+    with pytest.raises(RuntimeError):
+        await mw.on_call_tool(ctx, call_next)
+
+    assert len(emitter.events[0]["error_detail"]) <= 300
+
+
+async def test_middleware_ok_event_has_blank_error_fields(_fake_token):
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _fake_context()
+
+    async def call_next(_):
+        return "RESULT"
+
+    await mw.on_call_tool(ctx, call_next)
+    ev = emitter.events[0]
+    assert ev["upstream_status"] is None
+    assert ev["error_detail"] == ""
+    assert ev["upstream_request_id"] == ""
