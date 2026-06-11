@@ -628,6 +628,54 @@ def _auth_error(msg: str) -> str:
     return f"⚠️ **Authentication required.** {msg}"
 
 
+_RECONNECT_MSG = (
+    "Your session could not be linked to upstream credentials. Please "
+    "disconnect and reconnect the FinancialReports connector, then retry."
+)
+
+
+async def _resolve_upstream_access_token(presented: str) -> Optional[Any]:
+    """Re-run the OAuth proxy's token swap (issue #32, fastmcp #1863).
+
+    Under Streamable HTTP, fastmcp's `get_access_token()` can fall back to
+    the SDK contextvar and hand us the FastMCP HS256 *reference* token
+    instead of the swapped upstream Cognito token — which the upstream API
+    rejects with 403 ("No kid provided"). `OAuthProxy.load_access_token()`
+    is the canonical swap (verify our JWT → JTI mapping → stored upstream
+    token → upstream verification); re-running it here recovers the token
+    the upstream actually accepts. Returns the swapped AccessToken, or None
+    when the session can't be linked (expired/lost upstream token) — the
+    caller fails closed with a reconnect hint.
+    """
+    if auth_provider is None:
+        return None
+    try:
+        swapped = await auth_provider.load_access_token(presented)
+    except Exception:
+        logger.warning("upstream token re-swap raised", exc_info=True)
+        return None
+    if swapped is None:
+        logger.warning(
+            "upstream token re-swap failed: %s could not be linked to a "
+            "stored upstream token",
+            _jwt_fingerprint(presented),
+        )
+        return None
+    token = getattr(swapped, "token", None)
+    if not token or _jwt_lacks_kid(token):
+        logger.warning(
+            "upstream token re-swap returned a non-forwardable credential: %s",
+            _jwt_fingerprint(token or ""),
+        )
+        return None
+    logger.info(
+        "recovered upstream token via proxy re-swap (issue #32): %s -> %s",
+        _jwt_fingerprint(presented),
+        _jwt_fingerprint(token),
+    )
+    return swapped
+
+
 def subscription_required(
     func: Callable[..., Awaitable[str]],
 ) -> Callable[..., Awaitable[str]]:
@@ -657,6 +705,15 @@ def subscription_required(
 
         if access_token is None:
             return _auth_error("No access token provided.")
+
+        # Issue #32: if the SDK fallback handed us the FastMCP reference
+        # token (JWT without kid), re-run the proxy swap to recover the
+        # upstream Cognito token; fail closed if the session can't be linked.
+        presented = getattr(access_token, "token", None)
+        if presented and _jwt_lacks_kid(presented):
+            access_token = await _resolve_upstream_access_token(presented)
+            if access_token is None:
+                return _auth_error(_RECONNECT_MSG)
 
         claims = getattr(access_token, "claims", {}) or {}
         sub = claims.get("sub")
@@ -810,6 +867,15 @@ async def _authorize_or_raise() -> tuple[Any, ...]:
 
     if access_token is None:
         raise AuthenticationError("No access token provided.")
+
+    # Issue #32: mirror the re-swap in `subscription_required` — recover the
+    # upstream Cognito token when the SDK fallback handed us the FastMCP
+    # reference token; fail closed if the session can't be linked.
+    presented = getattr(access_token, "token", None)
+    if presented and _jwt_lacks_kid(presented):
+        access_token = await _resolve_upstream_access_token(presented)
+        if access_token is None:
+            raise AuthenticationError(_RECONNECT_MSG)
 
     claims = getattr(access_token, "claims", {}) or {}
     sub = claims.get("sub")
