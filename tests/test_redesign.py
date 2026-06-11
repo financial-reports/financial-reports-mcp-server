@@ -6,6 +6,8 @@ These assert the default (pruned) surface. MCP_FULL_SURFACE=1 restores the full
 """
 from __future__ import annotations
 
+import pytest
+
 
 def test_pruned_default_surface(mcp_module) -> None:
     """Cold reference / ISIC hierarchy / webhooks / watchlist tools are dropped
@@ -46,3 +48,21 @@ def test_financials_sourcing_guidance(mcp_module) -> None:
     assert "NO structured financials" in desc or "GROUNDEDNESS" in desc, (
         "sourcing/anti-fabrication guidance missing from financials description"
     )
+
+
+@pytest.mark.asyncio
+async def test_guide_tools_return_content(mcp_module) -> None:
+    """The guide tools must RETURN their resource content when CALLED — not just
+    be registered. Regression guard for the first cut, which shipped
+    `return _resource_x()` where `_resource_x` is a FastMCP FunctionResource (not
+    callable) — every invocation raised "'FunctionResource' object is not
+    callable" in prod. The fix calls `_resource_x.fn()`; this test exercises it."""
+    tools = mcp_module.mcp._tool_manager._tools
+    for name in (
+        "get_fr_filing_type_taxonomy",
+        "get_fr_industry_classification_isic",
+        "get_fr_markdown_fetch_strategy",
+    ):
+        out = await tools[name].fn()
+        assert isinstance(out, str) and len(out) > 100, f"{name} returned no content"
+        assert "FunctionResource" not in out, f"{name} leaked a FunctionResource error"

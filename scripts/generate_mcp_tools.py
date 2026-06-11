@@ -2423,6 +2423,12 @@ async def filings_markdown_search(
 # Guide TOOLS — the fr://guide/* resource content exposed ALSO as tools, for
 # tool-only MCP clients that can't read MCP resources. Emitted on the pruned
 # default surface (they stand in for the dropped ISIC/reference tools).
+#
+# NOTE: the `@mcp.resource` decorator rebinds `_resource_*` to a FastMCP
+# FunctionResource (NOT callable). Call `.fn()` to invoke the underlying
+# function. test_redesign::test_guide_tools_return_content exercises this so a
+# call-time break can't ship again (the first cut shipped `_resource_x()` which
+# raised "'FunctionResource' object is not callable" on every invocation).
 GUIDE_TOOLS_BLOCK = '''
 
 @mcp.tool(
@@ -2436,7 +2442,7 @@ async def get_fr_filing_type_taxonomy() -> str:
     """The full 31-code filing-type taxonomy (codes + categories). Read before
     filtering filings by type — especially for ESG, governance, M&A, dividends,
     transcripts, or any type beyond 10-K / IR / ER / MDA / DIRS."""
-    return _resource_filing_types()
+    return _resource_filing_types.fn()
 
 
 @mcp.tool(
@@ -2450,7 +2456,7 @@ async def get_fr_industry_classification_isic() -> str:
     """The ISIC industry hierarchy (sections/divisions/groups/classes) and how
     to screen peers. Read for any sector, industry, or peer-comparison query,
     then screen with companies_list(sector=...)."""
-    return _resource_industry()
+    return _resource_industry.fn()
 
 
 @mcp.tool(
@@ -2464,7 +2470,7 @@ async def get_fr_markdown_fetch_strategy() -> str:
     """When and how to fall back to filings_markdown_retrieve for values the
     normalized financials dataset doesn't carry, including processing_status
     gating and pagination."""
-    return _resource_markdown()
+    return _resource_markdown.fn()
 '''
 
 
