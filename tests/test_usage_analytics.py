@@ -264,3 +264,22 @@ async def test_middleware_ok_event_has_blank_error_fields(_fake_token):
     assert ev["upstream_status"] is None
     assert ev["error_detail"] == ""
     assert ev["upstream_request_id"] == ""
+
+
+def test_error_detail_redacts_short_header_jwt():
+    """JWT with a minimal header must still be redacted (eyJ-anchored regex)."""
+    from src.usage_analytics import sanitize_error_detail
+
+    short = "eyJhbGciOiJub25lIn0.eyJ4IjoxfQ.sig"
+    out = sanitize_error_detail(f"rejected {short} upstream")
+    assert short not in out
+    assert "<redacted-jwt>" in out
+
+
+def test_error_detail_keeps_module_paths():
+    """Dotted module paths in exception text must NOT be falsely redacted —
+    they are often the most diagnostic part of the message."""
+    from src.usage_analytics import sanitize_error_detail
+
+    msg = "call failed in financial_reports.server_module.dependencies at startup"
+    assert sanitize_error_detail(msg) == msg

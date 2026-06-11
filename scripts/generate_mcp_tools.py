@@ -105,7 +105,11 @@ from fastmcp.server.dependencies import get_access_token
 from mcp.types import Icon, ToolAnnotations
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from src.usage_analytics import UsageAnalyticsMiddleware, build_emitter_from_env
+from src.usage_analytics import (
+    UsageAnalyticsMiddleware,
+    build_emitter_from_env,
+    sanitize_error_detail,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -523,10 +527,18 @@ mcp = FastMCP(
 _current_token: ContextVar[str] = ContextVar("_current_token", default="")
 
 
+_MAX_JOSE_HEADER_B64 = 4096
+
+
 def _jose_header(token: str) -> Optional[dict]:
-    """Decode the JOSE header of a JWT-shaped string. None if not a JWT."""
+    """Decode the JOSE header of a JWT-shaped string. None if not a JWT.
+
+    Size-capped: this runs on every tool call, so a multi-KB first segment
+    is treated as opaque rather than paying base64+JSON decode cost (no real
+    Cognito/FastMCP header comes anywhere near the cap).
+    """
     parts = token.split(".")
-    if len(parts) != 3:
+    if len(parts) != 3 or len(parts[0]) > _MAX_JOSE_HEADER_B64:
         return None
     try:
         pad = "=" * (-len(parts[0]) % 4)
@@ -646,6 +658,15 @@ async def _resolve_upstream_access_token(presented: str) -> Optional[Any]:
     the upstream actually accepts. Returns the swapped AccessToken, or None
     when the session can't be linked (expired/lost upstream token) — the
     caller fails closed with a reconnect hint.
+
+    Known fastmcp dependency (verified on 2.13.3): the swapped AccessToken's
+    `claims` are stripped to {sub, username, cognito:groups} by
+    AWSCognitoTokenVerifier, so the downstream client_id binding check passes
+    only via the `AccessToken.client_id` ATTRIBUTE, which JWTVerifier
+    populates from the Cognito token's raw `client_id` claim and the Cognito
+    verifier forwards. If a fastmcp upgrade changes that claim handling, the
+    re-swap recovery would start failing with "Invalid client_id" — re-verify
+    this chain on any fastmcp bump (the unit stubs can't catch it).
     """
     if auth_provider is None:
         return None
@@ -836,7 +857,9 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
         status,
         request_id,
         _jwt_fingerprint(_current_token.get()),
-        response.text[:300],
+        # Redact before logging: some gateways echo the Authorization header
+        # in error bodies, and this line ships to the log aggregator.
+        sanitize_error_detail(response.text[:1000]),
     )
     suffix = f" (request-id: {request_id})" if request_id else ""
     raise UpstreamHTTPError(

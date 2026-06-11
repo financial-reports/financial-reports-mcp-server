@@ -62,7 +62,11 @@ MAX_ARG_KEYS = 40
 # dashboard was missing — but it may quote a credential, so scrub anything
 # JWT- or bearer-shaped before it leaves the process.
 MAX_ERROR_DETAIL = 300
-_JWT_SHAPED_RE = re.compile(r"[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}")
+# Anchored on "eyJ" — base64url of '{"', the start of every real JOSE header.
+# Catches JWTs of any segment length without falsely redacting dotted module
+# paths ("pkg.module.attr"), which are often the most diagnostic part of an
+# exception message.
+_JWT_SHAPED_RE = re.compile(r"eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+")
 _BEARER_RE = re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}")
 
 
