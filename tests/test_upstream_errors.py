@@ -238,3 +238,40 @@ def test_jwt_fingerprint_handles_non_jwt_inputs(mcp_module) -> None:
     fp = mcp_module._jwt_fingerprint("real-access-token")
     assert fp.startswith("opaque")
     assert "real-access-token" not in fp
+
+
+# --- hardening (adversarial-review findings) ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_upstream_error_log_redacts_token_in_body(
+    mcp_module, monkeypatch, fake_access_token, respx_router, caplog
+) -> None:
+    """If the upstream ever echoes a bearer in its error body, the server-side
+    log line must carry the redacted form, never the token."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    echoed_jwt = (
+        "eyJhbGciOiJSUzI1NiIsImtpZCI6ImFiYzEyMyJ9."
+        "eyJzdWIiOiJzZWNyZXQtdXNlciJ9.c2lnbmF0dXJlLWJ5dGVz"
+    )
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(
+        return_value=httpx.Response(
+            403, json={"detail": "rejected", "echo": f"Bearer {echoed_jwt}"}
+        )
+    )
+
+    fn = _structured_tool(mcp_module)
+    with caplog.at_level(logging.WARNING):
+        with pytest.raises(mcp_module.UpstreamHTTPError):
+            await fn()
+
+    assert echoed_jwt not in caplog.text
+    assert "<redacted" in caplog.text
+
+
+def test_jose_header_rejects_oversized_header(mcp_module) -> None:
+    """A multi-KB JOSE header must not be base64/JSON-decoded per call."""
+    huge = "A" * 5000 + ".payload.sig"
+    assert mcp_module._jose_header(huge) is None
+    assert mcp_module._jwt_fingerprint(huge).startswith("opaque")
+    assert mcp_module._jwt_lacks_kid(huge) is False
