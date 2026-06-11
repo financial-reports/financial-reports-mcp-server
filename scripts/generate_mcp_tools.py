@@ -81,6 +81,7 @@ Architecture:
     access — no subscription verification or backend check.
 """
 import asyncio
+import base64
 import ipaddress
 import json as _json
 import logging
@@ -522,6 +523,48 @@ mcp = FastMCP(
 _current_token: ContextVar[str] = ContextVar("_current_token", default="")
 
 
+def _jose_header(token: str) -> Optional[dict]:
+    """Decode the JOSE header of a JWT-shaped string. None if not a JWT."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        pad = "=" * (-len(parts[0]) % 4)
+        header = _json.loads(base64.urlsafe_b64decode(parts[0] + pad))
+    except Exception:
+        return None
+    return header if isinstance(header, dict) else None
+
+
+def _jwt_fingerprint(token: str) -> str:
+    """Safe diagnostic for a bearer credential — NEVER includes the token.
+
+    Distinguishes the issue-#32 failure class (an HS256 proxy JWT without a
+    `kid`) from a proper Cognito RS256 token in a single log field.
+    """
+    if not token:
+        return "absent"
+    header = _jose_header(token)
+    if header is None:
+        return f"opaque(len={len(token)})"
+    alg = header.get("alg", "?")
+    kid = "present" if header.get("kid") else "missing"
+    return f"jwt(alg={alg} kid={kid})"
+
+
+def _jwt_lacks_kid(token: str) -> bool:
+    """True only for JWT-shaped tokens whose JOSE header has no `kid`.
+
+    The upstream API accepts exclusively Cognito RS256 JWTs (kid required).
+    A JWT without one is the FastMCP proxy's own HS256 token leaking through
+    `get_access_token()`'s SDK-contextvar fallback (issue #32) — it would be
+    rejected upstream with 403 "No kid provided". Opaque non-JWT strings
+    (dev API keys, test tokens) are not this failure mode and pass.
+    """
+    header = _jose_header(token)
+    return header is not None and not header.get("kid")
+
+
 # ---------------------------------------------------------------------------
 # Shared HTTP client — module-level for connection-pool reuse
 # ---------------------------------------------------------------------------
@@ -536,7 +579,22 @@ async def _inject_auth(request: httpx.Request) -> None:
         return
     if DEV_MODE_API_KEY:
         request.headers.setdefault("X-API-Key", token)
-    elif "Authorization" not in request.headers:
+        return
+    # Fail closed (issue #32): never forward a credential the upstream is
+    # guaranteed to reject. Raising here surfaces an actionable error instead
+    # of an opaque upstream 403.
+    if _jwt_lacks_kid(token):
+        logger.error(
+            "refusing to forward non-upstream credential to %s: %s",
+            request.url.path,
+            _jwt_fingerprint(token),
+        )
+        raise AuthenticationError(
+            "Your session credentials could not be forwarded to the "
+            "FinancialReports API. Please disconnect and reconnect the "
+            "FinancialReports connector, then retry."
+        )
+    if "Authorization" not in request.headers:
         request.headers["Authorization"] = f"Bearer {token}"
 
 
@@ -667,6 +725,68 @@ def _require_auth_context() -> None:
 
 class AuthenticationError(RuntimeError):
     """Raised by structured tools when authentication fails."""
+
+
+class UpstreamHTTPError(RuntimeError):
+    """Raised when the upstream FinancialReports API rejects a tool call.
+
+    Carries machine-readable context for the analytics middleware
+    (`upstream_status`, `request_id`) and an actionable message for the
+    LLM client. The upstream response body is logged server-side only —
+    it never reaches the client.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        upstream_status: Optional[int] = None,
+        request_id: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.upstream_status = upstream_status
+        self.request_id = request_id
+
+
+def _upstream_hint(status: int) -> str:
+    if status in (401, 403):
+        return (
+            "The FinancialReports API rejected the forwarded credentials. "
+            "Ask the user to disconnect and reconnect the FinancialReports "
+            "connector, then retry."
+        )
+    if status == 404:
+        return "The requested resource does not exist upstream — check the id/arguments."
+    if status == 429:
+        return "Rate limited by the FinancialReports API — wait a moment and retry."
+    if status >= 500:
+        return "Transient upstream error — retry once; report if it persists."
+    return "The request was rejected upstream — check the arguments."
+
+
+def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
+    """Log full upstream context server-side, raise a typed, actionable error.
+
+    The log line carries the response body snippet and a token fingerprint
+    (alg/kid presence — never the token); the raised message carries only
+    status, request id, and a next-step hint.
+    """
+    status = response.status_code
+    request_id = response.headers.get("x-request-id")
+    logger.warning(
+        "upstream %s status=%d request_id=%s token_fp=%s body=%r",
+        func_name,
+        status,
+        request_id,
+        _jwt_fingerprint(_current_token.get()),
+        response.text[:300],
+    )
+    suffix = f" (request-id: {request_id})" if request_id else ""
+    raise UpstreamHTTPError(
+        f"upstream {func_name} returned {status}{suffix}. {_upstream_hint(status)}",
+        upstream_status=status,
+        request_id=request_id,
+    )
 
 
 async def _authorize_or_raise() -> tuple[Any, ...]:
@@ -869,6 +989,10 @@ def _safe_error(func_name: str, exc: BaseException) -> str:
     """
     if isinstance(exc, ToolInputError):
         return f"Invalid argument: {exc}"
+    if isinstance(exc, (AuthenticationError, UpstreamHTTPError)):
+        # Our own constructed messages — safe by design (status + hint,
+        # no URLs, no bodies, no token material).
+        return str(exc)
     return f"Error calling {func_name}. See server logs for details."
 
 
@@ -2075,14 +2199,24 @@ async def {{ func_name }}(
         if path_params:
             url = url.format(**path_params)
 
-        response = await _api_client.get(
-            url,
-            params={k: v for k, v in query_params.items() if v is not None},
-        )
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"upstream {{ func_name }} returned {response.status_code}"
+        try:
+            response = await _api_client.get(
+                url,
+                params={k: v for k, v in query_params.items() if v is not None},
             )
+        except httpx.HTTPError as exc:
+            # Transport-level failure (timeout, connect error, pool limit).
+            # Only the exception *type* reaches the client — httpx messages
+            # can embed the full request URL.
+            logger.warning(
+                "upstream {{ func_name }} transport error: %s", type(exc).__name__
+            )
+            raise UpstreamHTTPError(
+                f"upstream {{ func_name }} request failed ({type(exc).__name__}). "
+                "The FinancialReports API was unreachable or timed out — retry once."
+            ) from exc
+        if response.status_code != 200:
+            _raise_upstream_error("{{ func_name }}", response)
         try:
             return response.json()
         except ValueError as exc:
