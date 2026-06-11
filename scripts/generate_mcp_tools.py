@@ -108,6 +108,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from src.usage_analytics import (
     UsageAnalyticsMiddleware,
     build_emitter_from_env,
+    record_tool_error,
     sanitize_error_detail,
 )
 
@@ -637,6 +638,7 @@ _api_client = httpx.AsyncClient(
 
 def _auth_error(msg: str) -> str:
     """Error message returned when authentication fails."""
+    record_tool_error("AuthenticationError", msg)
     return f"⚠️ **Authentication required.** {msg}"
 
 
@@ -1023,11 +1025,17 @@ def _format_response(response: httpx.Response) -> str:
         data = response.json()
         return f"```json\\n{_json.dumps(data, indent=2, ensure_ascii=False)}\\n```"
     except httpx.HTTPStatusError as exc:
+        record_tool_error(
+            "UpstreamHTTPError",
+            f"{exc.response.status_code} {exc.response.reason_phrase}",
+            upstream_status=exc.response.status_code,
+        )
         return (
             f"Error {exc.response.status_code} {exc.response.reason_phrase}: "
             f"{exc.response.text[:500]}"
         )
     except Exception as exc:
+        record_tool_error("ResponseFormatError", str(exc))
         return f"Error formatting response: {exc}"
 
 
@@ -1147,6 +1155,15 @@ def _safe_error(func_name: str, exc: BaseException) -> str:
     upstream URLs, internal hostnames, or token fragments. The full
     traceback is logged server-side by the caller via logger.exception().
     """
+    # A text tool returns this string instead of raising, so the analytics
+    # middleware would log it status="ok" without help (#40 §1). Record the
+    # real error context; the middleware promotes the event to status="error".
+    record_tool_error(
+        type(exc).__name__,
+        str(exc),
+        upstream_status=getattr(exc, "upstream_status", None),
+        request_id=getattr(exc, "request_id", None),
+    )
     if isinstance(exc, ToolInputError):
         return f"Invalid argument: {exc}"
     if isinstance(exc, (AuthenticationError, UpstreamHTTPError)):
@@ -2250,6 +2267,11 @@ async def {{ func_name }}(
         async with _api_client.stream("GET", url) as response:
             if response.status_code != 200:
                 body = await response.aread()
+                record_tool_error(
+                    "UpstreamHTTPError",
+                    f"{response.status_code} {response.reason_phrase}",
+                    upstream_status=response.status_code,
+                )
                 return (
                     f"Error {response.status_code} {response.reason_phrase}: "
                     f"{body[:500].decode('utf-8', errors='replace')}"
@@ -2661,6 +2683,11 @@ async def filings_markdown_search(
         async with _api_client.stream("GET", url) as response:
             if response.status_code != 200:
                 body = await response.aread()
+                record_tool_error(
+                    "UpstreamHTTPError",
+                    f"{response.status_code} {response.reason_phrase}",
+                    upstream_status=response.status_code,
+                )
                 return f"Error {response.status_code}: {body[:300].decode('utf-8', errors='replace')}"
             buf = bytearray()
             async for _chunk in response.aiter_bytes():
