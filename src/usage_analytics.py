@@ -205,16 +205,19 @@ class _ErrorInfo:
     detail: Optional[str] = None
     upstream_status: Optional[int] = None
     request_id: Optional[str] = None
+    error_kind: str = ""
 
     @classmethod
     def from_exception(cls, exc: BaseException) -> "_ErrorInfo":
         upstream_status = getattr(exc, "upstream_status", None)
         request_id = getattr(exc, "request_id", None)
+        error_kind = getattr(exc, "error_kind", "") or ""
         return cls(
             error_type=type(exc).__name__,
             detail=sanitize_error_detail(str(exc)),
             upstream_status=upstream_status if isinstance(upstream_status, int) else None,
             request_id=request_id if isinstance(request_id, str) else None,
+            error_kind=error_kind if isinstance(error_kind, str) else "",
         )
 
 
@@ -279,6 +282,7 @@ class UsageAnalyticsMiddleware(Middleware):
             "upstream_request_id": err.request_id or "",
             "error_type": err.error_type or "",
             "error_detail": err.detail or "",
+            "error_kind": err.error_kind or "",
             "latency_ms": latency_ms,
             "server_version": self._server_version,
             "protocol_version": "",

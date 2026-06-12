@@ -820,14 +820,81 @@ class UpstreamHTTPError(RuntimeError):
         *,
         upstream_status: Optional[int] = None,
         request_id: Optional[str] = None,
+        error_kind: str = "unknown",
     ) -> None:
         super().__init__(message)
         self.upstream_status = upstream_status
         self.request_id = request_id
+        # Stable enum-ish string so analytics can GROUP BY failure class
+        # without re-parsing the human message. Values:
+        #   "missing_profile"     — Cognito sub has no matching FR UserProfile
+        #   "expired_token"       — upstream said the token expired (or HTTP 401)
+        #   "invalid_credentials" — any other 401/403
+        #   "transient"           — HTTP 5xx
+        #   "unknown"             — anything else
+        self.error_kind = error_kind
 
 
-def _upstream_hint(status: int) -> str:
+# Upstream `detail` strings we discriminate on. Source of truth:
+# financialreports `users/authentication.py`. Match case-insensitive substring
+# so wording tweaks upstream don't silently flip us back to the wrong hint.
+_PROFILE_MISSING_MARKER = "user profile not found"
+_TOKEN_EXPIRED_MARKER = "token has expired"
+
+
+def _classify_upstream_403(body_text: str) -> str:
+    """Map a raw 403 response body to a stable `error_kind` token.
+
+    Parsing is intentionally defensive: malformed JSON, empty bodies, and
+    unexpected shapes all fall through to `"invalid_credentials"`. The
+    upstream's `detail` field is the only thing inspected — never headers,
+    never anything that could carry a credential.
+    """
+    detail = ""
+    try:
+        payload = _json.loads(body_text)
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        raw = payload.get("detail", "") or ""
+        if isinstance(raw, str):
+            detail = raw
+    detail_lower = detail.lower()
+    if _PROFILE_MISSING_MARKER in detail_lower:
+        return "missing_profile"
+    if _TOKEN_EXPIRED_MARKER in detail_lower:
+        return "expired_token"
+    return "invalid_credentials"
+
+
+def _classify_upstream_error(status: int, body_text: str) -> str:
+    """Compute the `error_kind` for any non-2xx upstream response."""
+    if status == 403:
+        return _classify_upstream_403(body_text)
+    if status == 401:
+        return "expired_token"
+    if status >= 500:
+        return "transient"
+    return "unknown"
+
+
+def _upstream_hint(status: int, error_kind: str = "unknown") -> str:
     if status in (401, 403):
+        if error_kind == "missing_profile":
+            # Reconnecting won't help — the Cognito identity has no matching
+            # FR UserProfile. Tell the LLM to surface the actual remediation.
+            return (
+                "Your FinancialReports account isn't linked to the identity "
+                "you signed in with. Create a free account at "
+                "https://financialreports.eu/signup using the same email you "
+                "used to sign in, or contact support@financialreports.eu if "
+                "you already have one."
+            )
+        if error_kind == "expired_token":
+            return (
+                "Your session has expired. Please disconnect and reconnect "
+                "the FinancialReports connector."
+            )
         return (
             "The FinancialReports API rejected the forwarded credentials. "
             "Ask the user to disconnect and reconnect the FinancialReports "
@@ -851,21 +918,25 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
     """
     status = response.status_code
     request_id = response.headers.get("x-request-id")
+    body_text = response.text[:1000]
+    error_kind = _classify_upstream_error(status, body_text)
     logger.warning(
-        "upstream %s status=%d request_id=%s token_fp=%s body=%r",
+        "upstream %s status=%d kind=%s request_id=%s token_fp=%s body=%r",
         func_name,
         status,
+        error_kind,
         request_id,
         _jwt_fingerprint(_current_token.get()),
         # Redact before logging: some gateways echo the Authorization header
         # in error bodies, and this line ships to the log aggregator.
-        sanitize_error_detail(response.text[:1000]),
+        sanitize_error_detail(body_text),
     )
     suffix = f" (request-id: {request_id})" if request_id else ""
     raise UpstreamHTTPError(
-        f"upstream {func_name} returned {status}{suffix}. {_upstream_hint(status)}",
+        f"upstream {func_name} returned {status}{suffix}. {_upstream_hint(status, error_kind)}",
         upstream_status=status,
         request_id=request_id,
+        error_kind=error_kind,
     )
 
 

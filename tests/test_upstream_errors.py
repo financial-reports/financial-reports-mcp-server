@@ -275,3 +275,109 @@ def test_jose_header_rejects_oversized_header(mcp_module) -> None:
     assert mcp_module._jose_header(huge) is None
     assert mcp_module._jwt_fingerprint(huge).startswith("opaque")
     assert mcp_module._jwt_lacks_kid(huge) is False
+
+
+# --- 403 sub-case classification (issue: "User profile not found" path) ------
+
+
+@pytest.mark.asyncio
+async def test_403_missing_profile_body_gives_signup_hint(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """Upstream 403 with 'User profile not found' must direct the user to
+    sign up — NOT to 'disconnect and reconnect' (which is a dead-end loop)."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(
+        return_value=httpx.Response(
+            403, json={"detail": "User profile not found for the provided token."}
+        )
+    )
+
+    fn = _structured_tool(mcp_module)
+    with pytest.raises(mcp_module.UpstreamHTTPError) as ei:
+        await fn()
+
+    exc = ei.value
+    assert exc.upstream_status == 403
+    assert exc.error_kind == "missing_profile"
+    msg = str(exc)
+    assert "financialreports.eu/signup" in msg
+    assert "support@financialreports.eu" in msg
+    # The old hint must not appear — it would loop the user.
+    assert "disconnect and reconnect" not in msg.lower()
+
+
+@pytest.mark.asyncio
+async def test_403_expired_token_body_gives_session_hint(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """Upstream 403 'Token has expired' (the upstream's own message) gets
+    the reconnect hint — that one IS the right next step."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(
+        return_value=httpx.Response(
+            403, json={"detail": "Token has expired. Please re-authenticate."}
+        )
+    )
+
+    fn = _structured_tool(mcp_module)
+    with pytest.raises(mcp_module.UpstreamHTTPError) as ei:
+        await fn()
+
+    exc = ei.value
+    assert exc.error_kind == "expired_token"
+    msg = str(exc).lower()
+    assert "session has expired" in msg or "session expired" in msg
+    assert "reconnect" in msg
+
+
+@pytest.mark.asyncio
+async def test_403_malformed_body_falls_back_to_default_hint(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """Defensive: a malformed body must not raise during classification —
+    falls back to the generic credentials-rejected hint."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(
+        return_value=httpx.Response(403, text="not json at all {{{")
+    )
+
+    fn = _structured_tool(mcp_module)
+    with pytest.raises(mcp_module.UpstreamHTTPError) as ei:
+        await fn()
+
+    exc = ei.value
+    assert exc.error_kind == "invalid_credentials"
+    assert "reconnect" in str(exc).lower()
+
+
+@pytest.mark.asyncio
+async def test_5xx_error_kind_is_transient(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(
+        return_value=httpx.Response(503, text="blip")
+    )
+
+    fn = _structured_tool(mcp_module)
+    with pytest.raises(mcp_module.UpstreamHTTPError) as ei:
+        await fn()
+
+    assert ei.value.error_kind == "transient"
+
+
+@pytest.mark.asyncio
+async def test_401_error_kind_is_expired_token(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(
+        return_value=httpx.Response(401, json={"detail": "auth required"})
+    )
+
+    fn = _structured_tool(mcp_module)
+    with pytest.raises(mcp_module.UpstreamHTTPError) as ei:
+        await fn()
+
+    assert ei.value.error_kind == "expired_token"
