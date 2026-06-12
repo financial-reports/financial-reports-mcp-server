@@ -24,6 +24,7 @@ import logging
 import os
 import re
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -195,6 +196,42 @@ def build_emitter_from_env() -> UsageAnalyticsEmitter:
     )
 
 
+# --- text-tool error context (#40 §1, issue #32) ---------------------------
+#
+# Text tools return their error as a *successful* string (no exception raised),
+# so the middleware would otherwise record status="ok" and the dashboard error
+# rate would be structurally understated. A generated tool error-helper stashes
+# structured error info in this contextvar; `on_call_tool` folds it into the
+# event when the call returned normally. Set inside the tool, read in the
+# middleware finally — propagation through the FastMCP middleware chain is the
+# load-bearing assumption, pinned by tests/test_text_tool_analytics.py.
+_tool_error: ContextVar[Optional[dict]] = ContextVar("_tool_error", default=None)
+
+
+def record_tool_error(
+    error_type: str,
+    detail: str,
+    *,
+    upstream_status: Optional[int] = None,
+    request_id: Optional[str] = None,
+) -> None:
+    """Record that the current text-tool call failed but returned an error
+    *string* instead of raising. The analytics middleware promotes the event to
+    status="error" from this. Safe to call from any tool error-helper; never
+    raises (a capture failure must never break a tool call)."""
+    try:
+        _tool_error.set(
+            {
+                "error_type": error_type,
+                "detail": detail,
+                "upstream_status": upstream_status if isinstance(upstream_status, int) else None,
+                "request_id": request_id if isinstance(request_id, str) else None,
+            }
+        )
+    except Exception:  # pragma: no cover — contextvar.set effectively never fails
+        logger.debug("record_tool_error skipped", exc_info=True)
+
+
 # --- middleware: capture tool + prompt calls ---
 
 @dataclass(frozen=True)
@@ -220,6 +257,19 @@ class _ErrorInfo:
             error_kind=error_kind if isinstance(error_kind, str) else "",
         )
 
+    @classmethod
+    def from_recorded(cls, data: dict) -> "_ErrorInfo":
+        """Build from a `record_tool_error` payload (a text tool that returned
+        an error string rather than raising)."""
+        upstream_status = data.get("upstream_status")
+        request_id = data.get("request_id")
+        return cls(
+            error_type=data.get("error_type") or "ToolError",
+            detail=sanitize_error_detail(str(data.get("detail") or "")),
+            upstream_status=upstream_status if isinstance(upstream_status, int) else None,
+            request_id=request_id if isinstance(request_id, str) else None,
+        )
+
 
 class UsageAnalyticsMiddleware(Middleware):
     """Captures every tool call and prompt fetch and hands it to the emitter.
@@ -235,6 +285,7 @@ class UsageAnalyticsMiddleware(Middleware):
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
+        _tool_error.set(None)  # clear any value carried over within this context
         status, err = "ok", _ErrorInfo()
         try:
             return await call_next(context)
@@ -242,6 +293,13 @@ class UsageAnalyticsMiddleware(Middleware):
             status, err = "error", _ErrorInfo.from_exception(exc)
             raise
         finally:
+            if status == "ok":
+                # Text tools surface their error as a normal string (no raise);
+                # promote the event to status="error" when a tool error-helper
+                # recorded structured context for this call.
+                recorded = _tool_error.get()
+                if recorded:
+                    status, err = "error", _ErrorInfo.from_recorded(recorded)
             self._safe_emit(context, kind="tool", status=status, err=err,
                             latency_ms=int((time.monotonic() - started) * 1000))
 
