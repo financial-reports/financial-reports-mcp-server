@@ -283,3 +283,40 @@ def test_error_detail_keeps_module_paths():
 
     msg = "call failed in financial_reports.server_module.dependencies at startup"
     assert sanitize_error_detail(msg) == msg
+
+
+async def test_middleware_records_error_kind(_fake_token):
+    """A typed upstream error's error_kind must land in the analytics event,
+    so dashboards can GROUP BY failure class."""
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _fake_context()
+
+    class _UpstreamErr(RuntimeError):
+        def __init__(self):
+            super().__init__("upstream companies_list returned 403")
+            self.upstream_status = 403
+            self.request_id = None
+            self.error_kind = "missing_profile"
+
+    async def call_next(_):
+        raise _UpstreamErr()
+
+    with pytest.raises(_UpstreamErr):
+        await mw.on_call_tool(ctx, call_next)
+
+    ev = emitter.events[0]
+    assert ev["error_kind"] == "missing_profile"
+
+
+async def test_middleware_ok_event_has_blank_error_kind(_fake_token):
+    """OK events must emit error_kind as '' (not null) for column stability."""
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _fake_context()
+
+    async def call_next(_):
+        return "RESULT"
+
+    await mw.on_call_tool(ctx, call_next)
+    assert emitter.events[0]["error_kind"] == ""
