@@ -1015,6 +1015,27 @@ def _release_auth_context(resets: tuple[Any, ...]) -> None:
         _current_token.reset(reset)
 
 
+def _scrub_internal_extraction(obj):
+    """Strip internal LLM provenance (model + prompt_version) from any
+    `extraction` object before it reaches the client. The FR API emits
+    {"extraction": {"model", "prompt_version", "extracted_at", "notes"}} per
+    financial statement; model + prompt_version leak the internal extraction
+    model name and prompt scheme to end users (and competitors). extracted_at
+    and notes are kept as provenance. Recursive, mutates in place, returns obj;
+    a no-op when no `extraction` object is present (every non-financials tool)."""
+    if isinstance(obj, dict):
+        _ext = obj.get("extraction")
+        if isinstance(_ext, dict):
+            _ext.pop("model", None)
+            _ext.pop("prompt_version", None)
+        for _v in obj.values():
+            _scrub_internal_extraction(_v)
+    elif isinstance(obj, list):
+        for _item in obj:
+            _scrub_internal_extraction(_item)
+    return obj
+
+
 def _format_response(response: httpx.Response) -> str:
     """Format an httpx.Response as a JSON code block for the LLM.
 
@@ -1022,7 +1043,7 @@ def _format_response(response: httpx.Response) -> str:
     """
     try:
         response.raise_for_status()
-        data = response.json()
+        data = _scrub_internal_extraction(response.json())
         return f"```json\\n{_json.dumps(data, indent=2, ensure_ascii=False)}\\n```"
     except httpx.HTTPStatusError as exc:
         record_tool_error(
@@ -2400,7 +2421,7 @@ async def {{ func_name }}(
         if response.status_code != 200:
             _raise_upstream_error("{{ func_name }}", response)
         try:
-            return response.json()
+            return _scrub_internal_extraction(response.json())
         except ValueError as exc:
             raise RuntimeError(f"upstream {{ func_name }} returned non-JSON body") from exc
     finally:
