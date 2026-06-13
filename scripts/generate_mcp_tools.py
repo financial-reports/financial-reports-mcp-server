@@ -102,6 +102,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Res
 from fastmcp import FastMCP
 from fastmcp.server.auth.providers.aws import AWSCognitoProvider
 from fastmcp.server.dependencies import get_access_token
+from fastmcp.server.middleware import Middleware
 from mcp.types import Icon, ToolAnnotations
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -436,11 +437,40 @@ else:
         client_storage=_oauth_storage,
     )
 
+import datetime as _dt
+
+# Recency guidance, split so neither half goes stale on a long-running server.
+# _RECENCY_RULE is date-FREE (safe to bake into the static instructions at boot —
+# it names no date). The LIVE date rides the per-session tools/list channel via
+# _RecencyMiddleware, recomputed each session: `instructions` is fixed at boot by
+# the low-level MCP session and cannot carry a fresh date, but tools/list is
+# produced by the FastMCP handler and refreshes per session. So a server that
+# runs for weeks without a restart never serves a stale year.
+_RECENCY_RULE = (
+    "RECENCY — do NOT assume the current year from your training data; it may be "
+    "older than today. Each tool description ends with the server's live current "
+    "date — trust THAT over any year you assume. For 'latest', 'recent', 'current', "
+    "'this year', or year-to-date requests, query WITHOUT an upper date bound and "
+    "sort newest-first (ordering=-release_datetime / -publication_datetime); the "
+    "newest result IS the latest even if it post-dates your knowledge cutoff.\\n\\n"
+)
+
+
+def _recency_date_note() -> str:
+    """The server's CURRENT date as a short tool-description suffix, recomputed on
+    every tools/list (per session) by _RecencyMiddleware — never a hard-coded year
+    and never frozen at boot."""
+    return f"\\n\\n[Server current date: {_dt.date.today().isoformat()} — treat this as today.]"
+
+
 mcp = FastMCP(
     name="FinancialReports",
     version=MCP_VERSION,
     website_url=WEBSITE_URL,
     instructions=(
+        # _RECENCY_RULE is date-FREE (safe to bake at boot); the LIVE date rides
+        # the per-session tools/list channel via _RecencyMiddleware (see below).
+        _RECENCY_RULE +
         "FinancialReports = official regulatory filings (annual reports, "
         "interim reports, 10-K/Q, 20-F, ESEF, ad-hoc disclosures, insider "
         "transactions, ESG/climate reports, prospectuses) and normalized "
@@ -521,6 +551,31 @@ mcp = FastMCP(
         Icon(src=f"{MCP_BASE_URL.rstrip('/')}/icon-512.png", mimeType="image/png", sizes=["512x512"]),
     ],
 )
+
+
+# ---------------------------------------------------------------------------
+# Recency middleware — inject the server's LIVE date into tool descriptions per session
+# ---------------------------------------------------------------------------
+class _RecencyMiddleware(Middleware):
+    """Append the server's LIVE current date to every tool description on each
+    tools/list, recomputed per session via _recency_date_note() (date.today() at
+    request time). tools/list is produced by the FastMCP handler — unlike
+    `initialize`, whose instructions the low-level session fixes at boot — so the
+    edit reaches the wire and refreshes per session; a server running for weeks
+    never serves a stale year. Tools are model_copy'd so the registry originals
+    stay clean and the note never accumulates across calls."""
+
+    async def on_list_tools(self, context, call_next):
+        tools = await call_next(context)
+        note = _recency_date_note()
+        return [
+            t.model_copy(update={"description": (t.description or "") + note})
+            for t in tools
+        ]
+
+
+mcp.add_middleware(_RecencyMiddleware())
+
 
 # ---------------------------------------------------------------------------
 # Per-request context (token + user info), set by @auth_required
