@@ -1647,7 +1647,7 @@ _LANDING_HTML = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FinancialReports MCP — Public-company filings, available to Claude</title>
-    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 42 tools across 8 domains. Free for any FinancialReports account.">
+    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 15 tools across 5 domains. Free for any FinancialReports account.">
     <meta name="robots" content="index, follow">
     __GOOGLE_SITE_VERIFICATION_META__
     <link rel="canonical" href="__MCP_BASE_URL__/">
@@ -1948,8 +1948,8 @@ _LANDING_HTML = """<!DOCTYPE html>
 
         <section class="stats">
             <div class="container stats__inner">
-                <div class="stat"><span class="stat__num">42</span><span class="stat__label">MCP tools</span></div>
-                <div class="stat"><span class="stat__num">9</span><span class="stat__label">Tool domains</span></div>
+                <div class="stat"><span class="stat__num">15</span><span class="stat__label">MCP tools</span></div>
+                <div class="stat"><span class="stat__num">5</span><span class="stat__label">Tool domains</span></div>
                 <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FR account</span></div>
                 <div class="stat"><span class="stat__num">OAuth&nbsp;2.0</span><span class="stat__label">PKCE · DCR</span></div>
             </div>
@@ -1964,7 +1964,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                     <code id="mcp-url">__MCP_BASE_URL__/mcp</code>
                     <button class="btn btn--secondary" type="button" onclick="copyUrl()" id="copy-btn">Copy</button>
                 </div>
-                <p class="meta">Streamable HTTP · OAuth 2.0 · 42 tools · Free</p>
+                <p class="meta">Streamable HTTP · OAuth 2.0 · 15 tools · Free</p>
             </div>
         </section>
 
@@ -1975,7 +1975,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                 <ol class="steps">
                     <li>Create a free account at <a href="https://financialreports.eu">financialreports.eu</a> if you don't have one yet — no paid plan required for MCP access.</li>
                     <li>In your MCP client (Claude.ai, Claude Code, Cursor, etc.), add a custom connector with the URL <code>__MCP_BASE_URL__/mcp</code>.</li>
-                    <li>Sign in via OAuth when prompted. The 42 tools become available immediately — no reconnection needed.</li>
+                    <li>Sign in via OAuth when prompted. The 15 tools become available immediately — no reconnection needed.</li>
                 </ol>
                 <a href="__LANDING_URL__" class="btn btn--secondary">Full setup guide →</a>
             </div>
@@ -1984,8 +1984,8 @@ _LANDING_HTML = """<!DOCTYPE html>
         <section class="section">
             <div class="container">
                 <p class="eyebrow">04 / Tools</p>
-                <h2>42 tools across 8 domains</h2>
-                <p>The MCP surface mirrors the FinancialReports REST API one-to-one — every endpoint becomes an LLM-callable tool, regenerated automatically from the OpenAPI schema.</p>
+                <h2>15 tools across 5 domains</h2>
+                <p>A curated, read-only slice of the FinancialReports REST API — the most useful endpoints exposed as LLM-callable tools, regenerated automatically from the OpenAPI schema.</p>
                 <div class="tools">
                     <div class="tool">
                         <p class="tool__count">04 tools</p>
@@ -1995,7 +1995,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                     <div class="tool">
                         <p class="tool__count">04 tools</p>
                         <p class="tool__name">Filings</p>
-                        <p class="tool__desc">List, retrieve, Markdown content, audit trail</p>
+                        <p class="tool__desc">List, retrieve, Markdown content, full-text Markdown search</p>
                     </div>
                     <div class="tool">
                         <p class="tool__count">02 tools</p>
@@ -2003,29 +2003,14 @@ _LANDING_HTML = """<!DOCTYPE html>
                         <p class="tool__desc">Lookup by ISIN, list dual-listings</p>
                     </div>
                     <div class="tool">
-                        <p class="tool__count">08 tools</p>
-                        <p class="tool__name">ISIC classifications</p>
-                        <p class="tool__desc">Section / division / group / class hierarchy for industry screening</p>
-                    </div>
-                    <div class="tool">
-                        <p class="tool__count">08 tools</p>
-                        <p class="tool__name">Reference data</p>
-                        <p class="tool__desc">Countries, languages, sources, filing categories &amp; types</p>
-                    </div>
-                    <div class="tool">
                         <p class="tool__count">02 tools</p>
-                        <p class="tool__name">Financial data</p>
-                        <p class="tool__desc">Normalised line-item definitions across regulators</p>
+                        <p class="tool__name">Filing taxonomy</p>
+                        <p class="tool__desc">Filing types &amp; categories reference</p>
                     </div>
                     <div class="tool">
-                        <p class="tool__count">04 tools</p>
-                        <p class="tool__name">Watchlist</p>
-                        <p class="tool__desc">Per-user watchlist (single + bulk add / remove)</p>
-                    </div>
-                    <div class="tool">
-                        <p class="tool__count">08 tools</p>
-                        <p class="tool__name">Webhooks</p>
-                        <p class="tool__desc">Filing-event subscriptions, delivery logs, replay, secret rotation</p>
+                        <p class="tool__count">03 tools</p>
+                        <p class="tool__name">Guides</p>
+                        <p class="tool__desc">Filing-type taxonomy, ISIC industry classification, Markdown fetch strategy</p>
                     </div>
                 </div>
             </div>
