@@ -3098,6 +3098,44 @@ def _fix_nullable(node: Any) -> Any:
     return node
 
 
+def _relax_nullable_required(node: Any) -> Any:
+    """Drop nullable properties from every object's ``required`` list.
+
+    A property that can be null — or that the upstream API simply omits for some
+    rows — must NOT be ``required`` in the MCP output schema. FastMCP validates
+    each tool result against the schema, and a missing key for a "required" field
+    hard-fails the ENTIRE call with ``'X' is a required property`` even though the
+    API response is perfectly valid. Concrete bug: ``FilingSummary.document_url``
+    is required+nullable, so ``filings_list`` errored on any filing with no
+    document (e.g. ASML); the OpenAPI spec marks ~30 ``Company`` fields the same
+    way (ticker, logo, sector, …), so nearly every structured tool could fail on a
+    sparsely-populated row. Runs AFTER ``_fix_nullable`` (nullable already
+    normalised to ``type: [T, "null"]``). Mutates in place; returns the node."""
+    def _is_nullable(p: Any) -> bool:
+        if not isinstance(p, dict):
+            return False
+        t = p.get("type")
+        if t == "null" or (isinstance(t, list) and "null" in t):
+            return True
+        return any(_is_nullable(s) for s in (p.get("anyOf") or []) + (p.get("oneOf") or []))
+
+    if isinstance(node, dict):
+        props = node.get("properties")
+        req = node.get("required")
+        if isinstance(props, dict) and isinstance(req, list):
+            kept = [r for r in req if not _is_nullable(props.get(r))]
+            if kept:
+                node["required"] = kept
+            else:
+                node.pop("required", None)
+        for v in node.values():
+            _relax_nullable_required(v)
+    elif isinstance(node, list):
+        for it in node:
+            _relax_nullable_required(it)
+    return node
+
+
 def extract_response_schema(operation: dict, full_schema: dict) -> dict | None:
     """Return the `application/json` 200-response JSON Schema for an
     operation, with all `$ref`s deeply inlined. None if the operation
@@ -3111,7 +3149,7 @@ def extract_response_schema(operation: dict, full_schema: dict) -> dict | None:
     if not raw_schema:
         return None
     inlined = deeply_inline_refs(raw_schema, full_schema)
-    return _fix_nullable(inlined)
+    return _relax_nullable_required(_fix_nullable(inlined))
 
 
 def get_python_type(
