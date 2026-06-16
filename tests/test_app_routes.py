@@ -49,7 +49,7 @@ def test_openai_apps_challenge_returns_token(mcp_module) -> None:
     with TestClient(mcp_module.app) as client:
         resp = client.get("/.well-known/openai-apps-challenge")
     assert resp.status_code == 200
-    assert resp.text == "Mcv7iyGhqKQDgaTjw0lYNBICDf2mp2FZIm-Bfc4rCIk"
+    assert resp.text == "2hSqI97iz131dkKbKiunVP7AvoG6CCcY6PcXfANLrRY"
     assert resp.headers["content-type"].startswith("text/plain")
 
 
