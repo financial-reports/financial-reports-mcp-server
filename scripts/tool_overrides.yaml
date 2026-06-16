@@ -54,11 +54,16 @@ companies_financials_retrieve:
     across filings — the most recently published filing wins.
     SOURCING: attribute every figure to its fiscal period + period_end_date and
     reporting currency. GROUNDEDNESS (critical): report ONLY values present in
-    the `periods` this call returns; if `period_count` is 0 or `periods` is
-    empty, FinancialReports has NO structured financials for this company — say
-    exactly that and STOP. Never estimate, recall a figure from training
-    knowledge, or attach a filing citation to a number you did not read from a
-    tool result this session.
+    the `periods` this call returns. If `period_count` is 0 or `periods` is
+    empty, FinancialReports has no *structured* financials for this company yet
+    (common for US/SEC issuers — structured data is currently ESEF/EU-derived and
+    being expanded). Do NOT stop and do NOT estimate — FALL BACK to the filing:
+    call `filings_list` for this `id` filtered to an annual-report
+    `filing_type_code` (e.g. 10-K, 20-F, or the local annual type), take the most
+    recently released one, retrieve it with `filings_markdown_retrieve`, and read
+    the figures directly from the filing body — citing the filing type, date, and
+    fiscal period. Never estimate, recall a figure from training knowledge, or
+    attach a citation to a number you did not read from a tool result this session.
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without
