@@ -314,6 +314,15 @@ MCP_VERSION = os.environ.get("MCP_VERSION", "dev")
 # the rendered HTML byte-stable.
 GOOGLE_SITE_VERIFICATION = os.environ.get("GOOGLE_SITE_VERIFICATION", "").strip()
 
+# OpenAI ChatGPT Apps Directory domain-verification token, served at
+# /.well-known/openai-apps-challenge. Set on the Container App as
+# `OPENAI_APPS_CHALLENGE`; defaults to the current submission token so the route
+# works without extra config. OpenAI rotates this per submission attempt — to
+# update, change the env var (no code change/redeploy of source needed).
+OPENAI_APPS_CHALLENGE = os.environ.get(
+    "OPENAI_APPS_CHALLENGE", "2hSqI97iz131dkKbKiunVP7AvoG6CCcY6PcXfANLrRY"
+).strip()
+
 def _redact_redis_url(url: str) -> str:
     """Return host:port for a Redis URL, dropping any embedded credentials.
 
@@ -1713,8 +1722,8 @@ async def oauth_protected_resource_root() -> JSONResponse:
 
 @app.get("/.well-known/openai-apps-challenge")
 async def openai_apps_challenge() -> PlainTextResponse:
-    """OpenAI MCP marketplace domain verification token."""
-    return PlainTextResponse("Mcv7iyGhqKQDgaTjw0lYNBICDf2mp2FZIm-Bfc4rCIk")
+    """OpenAI ChatGPT Apps Directory domain-verification token."""
+    return PlainTextResponse(OPENAI_APPS_CHALLENGE)
 
 
 _LANDING_HTML = """<!DOCTYPE html>
