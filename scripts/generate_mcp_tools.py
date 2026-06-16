@@ -3136,6 +3136,49 @@ def _relax_nullable_required(node: Any) -> Any:
     return node
 
 
+def _make_fields_nullable(node: Any) -> Any:
+    """Make every typed node in the output schema tolerate ``null``.
+
+    The upstream API serializer returns ``null`` for fields the OpenAPI spec
+    declares NON-nullable — e.g. ``ListedStockExchange.ticker`` / ``.website`` for
+    whole exchanges (Shenzhen, Saudi, Shanghai, NSE India, Abu Dhabi…). FastMCP
+    output validation then hard-fails with ``None is not of type 'string'`` and
+    rejects the ENTIRE result, breaking ``companies_retrieve`` for every company
+    listed on those exchanges. #49 dropped nullable-TYPED fields from ``required``
+    but did NOT handle non-nullable fields the API nulls (a value/type violation,
+    not a missing key). A thin proxy must never reject a valid upstream response,
+    so add ``"null"`` to every declared ``type``: any field may be null. Run
+    BEFORE ``_relax_nullable_required`` (which then clears the now-nullable fields
+    from ``required`` too). Mutates in place; returns the node."""
+    if isinstance(node, dict):
+        # Combinator nodes (oneOf/anyOf/allOf) already express nullability via a
+        # {"type":"null"} branch. Adding "null" to a sibling branch would make null
+        # match MULTIPLE branches and break oneOf validation ("None is valid under
+        # each of …", seen on `legal_form`). Leave those constructs untouched and
+        # don't recurse into their branch lists; only widen plain typed nodes.
+        # Strip `format` assertions (e.g. "uri"): the upstream API returns empty
+        # strings for `format:uri` fields like ir_link/website, which jsonschema
+        # tolerates (format is advisory) but a strict Pydantic-based MCP client
+        # rejects ("Input should be a valid URL, input is empty"). A thin proxy
+        # must not assert a constraint the upstream data violates.
+        node.pop("format", None)
+        has_combinator = any(k in node for k in ("oneOf", "anyOf", "allOf"))
+        if not has_combinator:
+            t = node.get("type")
+            if isinstance(t, str) and t != "null":
+                node["type"] = [t, "null"]
+            elif isinstance(t, list) and "null" not in t:
+                node["type"] = t + ["null"]
+        for k, v in node.items():
+            if k in ("oneOf", "anyOf", "allOf"):
+                continue
+            _make_fields_nullable(v)
+    elif isinstance(node, list):
+        for it in node:
+            _make_fields_nullable(it)
+    return node
+
+
 def extract_response_schema(operation: dict, full_schema: dict) -> dict | None:
     """Return the `application/json` 200-response JSON Schema for an
     operation, with all `$ref`s deeply inlined. None if the operation
@@ -3149,7 +3192,7 @@ def extract_response_schema(operation: dict, full_schema: dict) -> dict | None:
     if not raw_schema:
         return None
     inlined = deeply_inline_refs(raw_schema, full_schema)
-    return _relax_nullable_required(_fix_nullable(inlined))
+    return _relax_nullable_required(_make_fields_nullable(_fix_nullable(inlined)))
 
 
 def get_python_type(
