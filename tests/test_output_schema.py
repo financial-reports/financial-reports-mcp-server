@@ -135,3 +135,23 @@ def test_structured_tool_input_schema_still_valid(mcp_module) -> None:
     tool = mcp_module.mcp._tool_manager._tools["companies_list"]
     assert tool.parameters
     assert tool.output_schema
+
+
+@pytest.mark.parametrize("tool_name", STRUCTURED_TOOL_NAMES)
+def test_output_schema_root_type_is_object(mcp_module, tool_name) -> None:
+    """The ROOT of a structured-output schema MUST be exactly type "object".
+
+    Regression guard for the #50 fallout: `_make_fields_nullable` widened the root
+    to `["object","null"]`, which the MCP spec / Anthropic SDK reject (outputSchema.type
+    is the literal "object"). Claude Code then failed the ENTIRE tools/list ("tools
+    fetch failed"); Claude Desktop + the SDK were lenient and accepted the union, so it
+    went unnoticed. A union/list root type must never ship again.
+    """
+    tool = mcp_module.mcp._tool_manager._tools.get(tool_name)
+    assert tool is not None, f"{tool_name} not registered"
+    schema = tool.output_schema
+    assert schema and "type" in schema, f"{tool_name} output_schema missing type"
+    assert schema["type"] == "object", (
+        f"{tool_name} root outputSchema.type must be the string 'object', "
+        f"got {schema['type']!r} — strict MCP clients (Claude Code) reject a union root"
+    )
