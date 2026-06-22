@@ -3201,7 +3201,17 @@ def extract_response_schema(operation: dict, full_schema: dict) -> dict | None:
     if not raw_schema:
         return None
     inlined = deeply_inline_refs(raw_schema, full_schema)
-    return _relax_nullable_required(_make_fields_nullable(_fix_nullable(inlined)))
+    schema = _relax_nullable_required(_make_fields_nullable(_fix_nullable(inlined)))
+    # The ROOT of a structured-output schema MUST be exactly type "object" — a tool
+    # returning structured content returns an object, never null. _make_fields_nullable
+    # widens every NESTED field to tolerate upstream nulls (the #49/#50 fix), but it also
+    # widened the root to ["object","null"], which the MCP spec / Anthropic SDK reject
+    # (outputSchema.type is the literal "object"). Strict clients (Claude Code) then fail
+    # the ENTIRE tools/list with "tools fetch failed" (Claude Desktop is lenient and
+    # accepts the union, which is why it worked there). Coerce the root back to "object".
+    if isinstance(schema, dict) and isinstance(schema.get("type"), list):
+        schema["type"] = "object"
+    return schema
 
 
 def get_python_type(
