@@ -320,3 +320,59 @@ async def test_middleware_ok_event_has_blank_error_kind(_fake_token):
 
     await mw.on_call_tool(ctx, call_next)
     assert emitter.events[0]["error_kind"] == ""
+
+
+# --- result metrics (Stage 1: result_count / has_data / response_bytes) ------
+
+def test_result_metrics_list_envelope():
+    from src.usage_analytics import _result_metrics
+    m = _result_metrics({"count": 2, "results": [{"id": 1}, {"id": 2}]})
+    assert m["result_count"] == 2 and m["has_data"] is True and m["response_bytes"] > 0
+
+
+def test_result_metrics_empty_search_has_no_data():
+    from src.usage_analytics import _result_metrics
+    m = _result_metrics({"count": 0, "results": []})
+    assert m["result_count"] == 0 and m["has_data"] is False
+
+
+def test_result_metrics_financials_period_count_zero_has_no_data():
+    # The US-financials gap: entity exists, but no structured data → has_data False.
+    from src.usage_analytics import _result_metrics
+    m = _result_metrics({"company_id": 29734, "period_count": 0, "periods": []})
+    assert m["result_count"] == 0 and m["has_data"] is False
+
+
+def test_result_metrics_single_object_retrieve_has_data():
+    from src.usage_analytics import _result_metrics
+    m = _result_metrics({"id": 3813, "name": "ASML Holding N.V."})
+    assert m["result_count"] is None and m["has_data"] is True
+
+
+def test_result_metrics_structured_content_attr_and_text_fallback():
+    import types
+    from src.usage_analytics import _result_metrics
+    # FastMCP-style result object exposing structured_content
+    res = types.SimpleNamespace(structured_content={"results": [1, 2, 3]})
+    assert _result_metrics(res)["result_count"] == 3
+    # plain string result → size only, never raises
+    m = _result_metrics("plain text")
+    assert m["response_bytes"] == len("plain text") and m["has_data"] is True
+    # unparseable / None → all None, no raise
+    assert _result_metrics(None) == {"result_count": None, "has_data": None, "response_bytes": None}
+
+
+async def test_middleware_emits_result_metrics(_fake_token):
+    import types
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _fake_context()
+
+    async def call_next(_):
+        return types.SimpleNamespace(structured_content={"count": 0, "results": []})
+
+    await mw.on_call_tool(ctx, call_next)
+    ev = emitter.events[0]
+    assert ev["result_count"] == 0
+    assert ev["has_data"] is False
+    assert ev["response_bytes"] is not None

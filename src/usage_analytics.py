@@ -20,6 +20,7 @@ Hard guarantees:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -271,6 +272,60 @@ class _ErrorInfo:
         )
 
 
+_RESULT_LIST_KEYS = ("results", "periods", "items", "data")
+
+
+def _count_results(sc: dict) -> Optional[int]:
+    """Cardinality of a structured result: length of a known list envelope, or a
+    paginated ``count`` / ``period_count``. None for a single-object (retrieve)
+    result (which is handled as has_data via truthiness)."""
+    for k in _RESULT_LIST_KEYS:
+        v = sc.get(k)
+        if isinstance(v, list):
+            return len(v)
+    for k in ("count", "period_count"):
+        v = sc.get(k)
+        if isinstance(v, bool):  # bool is an int subclass — exclude
+            continue
+        if isinstance(v, int):
+            return v
+    return None
+
+
+def _result_metrics(result) -> dict:
+    """Best-effort, never-raises shape metrics about a tool result.
+
+    Returns ``{result_count, has_data, response_bytes}``. Captures NO response
+    content — only how much came back and whether it was empty. ``has_data=False``
+    on a 200 (financials ``period_count=0``, empty search) is the "demand we
+    couldn't fill" signal that the prior call-level analytics couldn't see.
+    """
+    out = {"result_count": None, "has_data": None, "response_bytes": None}
+    try:
+        sc = getattr(result, "structured_content", None)
+        if sc is None and isinstance(result, dict):
+            sc = result
+        if isinstance(sc, dict):
+            out["response_bytes"] = len(json.dumps(sc, default=str))
+            cnt = _count_results(sc)
+            out["result_count"] = cnt
+            out["has_data"] = (cnt > 0) if cnt is not None else bool(sc)
+            return out
+        # Non-structured (text) result: size + non-empty only.
+        text = None
+        content = getattr(result, "content", None)
+        if content:
+            text = "".join(p for p in (getattr(b, "text", None) for b in content) if p)
+        elif isinstance(result, str):
+            text = result
+        if text is not None:
+            out["response_bytes"] = len(text)
+            out["has_data"] = bool(text.strip())
+    except Exception:
+        pass
+    return out
+
+
 class UsageAnalyticsMiddleware(Middleware):
     """Captures every tool call and prompt fetch and hands it to the emitter.
 
@@ -286,9 +341,10 @@ class UsageAnalyticsMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
         _tool_error.set(None)  # clear any value carried over within this context
-        status, err = "ok", _ErrorInfo()
+        status, err, result = "ok", _ErrorInfo(), None
         try:
-            return await call_next(context)
+            result = await call_next(context)
+            return result
         except Exception as exc:
             status, err = "error", _ErrorInfo.from_exception(exc)
             raise
@@ -301,7 +357,8 @@ class UsageAnalyticsMiddleware(Middleware):
                 if recorded:
                     status, err = "error", _ErrorInfo.from_recorded(recorded)
             self._safe_emit(context, kind="tool", status=status, err=err,
-                            latency_ms=int((time.monotonic() - started) * 1000))
+                            latency_ms=int((time.monotonic() - started) * 1000),
+                            result=result)
 
     async def on_get_prompt(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
@@ -315,17 +372,18 @@ class UsageAnalyticsMiddleware(Middleware):
             self._safe_emit(context, kind="prompt", status=status, err=err,
                             latency_ms=int((time.monotonic() - started) * 1000))
 
-    def _safe_emit(self, context, *, kind, status, err, latency_ms) -> None:
+    def _safe_emit(self, context, *, kind, status, err, latency_ms, result=None) -> None:
         try:
-            self._emitter.emit(self._build_event(context, kind, status, err, latency_ms))
+            self._emitter.emit(self._build_event(context, kind, status, err, latency_ms, result))
         except Exception:
             logger.debug("usage analytics build/emit skipped", exc_info=True)
 
-    def _build_event(self, context, kind, status, err, latency_ms) -> dict:
+    def _build_event(self, context, kind, status, err, latency_ms, result=None) -> dict:
         message = getattr(context, "message", None)
         name = getattr(message, "name", "") or ""
         arguments = getattr(message, "arguments", None) or {}
         sub, client_id, host_name, host_version = self._identity(context)
+        metrics = _result_metrics(result)
         return {
             "ts": time.time(),
             "sub": sub or "",
@@ -342,6 +400,12 @@ class UsageAnalyticsMiddleware(Middleware):
             "error_detail": err.detail or "",
             "error_kind": err.error_kind or "",
             "latency_ms": latency_ms,
+            # Result shape — how much data came back, and whether it was empty.
+            # has_data=False on a 200 (e.g. financials period_count=0, empty search)
+            # is the "demand we couldn't fill" signal. Carries no response content.
+            "result_count": metrics["result_count"],
+            "has_data": metrics["has_data"],
+            "response_bytes": metrics["response_bytes"],
             "server_version": self._server_version,
             "protocol_version": "",
         }
