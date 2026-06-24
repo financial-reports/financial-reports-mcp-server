@@ -358,8 +358,9 @@ def test_result_metrics_structured_content_attr_and_text_fallback():
     # plain string result → size only, never raises
     m = _result_metrics("plain text")
     assert m["response_bytes"] == len("plain text") and m["has_data"] is True
-    # unparseable / None → all None, no raise
-    assert _result_metrics(None) == {"result_count": None, "has_data": None, "response_bytes": None}
+    # unparseable / None → all None + empty entities, no raise
+    assert _result_metrics(None) == {"result_count": None, "has_data": None,
+                                     "response_bytes": None, "returned_ids": [], "result_countries": []}
 
 
 async def test_middleware_emits_result_metrics(_fake_token):
@@ -376,3 +377,47 @@ async def test_middleware_emits_result_metrics(_fake_token):
     assert ev["result_count"] == 0
     assert ev["has_data"] is False
     assert ev["response_bytes"] is not None
+
+
+# --- entities + geo + session_id (returned_ids / result_countries / session) -
+
+def test_result_metrics_extracts_ids_and_countries():
+    from src.usage_analytics import _result_metrics
+    m = _result_metrics({"results": [
+        {"id": 3813, "country_code": "NL"}, {"id": 222, "country_code": "DE"}]})
+    assert m["returned_ids"] == [3813, 222]
+    assert m["result_countries"] == ["DE", "NL"]
+
+
+def test_result_metrics_country_from_nested_company():
+    # filings_list shape: country lives under a nested company object
+    from src.usage_analytics import _result_metrics
+    m = _result_metrics({"results": [{"id": 99, "company": {"id": 3813, "country_code": "nl"}}]})
+    assert 99 in m["returned_ids"]
+    assert m["result_countries"] == ["NL"]
+
+
+def test_result_metrics_entities_default_empty():
+    from src.usage_analytics import _result_metrics
+    assert _result_metrics(None)["returned_ids"] == []
+    assert _result_metrics("text")["result_countries"] == []
+
+
+async def test_middleware_emits_session_id_and_entities(_fake_token):
+    import types
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ci = types.SimpleNamespace(name="claude-ai", version="1.0")
+    session = types.SimpleNamespace(client_params=types.SimpleNamespace(clientInfo=ci))
+    ctx = types.SimpleNamespace(
+        message=types.SimpleNamespace(name="companies_list", arguments={"search": "ASML"}),
+        fastmcp_context=types.SimpleNamespace(session=session, session_id="sess-xyz"))
+
+    async def call_next(_):
+        return types.SimpleNamespace(structured_content={"results": [{"id": 3813, "country_code": "NL"}]})
+
+    await mw.on_call_tool(ctx, call_next)
+    ev = emitter.events[0]
+    assert ev["session_id"] == "sess-xyz"
+    assert ev["returned_ids"] == [3813]
+    assert ev["result_countries"] == ["NL"]

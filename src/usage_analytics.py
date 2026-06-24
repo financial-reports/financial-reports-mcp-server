@@ -292,15 +292,54 @@ def _count_results(sc: dict) -> Optional[int]:
     return None
 
 
+_ID_KEYS = ("id", "company_id", "filing_id", "isin")
+_COUNTRY_KEYS = ("country_code", "country")
+_ENTITY_CAP = 50
+
+
+def _extract_entities(sc: dict):
+    """Best-effort: the entity ids surfaced + distinct country codes (the query-geo
+    signal — which markets the user is actually pulling). Looks at each result row
+    and a nested ``company`` (filings carry country under company). Never raises."""
+    ids, countries = [], set()
+    items = None
+    for k in _RESULT_LIST_KEYS:
+        v = sc.get(k)
+        if isinstance(v, list):
+            items = v
+            break
+    rows = items if items is not None else [sc]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for scope in (row, row.get("company") if isinstance(row.get("company"), dict) else None):
+            if scope is None:
+                continue
+            for ik in _ID_KEYS:
+                iv = scope.get(ik)
+                if isinstance(iv, (int, str)) and not isinstance(iv, bool):
+                    ids.append(iv)
+                    break
+            for ck in _COUNTRY_KEYS:
+                cv = scope.get(ck)
+                if isinstance(cv, str) and 2 <= len(cv) <= 3:
+                    countries.add(cv.upper())
+                    break
+        if len(ids) >= _ENTITY_CAP:
+            break
+    return ids[:_ENTITY_CAP], sorted(countries)
+
+
 def _result_metrics(result) -> dict:
     """Best-effort, never-raises shape metrics about a tool result.
 
-    Returns ``{result_count, has_data, response_bytes}``. Captures NO response
-    content — only how much came back and whether it was empty. ``has_data=False``
-    on a 200 (financials ``period_count=0``, empty search) is the "demand we
-    couldn't fill" signal that the prior call-level analytics couldn't see.
+    Returns ``{result_count, has_data, response_bytes, returned_ids, result_countries}``.
+    Captures NO response *content* — only how much came back, whether it was empty
+    (``has_data=False`` on a 200 = the "demand we couldn't fill" signal), the entity
+    ids surfaced, and the distinct country codes (which markets are in demand).
     """
-    out = {"result_count": None, "has_data": None, "response_bytes": None}
+    out = {"result_count": None, "has_data": None, "response_bytes": None,
+           "returned_ids": [], "result_countries": []}
     try:
         sc = getattr(result, "structured_content", None)
         if sc is None and isinstance(result, dict):
@@ -310,6 +349,7 @@ def _result_metrics(result) -> dict:
             cnt = _count_results(sc)
             out["result_count"] = cnt
             out["has_data"] = (cnt > 0) if cnt is not None else bool(sc)
+            out["returned_ids"], out["result_countries"] = _extract_entities(sc)
             return out
         # Non-structured (text) result: size + non-empty only.
         text = None
@@ -384,6 +424,12 @@ class UsageAnalyticsMiddleware(Middleware):
         arguments = getattr(message, "arguments", None) or {}
         sub, client_id, host_name, host_version = self._identity(context)
         metrics = _result_metrics(result)
+        session_id = ""
+        try:
+            fc = getattr(context, "fastmcp_context", None)
+            session_id = (getattr(fc, "session_id", "") or "")[:64]
+        except Exception:
+            session_id = ""
         return {
             "ts": time.time(),
             "sub": sub or "",
@@ -406,6 +452,11 @@ class UsageAnalyticsMiddleware(Middleware):
             "result_count": metrics["result_count"],
             "has_data": metrics["has_data"],
             "response_bytes": metrics["response_bytes"],
+            # Specific entities surfaced + which markets (query-geo). No content.
+            "returned_ids": metrics["returned_ids"],
+            "result_countries": metrics["result_countries"],
+            # Stable per-connection id → stitch a user's call sequence into a workflow.
+            "session_id": session_id,
             "server_version": self._server_version,
             "protocol_version": "",
         }
