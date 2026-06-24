@@ -34,4 +34,4 @@ Jinja2>=3.1
 # financial-reports/web repo (.github/workflows/generate_sdks.yml on master)
 # whenever the OpenAPI schema changes. That workflow also rebuilds and
 # redeploys this MCP server's image to Azure Container Apps.
-financial_reports_generated_client==1.4.41
+financial_reports_generated_client==1.4.42
