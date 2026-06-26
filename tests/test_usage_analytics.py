@@ -421,3 +421,159 @@ async def test_middleware_emits_session_id_and_entities(_fake_token):
     assert ev["session_id"] == "sess-xyz"
     assert ev["returned_ids"] == [3813]
     assert ev["result_countries"] == ["NL"]
+
+
+# --- request signals: mcp_meta + correlation_id + header-key discovery ----------
+
+def _ctx_with_meta(meta_dict=None, session_id="", name="companies_list", arguments=None):
+    """Context whose tool-call message carries a JSON-RPC _meta (as ChatGPT sends)."""
+    import mcp.types as mt
+    msg_meta = mt.RequestParams.Meta.model_validate(meta_dict) if meta_dict is not None else None
+    message = types.SimpleNamespace(name=name, arguments=arguments or {}, meta=msg_meta)
+    ci = types.SimpleNamespace(name="openai-mcp", version="1.0")
+    session = types.SimpleNamespace(client_params=types.SimpleNamespace(clientInfo=ci))
+    return types.SimpleNamespace(
+        message=message,
+        fastmcp_context=types.SimpleNamespace(session=session, session_id=session_id),
+    )
+
+
+def test_extract_meta_captures_openai_keys_excludes_user_location():
+    import mcp.types as mt
+    from src.usage_analytics import _extract_meta
+    meta = mt.RequestParams.Meta.model_validate({
+        "openai/session": "conv_1", "openai/subject": "user_1",
+        "openai/userAgent": "ChatGPT", "openai/userLocation": "Jakarta",
+        "progressToken": "p", "other/ns": "ignored",
+    })
+    out = _extract_meta(types.SimpleNamespace(meta=meta))
+    assert out["openai/session"] == "conv_1"
+    assert out["openai/userAgent"] == "ChatGPT"
+    assert "openai/subject" not in out        # OpenAI account id excluded (cross-platform linkage)
+    assert "openai/userLocation" not in out   # user geography deliberately excluded
+    assert "progressToken" not in out         # non-namespaced metadata excluded
+    assert "other/ns" not in out              # foreign namespace excluded
+
+
+def test_extract_meta_missing_or_none_returns_empty():
+    from src.usage_analytics import _extract_meta
+    assert _extract_meta(types.SimpleNamespace(meta=None)) == {}
+    assert _extract_meta(types.SimpleNamespace()) == {}
+
+
+def test_extract_meta_value_truncated():
+    import mcp.types as mt
+    from src.usage_analytics import _extract_meta, _META_VAL_CAP
+    meta = mt.RequestParams.Meta.model_validate({"openai/session": "x" * 1000})
+    out = _extract_meta(types.SimpleNamespace(meta=meta))
+    assert len(out["openai/session"]) == _META_VAL_CAP
+
+
+def test_token_fingerprint_stable_salted_and_never_leaks_token(monkeypatch):
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_access_token", lambda: types.SimpleNamespace(token="abc.def.ghi"))
+    fp1, fp2 = ua._token_fingerprint(), ua._token_fingerprint()
+    assert fp1 and fp1 == fp2 and len(fp1) == 32     # stable, fixed width
+    assert "abc.def.ghi" not in fp1                   # raw token never present
+    monkeypatch.setattr(ua, "get_access_token", lambda: types.SimpleNamespace(token="zzz"))
+    assert ua._token_fingerprint() != fp1             # different token -> different fp
+
+
+def test_token_fingerprint_empty_without_token(monkeypatch):
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_access_token", lambda: None)
+    assert ua._token_fingerprint() == ""
+    monkeypatch.setattr(ua, "get_access_token", lambda: types.SimpleNamespace(claims={}))  # no .token
+    assert ua._token_fingerprint() == ""
+
+
+def test_header_keys_are_names_only(monkeypatch):
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_http_headers",
+                        lambda include_all=False: {"Authorization": "Bearer SECRET", "X-Request-Id": "r1"})
+    keys = ua._http_header_keys()
+    assert keys == ["authorization", "x-request-id"]              # lowercased, sorted, names only
+    assert all("SECRET" not in k and "r1" not in k for k in keys)  # no values ever
+
+
+async def test_correlation_prefers_openai_session(_fake_token, monkeypatch):
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_http_headers", lambda include_all=False: {"host": "x"})
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _ctx_with_meta({"openai/session": "conv_42"}, session_id="mcp-sess-1")
+
+    async def call_next(_):
+        return "ok"
+
+    await mw.on_call_tool(ctx, call_next)
+    ev = emitter.events[0]
+    assert ev["correlation_id"] == "conv_42"               # openai/session beats Mcp-Session-Id
+    assert ev["correlation_source"] == "meta:openai/session"
+    assert ev["mcp_meta"]["openai/session"] == "conv_42"
+    assert ev["request_header_keys"] == ["host"]
+
+
+async def test_correlation_falls_back_session_then_token(_fake_token, monkeypatch):
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_http_headers", lambda include_all=False: {})
+
+    async def call_next(_):
+        return "ok"
+
+    # no meta, but Mcp-Session-Id present -> mcp_session
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    await mw.on_call_tool(_ctx_with_meta(None, session_id="mcp-sess-9"), call_next)
+    ev = emitter.events[0]
+    assert ev["correlation_id"] == "mcp-sess-9"
+    assert ev["correlation_source"] == "mcp_session"
+    assert ev["mcp_meta"] == {}
+
+    # no meta, no session -> salted token fingerprint
+    monkeypatch.setattr(ua, "get_access_token",
+                        lambda: types.SimpleNamespace(claims={"sub": "s"}, token="tok-123"))
+    emitter2 = _FakeEmitter()
+    mw2 = UsageAnalyticsMiddleware(emitter2)
+    await mw2.on_call_tool(_ctx_with_meta(None, session_id=""), call_next)
+    ev2 = emitter2.events[0]
+    assert ev2["correlation_source"] == "token_fp"
+    assert ev2["correlation_id"] and len(ev2["correlation_id"]) == 32
+
+
+async def test_request_signal_fields_present_on_every_call(_fake_token, monkeypatch):
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_http_headers", lambda include_all=False: {"host": "x"})
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    # basic call: no _meta, no Mcp-Session-Id, fixture token has no .token -> all defaults
+    ctx = _ctx_with_meta(None, session_id="")
+
+    async def call_next(_):
+        return "ok"
+
+    await mw.on_call_tool(ctx, call_next)
+    ev = emitter.events[0]
+    for f in ("correlation_id", "correlation_source", "mcp_meta", "request_header_keys"):
+        assert f in ev                          # field is emitted on every call
+    assert ev["mcp_meta"] == {}
+    assert ev["request_header_keys"] == ["host"]
+    assert ev["correlation_source"] == ""       # no meta, no session, no token fp -> empty source
+    assert ev["correlation_id"] == ""
+
+
+async def test_correlation_ignores_whitespace_session(_fake_token, monkeypatch):
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_http_headers", lambda include_all=False: {})
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _ctx_with_meta({"openai/session": "   "}, session_id="mcp-sess-5")
+
+    async def call_next(_):
+        return "ok"
+
+    await mw.on_call_tool(ctx, call_next)
+    ev = emitter.events[0]
+    # a whitespace-only session id must not win; it falls through to Mcp-Session-Id
+    assert ev["correlation_id"] == "mcp-sess-5"
+    assert ev["correlation_source"] == "mcp_session"

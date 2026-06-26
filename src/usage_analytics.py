@@ -20,6 +20,7 @@ Hard guarantees:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -30,7 +31,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import httpx
-from fastmcp.server.dependencies import get_access_token
+from fastmcp.server.dependencies import get_access_token, get_http_headers
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 logger = logging.getLogger(__name__)
@@ -366,6 +367,79 @@ def _result_metrics(result) -> dict:
     return out
 
 
+# --- Request-level signals: cross-client workflow stitching + client discovery ---
+# ChatGPT (openai-mcp) mints a fresh Mcp-Session-Id every tool call (a known MCP spec
+# violation, not fixable server-side), so `session_id` can't group its calls. It instead
+# carries per-conversation context in the JSON-RPC `_meta` object: `openai/session`
+# (stable per conversation), `openai/subject` (user), `openai/userAgent`, `openai/locale`.
+# We read those (body, not headers), derive a unified `correlation_id`, and — as a
+# fallback and a discovery aid — capture header NAMES and a salted token fingerprint.
+# No credentials, cookies, client IPs, or response content are ever captured.
+_META_NAMESPACE = "openai/"
+_META_EXCLUDE = frozenset({
+    "openai/userLocation",  # user geography — out of analytics scope
+    "openai/subject",       # OpenAI account id — avoid cross-platform identity linkage (mcp_sub already identifies the user)
+})
+_META_KEYS_CAP = 20
+_META_VAL_CAP = 256
+_HEADER_KEYS_CAP = 60
+# Salt the token fingerprint so it is never a bare hash of the credential. Falls back to
+# the ingest shared secret, which is REQUIRED for analytics to emit at all — so the
+# fingerprint is always salted in any environment where this capture path is active.
+_FP_SALT = os.environ.get("MCP_ANALYTICS_FP_SALT") or os.environ.get("MCP_INGEST_SHARED_SECRET", "")
+
+
+def _extract_meta(message) -> dict:
+    """OpenAI control metadata from the tool-call ``_meta`` (JSON-RPC body, not headers).
+    Captures every ``openai/*`` key except user-geography. Values are protocol metadata,
+    never user content or credentials. Never raises."""
+    out: dict = {}
+    try:
+        meta = getattr(message, "meta", None)
+        extra = getattr(meta, "model_extra", None) or {}
+    except Exception:
+        logger.debug("usage analytics: meta access skipped", exc_info=True)
+        return {}
+    for key, val in extra.items():
+        try:
+            if not isinstance(key, str) or not key.startswith(_META_NAMESPACE) or key in _META_EXCLUDE:
+                continue
+            if val is None:
+                continue
+            out[key[:64]] = val if isinstance(val, (int, float, bool)) else str(val)[:_META_VAL_CAP]
+            if len(out) >= _META_KEYS_CAP:
+                break
+        except Exception:
+            continue  # one hostile/unstringable value must not drop the others
+    return out
+
+
+def _http_header_keys() -> list:
+    """Sorted incoming HTTP header NAMES (names only — never values). Discovery aid to
+    confirm whether a client sends any stable correlation header. Never raises."""
+    try:
+        raw = get_http_headers(include_all=True) or {}
+        return sorted({str(k).lower() for k in raw.keys()})[:_HEADER_KEYS_CAP]
+    except Exception:
+        logger.debug("usage analytics: header-key capture skipped", exc_info=True)
+        return []
+
+
+def _token_fingerprint() -> str:
+    """Salted, truncated SHA-256 of the access token — a stable per-token key that never
+    exposes the token. ``''`` when no token is in context. Never raises."""
+    try:
+        tok = getattr(get_access_token(), "token", None)
+    except Exception:
+        tok = None
+    if not tok:
+        return ""
+    try:
+        return hashlib.sha256((_FP_SALT + tok).encode("utf-8")).hexdigest()[:32]
+    except Exception:
+        return ""
+
+
 class UsageAnalyticsMiddleware(Middleware):
     """Captures every tool call and prompt fetch and hands it to the emitter.
 
@@ -430,6 +504,16 @@ class UsageAnalyticsMiddleware(Middleware):
             session_id = (getattr(fc, "session_id", "") or "")[:64]
         except Exception:
             session_id = ""
+        meta = _extract_meta(message)
+        header_keys = _http_header_keys()
+        conv = str(meta.get("openai/session") or "").strip()
+        if conv:
+            correlation_id, correlation_source = conv[:128], "meta:openai/session"
+        elif session_id:
+            correlation_id, correlation_source = session_id, "mcp_session"
+        else:
+            fp = _token_fingerprint()
+            correlation_id, correlation_source = (fp, "token_fp") if fp else ("", "")
         return {
             "ts": time.time(),
             "sub": sub or "",
@@ -457,6 +541,16 @@ class UsageAnalyticsMiddleware(Middleware):
             "result_countries": metrics["result_countries"],
             # Stable per-connection id → stitch a user's call sequence into a workflow.
             "session_id": session_id,
+            # Cross-client workflow stitching. ChatGPT mints a fresh Mcp-Session-Id per
+            # call, so session_id can't group its calls; openai/session in _meta can.
+            # correlation_id = best available stable key (openai/session > Mcp-Session-Id
+            # > salted token fingerprint); correlation_source records which one was used.
+            "correlation_id": correlation_id,
+            "correlation_source": correlation_source,
+            # OpenAI control metadata from the tool-call _meta (openai/* keys; no user geo).
+            "mcp_meta": meta,
+            # Incoming HTTP header NAMES only — discovery aid; confirms no stable header.
+            "request_header_keys": header_keys,
             "server_version": self._server_version,
             "protocol_version": "",
         }
