@@ -7,8 +7,8 @@ Total tools registered: **15**
 | `filings_list` | 795 | 2535 | 831 |
 | `companies_financials_retrieve` | 2402 | 682 | 770 |
 | `companies_list` | 1035 | 1067 | 524 |
-| `filings_markdown_retrieve` | 1030 | 171 | 299 |
-| `filings_retrieve` | 578 | 74 | 162 |
+| `filings_markdown_retrieve` | 1121 | 171 | 322 |
+| `filings_retrieve` | 1111 | 74 | 295 |
 | `companies_retrieve` | 555 | 74 | 156 |
 | `isins_list` | 88 | 529 | 154 |
 | `filings_markdown_search` | 372 | 164 | 134 |
@@ -20,7 +20,7 @@ Total tools registered: **15**
 | `get_fr_markdown_fetch_strategy` | 165 | 33 | 49 |
 | `companies_next_annual_report_retrieve` | 102 | 74 | 43 |
 
-**Total approx tokens for `tools/list`: 3518**
+**Total approx tokens for `tools/list`: 3674**
 
 > **Methodology**: token count is approximated as `len(chars) // 4`
 > (per-tool description + JSON-serialized parameter schema). The actual
