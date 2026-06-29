@@ -18,6 +18,7 @@ Run:
 This script is invoked at Docker build time (see Dockerfile).
 """
 
+import copy
 import os
 import re
 import sys
@@ -28,6 +29,14 @@ from typing import Any
 import httpx
 import jinja2
 import yaml
+
+# Single source of truth for fields the runtime scrubber removes from every
+# tool response (see `_scrub_response` in FILE_HEADER_TEMPLATE) AND that are
+# filtered out of every emitted `output_schema` (see `_strip_hidden_from_schema`).
+# Driving both from one constant keeps a hidden field from being advertised in
+# `tools/list` while never actually being returned. `markdown_url` is the
+# auth-gated /api/.../markdown/ endpoint that 403s for an unauthenticated human.
+CLIENT_HIDDEN_FIELDS = ("markdown_url",)
 
 SCHEMA_URL = "https://financialreports.eu/api/schema/"
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
@@ -1079,24 +1088,44 @@ def _release_auth_context(resets: tuple[Any, ...]) -> None:
         _current_token.reset(reset)
 
 
-def _scrub_internal_extraction(obj):
-    """Strip internal LLM provenance (model + prompt_version) from any
-    `extraction` object before it reaches the client. The FR API emits
-    {"extraction": {"model", "prompt_version", "extracted_at", "notes"}} per
-    financial statement; model + prompt_version leak the internal extraction
-    model name and prompt scheme to end users (and competitors). extracted_at
-    and notes are kept as provenance. Recursive, mutates in place, returns obj;
-    a no-op when no `extraction` object is present (every non-financials tool)."""
+# Fields removed from every tool response before it reaches the client.
+# `markdown_url` is the auth-gated /api/.../markdown/ endpoint: it returns 403
+# for an unauthenticated human, so it must never be surfaced as a link. The LLM
+# still reads filing content via filings_markdown_retrieve(filing_id) (keyed by
+# the `id` field, not this URL). Public, human-shareable links (viewer_url,
+# document / document_url, proxy_url) are deliberately KEPT.
+_CLIENT_HIDDEN_FIELDS = __CLIENT_HIDDEN_FIELDS_REPR__
+
+
+def _scrub_response(obj):
+    """Strip data that must not reach the client from any tool response.
+
+    Two concerns handled in one recursive pass:
+
+    1. Internal LLM provenance. The FR API emits
+       {"extraction": {"model", "prompt_version", "extracted_at", "notes"}} per
+       financial statement; model + prompt_version leak the internal extraction
+       model name and prompt scheme to end users (and competitors). extracted_at
+       and notes are kept as provenance.
+    2. Auth-gated links. Every key in `_CLIENT_HIDDEN_FIELDS` (currently
+       `markdown_url`) points at an authenticated /api/ endpoint that 403s for an
+       unauthenticated human; removing it stops the model handing a user a broken
+       link. Human-shareable links (viewer_url, document, proxy_url) are kept.
+
+    Recursive, mutates in place, returns obj; a no-op when neither shape is
+    present (e.g. reference-data tools)."""
     if isinstance(obj, dict):
         _ext = obj.get("extraction")
         if isinstance(_ext, dict):
             _ext.pop("model", None)
             _ext.pop("prompt_version", None)
+        for _hidden in _CLIENT_HIDDEN_FIELDS:
+            obj.pop(_hidden, None)
         for _v in obj.values():
-            _scrub_internal_extraction(_v)
+            _scrub_response(_v)
     elif isinstance(obj, list):
         for _item in obj:
-            _scrub_internal_extraction(_item)
+            _scrub_response(_item)
     return obj
 
 
@@ -1107,7 +1136,7 @@ def _format_response(response: httpx.Response) -> str:
     """
     try:
         response.raise_for_status()
-        data = _scrub_internal_extraction(response.json())
+        data = _scrub_response(response.json())
         return f"```json\\n{_json.dumps(data, indent=2, ensure_ascii=False)}\\n```"
     except httpx.HTTPStatusError as exc:
         record_tool_error(
@@ -2470,7 +2499,7 @@ async def {{ func_name }}(
         if response.status_code != 200:
             _raise_upstream_error("{{ func_name }}", response)
         try:
-            return _scrub_internal_extraction(response.json())
+            return _scrub_response(response.json())
         except ValueError as exc:
             raise RuntimeError(f"upstream {{ func_name }} returned non-JSON body") from exc
     finally:
@@ -2670,6 +2699,15 @@ def _resource_markdown() -> str:
         "and `companies_financials_retrieve` has it.\\n"
         "- The user just wants to know what was filed and when — use "
         "/summarize_recent_filings instead.\\n\\n"
+        "## Sharing a filing link with a human\\n\\n"
+        "You (the model) fetch filing text with filings_markdown_retrieve("
+        "filing_id) — you never need a URL for that. When a *human* needs "
+        "to open a filing, hand them a PUBLIC link: `viewer_url` (the "
+        "interactive web page) or `document` (the raw PDF/ZIP). NEVER give "
+        "a user an `/api/...` URL — including the auth-gated markdown "
+        "endpoint and the paginated `next`/`previous` links — those "
+        "require credentials and return 403 for an unauthenticated "
+        "person.\\n\\n"
         "## processing_status gate\\n\\n"
         "Every filing has `processing_status`. Markdown is only "
         "available when this == `'COMPLETED'`. Other values you may "
@@ -3188,6 +3226,30 @@ def _make_fields_nullable(node: Any) -> Any:
     return node
 
 
+def _strip_hidden_from_schema(node):
+    """Remove every `CLIENT_HIDDEN_FIELDS` key from any `properties` map in a
+    JSON-Schema dict (and from any sibling `required` list), recursively.
+
+    Keeps the emitted `output_schema` consistent with what `_scrub_response`
+    actually returns: a field that's stripped at runtime is never advertised
+    in `tools/list`. Mutates in place — callers pass a deep copy so the shared
+    inlined snapshot schema is never corrupted. Returns `node`."""
+    if isinstance(node, dict):
+        props = node.get("properties")
+        if isinstance(props, dict):
+            for _hidden in CLIENT_HIDDEN_FIELDS:
+                props.pop(_hidden, None)
+            req = node.get("required")
+            if isinstance(req, list):
+                node["required"] = [r for r in req if r not in CLIENT_HIDDEN_FIELDS]
+        for _v in node.values():
+            _strip_hidden_from_schema(_v)
+    elif isinstance(node, list):
+        for _item in node:
+            _strip_hidden_from_schema(_item)
+    return node
+
+
 def extract_response_schema(operation: dict, full_schema: dict) -> dict | None:
     """Return the `application/json` 200-response JSON Schema for an
     operation, with all `$ref`s deeply inlined. None if the operation
@@ -3562,7 +3624,11 @@ def main() -> None:
 
     overrides = load_tool_overrides()
 
-    generated_code = [FILE_HEADER_TEMPLATE]
+    generated_code = [
+        FILE_HEADER_TEMPLATE.replace(
+            "__CLIENT_HIDDEN_FIELDS_REPR__", repr(CLIENT_HIDDEN_FIELDS)
+        )
+    ]
     generated_tools: list[dict] = []
 
     paths = schema.get("paths", {})
@@ -3637,6 +3703,12 @@ def main() -> None:
                         missing_response_schema.append(func_name)
                         # Fall through to the unstructured template.
                     else:
+                        # Drop runtime-scrubbed fields from the advertised
+                        # output_schema too (deep-copy first — the inlined
+                        # schema may share sub-dicts across operations).
+                        response_schema = _strip_hidden_from_schema(
+                            copy.deepcopy(response_schema)
+                        )
                         generated_code.append(
                             structured_get_template.render(
                                 func_name=func_name,
