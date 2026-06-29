@@ -97,6 +97,12 @@ filings_retrieve:
     Use to get full metadata for a single filing — source URL, PDF
     link, viewer URL, classification confidence, fiscal period. Call
     after `filings_list` when you need details beyond the list view.
+    SHAREABLE LINKS: when a human needs to open the filing, hand them a
+    PUBLIC link — `viewer_url` (the interactive web page) or `document`
+    (the raw PDF/ZIP). NEVER give a user an `/api/...` URL — including the
+    paginated `next`/`previous` links — those require credentials and 403
+    for an unauthenticated person. Filing CONTENT for you (the model) comes
+    from `filings_markdown_retrieve(filing_id)`, not from a URL.
   when_not_to_use: >
     Don't use for the actual filing content — use
     `filings_markdown_retrieve`. Don't use to search for filings —
@@ -105,6 +111,9 @@ filings_retrieve:
     - user_says: "Show me the source PDF for this filing"
       parameters: "id=<filing_id>"
       notes: "Returns document (raw PDF/ZIP URL) and proxy_url (rendered)"
+    - user_says: "Send me a link to read this filing"
+      parameters: "id=<filing_id>"
+      notes: "Share viewer_url (public web page) — never the /api/ markdown URL"
 
 filings_markdown_retrieve:
   when_to_use: >
@@ -114,8 +123,9 @@ filings_markdown_retrieve:
     marker appears.
   when_not_to_use: >
     Don't use to search for filings — use `filings_list` first. Not
-    every filing has Markdown content; check `filings_retrieve` for
-    the `markdown_url` field first.
+    every filing has Markdown content; only filings whose
+    `processing_status == "COMPLETED"` do — check that field (returned by
+    `filings_list` / `filings_retrieve`) before calling this tool.
   examples:
     - user_says: "Show me Apple's 10-K risk factors"
       parameters: "filing_id=<id>, offset=0, limit=50000"
