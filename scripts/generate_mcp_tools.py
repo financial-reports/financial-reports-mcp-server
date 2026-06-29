@@ -468,6 +468,26 @@ ALLOWED_CLIENT_REDIRECT_URI_PATTERNS = [
     "http://[::1]:*",
 ]
 
+# OAuth upstream bases must be https:// — a typo'd http:// to a real host would
+# send the proxy's client_secret + authorization code over plaintext. http:// is
+# tolerated ONLY for local-dev hosts (mirrors the DEV_MODE host guard above), so
+# the lab-tunnel / local flow keeps working.
+_LOCAL_HTTP_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _require_secure_upstream(name, url):
+    parts = urlsplit(url)
+    if parts.scheme == "https":
+        return
+    if parts.scheme == "http" and parts.hostname in _LOCAL_HTTP_HOSTS:
+        return
+    raise RuntimeError(
+        f"{name}={url!r} must be an absolute https:// URL (http:// is allowed only "
+        f"for local-dev hosts {sorted(_LOCAL_HTTP_HOSTS)}). Refusing to start: a "
+        "plaintext OAuth upstream would leak the client secret and authorization code."
+    )
+
+
 # In production the AWSCognitoProvider constructor makes a live HTTPS
 # call to AWS Cognito's OIDC discovery endpoint, so it cannot run with
 # synthetic creds. When DEV_MODE_API_KEY is active we want a local
@@ -504,6 +524,8 @@ elif MCP_UPSTREAM_AUTH_BASE:
             "dedicated connector credentials (NOT the Cognito client secret). "
             "Set both, or unset MCP_UPSTREAM_AUTH_BASE to use AWSCognitoProvider."
         )
+    _require_secure_upstream("MCP_UPSTREAM_AUTH_BASE", MCP_UPSTREAM_AUTH_BASE)
+    _require_secure_upstream("MCP_UPSTREAM_TOKEN_BASE", MCP_UPSTREAM_TOKEN_BASE)
     _cognito_issuer = (
         f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}"
     )

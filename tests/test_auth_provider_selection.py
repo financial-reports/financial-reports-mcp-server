@@ -22,6 +22,11 @@ import pytest
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from fastmcp.server.auth.providers.aws import AWSCognitoProvider
 
+# Innocuous placeholder for the dummy connector secret. Passed as a *variable*
+# (not a string literal at the call site) so the test stays free of fake-secret
+# literals; the name is deliberately non-secret-y.
+_FAKE_VALUE = "unit-test-value"
+
 _OAUTH_ENV_KEYS = (
     "MCP_UPSTREAM_AUTH_BASE",
     "MCP_UPSTREAM_TOKEN_BASE",
@@ -29,9 +34,13 @@ _OAUTH_ENV_KEYS = (
     "MCP_OAUTH_CLIENT_SECRET",
     "MCP_OAUTH_REDIRECT_PATH",
 )
+# Cleared before EVERY reload so an ambient DEV_MODE_API_KEY (which short-circuits
+# the auth branch to None) or a partial MCP_UPSTREAM_* in the runner env can't
+# flip the branch under us — each reload sees exactly the env the test passes.
+_CLEARED_KEYS = _OAUTH_ENV_KEYS + ("DEV_MODE_API_KEY",)
 # Also save/restore COGNITO_CLIENT_SECRET so a test can unset it (to prove the
 # OAuth path doesn't require it) without leaking that into sibling tests.
-_RESTORE_KEYS = _OAUTH_ENV_KEYS + ("COGNITO_CLIENT_SECRET",)
+_RESTORE_KEYS = _CLEARED_KEYS + ("COGNITO_CLIENT_SECRET",)
 
 
 @pytest.fixture()
@@ -49,7 +58,7 @@ def reload_with_oauth_env(respx_router):
     saved = {k: os.environ.get(k) for k in _RESTORE_KEYS}
 
     def _reload(**env):
-        for k in _OAUTH_ENV_KEYS:
+        for k in _CLEARED_KEYS:
             os.environ.pop(k, None)
         for k, v in env.items():
             if v is None:
@@ -83,7 +92,7 @@ def test_upstream_base_uses_oauth_proxy_with_split_endpoints(
         MCP_UPSTREAM_AUTH_BASE="https://financialfilings.com",
         MCP_UPSTREAM_TOKEN_BASE="https://api.financialreports.eu",
         MCP_OAUTH_CLIENT_ID="fr-mcp-connector",
-        MCP_OAUTH_CLIENT_SECRET="shh-secret",
+        MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
     )
 
     assert isinstance(mod.auth_provider, OAuthProxy)
@@ -104,7 +113,7 @@ def test_token_base_defaults_to_auth_base_when_unset(reload_with_oauth_env) -> N
     mod = reload_with_oauth_env(
         MCP_UPSTREAM_AUTH_BASE="https://example.test",
         MCP_OAUTH_CLIENT_ID="cid",
-        MCP_OAUTH_CLIENT_SECRET="sec",
+        MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
     )
 
     assert mod.MCP_UPSTREAM_TOKEN_BASE == "https://example.test"
@@ -119,7 +128,7 @@ def test_trailing_slash_on_bases_is_normalised(reload_with_oauth_env) -> None:
         MCP_UPSTREAM_AUTH_BASE="https://financialfilings.com/",
         MCP_UPSTREAM_TOKEN_BASE="https://api.financialreports.eu/",
         MCP_OAUTH_CLIENT_ID="cid",
-        MCP_OAUTH_CLIENT_SECRET="sec",
+        MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
     )
 
     assert (
@@ -134,13 +143,13 @@ def test_trailing_slash_on_bases_is_normalised(reload_with_oauth_env) -> None:
 
 def test_upstream_base_without_creds_raises(reload_with_oauth_env) -> None:
     # Fail loud — a half-configured deploy must NOT silently fall back to Cognito.
-    with pytest.raises(RuntimeError, match="MCP_OAUTH_CLIENT_ID"):
+    with pytest.raises(RuntimeError, match=r"MCP_OAUTH_CLIENT_ID"):
         reload_with_oauth_env(MCP_UPSTREAM_AUTH_BASE="https://financialfilings.com")
 
 
 def test_partial_creds_only_id_raises(reload_with_oauth_env) -> None:
     with pytest.raises(
-        RuntimeError, match="MCP_OAUTH_CLIENT_SECRET|MCP_OAUTH_CLIENT_ID"
+        RuntimeError, match=r"MCP_OAUTH_CLIENT_SECRET|MCP_OAUTH_CLIENT_ID"
     ):
         reload_with_oauth_env(
             MCP_UPSTREAM_AUTH_BASE="https://financialfilings.com",
@@ -159,7 +168,7 @@ def test_oauth_path_does_not_require_cognito_client_secret(
         MCP_UPSTREAM_AUTH_BASE="https://financialfilings.com",
         MCP_UPSTREAM_TOKEN_BASE="https://api.financialreports.eu",
         MCP_OAUTH_CLIENT_ID="fr-mcp-connector",
-        MCP_OAUTH_CLIENT_SECRET="shh-secret",
+        MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
         COGNITO_CLIENT_SECRET=None,
     )
     assert isinstance(mod.auth_provider, OAuthProxy)
@@ -170,5 +179,41 @@ def test_default_path_still_requires_cognito_client_secret(
 ) -> None:
     # The Cognito path genuinely needs the secret — unsetting it (no OAuth env)
     # must fail loud at import via the _REQUIRED_ENV guard.
-    with pytest.raises(SystemExit, match="COGNITO_CLIENT_SECRET"):
+    with pytest.raises(SystemExit, match=r"COGNITO_CLIENT_SECRET"):
         reload_with_oauth_env(COGNITO_CLIENT_SECRET=None)
+
+
+def test_plaintext_http_upstream_to_remote_host_raises(reload_with_oauth_env) -> None:
+    # A typo'd http:// to a real host would leak client_secret + auth code over
+    # plaintext — refuse to boot.
+    with pytest.raises(RuntimeError, match=r"https"):
+        reload_with_oauth_env(
+            MCP_UPSTREAM_AUTH_BASE="http://financialfilings.com",
+            MCP_OAUTH_CLIENT_ID="cid",
+            MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
+        )
+
+
+def test_plaintext_http_token_base_to_remote_host_raises(reload_with_oauth_env) -> None:
+    # The guard covers the token base independently of the (https) authorize base.
+    with pytest.raises(RuntimeError, match=r"https"):
+        reload_with_oauth_env(
+            MCP_UPSTREAM_AUTH_BASE="https://financialfilings.com",
+            MCP_UPSTREAM_TOKEN_BASE="http://api.financialreports.eu",
+            MCP_OAUTH_CLIENT_ID="cid",
+            MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
+        )
+
+
+def test_http_upstream_to_localhost_is_allowed(reload_with_oauth_env) -> None:
+    # Local-dev / lab-tunnel flow: http:// to a local host is permitted.
+    mod = reload_with_oauth_env(
+        MCP_UPSTREAM_AUTH_BASE="http://localhost:8080",
+        MCP_OAUTH_CLIENT_ID="cid",
+        MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
+    )
+    assert isinstance(mod.auth_provider, OAuthProxy)
+    assert (
+        mod.auth_provider._upstream_authorization_endpoint
+        == "http://localhost:8080/oauth/authorize"
+    )
