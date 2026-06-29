@@ -489,6 +489,14 @@ elif MCP_UPSTREAM_AUTH_BASE:
     # unchanged). Uses DEDICATED connector creds — fail loud if they're absent
     # rather than silently falling back to Cognito (which would mask a
     # half-configured deploy).
+    #
+    # DEPLOY-CRITICAL: on this path COGNITO_CLIENT_ID is used ONLY for the
+    # downstream binding — subscription_required / _authorize_or_raise reject the
+    # request when the verified token's client_id != COGNITO_CLIENT_ID. The custom
+    # AS mints tokens under ITS OWN Cognito app client, which is NOT the MCP
+    # connector client. So the repoint deployment MUST set COGNITO_CLIENT_ID to
+    # the AS's token-minting client id (and COGNITO_USER_POOL_ID to that pool), or
+    # EVERY tool call 403s on the binding check. See tracking issue #656.
     if not (MCP_OAUTH_CLIENT_ID and MCP_OAUTH_CLIENT_SECRET):
         raise RuntimeError(
             "MCP_UPSTREAM_AUTH_BASE is set but MCP_OAUTH_CLIENT_ID / "
