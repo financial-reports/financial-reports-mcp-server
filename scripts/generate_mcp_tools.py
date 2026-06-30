@@ -188,7 +188,10 @@ COGNITO_REGION = os.environ.get("COGNITO_REGION", "eu-central-1")
 #   - authorize -> MCP_UPSTREAM_AUTH_BASE  (browser-facing host; a real browser
 #     clears the WAF)
 #   - token     -> MCP_UPSTREAM_TOKEN_BASE (WAF-free api.* gateway; web #654
-#     mounts /oauth/token there)
+#     mounts the token view at /api/oauth/token, so TOKEN_BASE MUST include
+#     the /api segment — e.g. https://api.financialreports.eu/api. The gateway
+#     does NOT auto-prepend /api; omitting it makes the proxy POST to
+#     /oauth/token and get a 404 HTML page on every token exchange.)
 # TOKEN_BASE falls back to AUTH_BASE when unset (single-host deploys). The
 # OAuth-proxy path uses DEDICATED connector creds (MCP_OAUTH_CLIENT_*), never
 # the Cognito app-client secret.
