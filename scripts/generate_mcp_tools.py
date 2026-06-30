@@ -100,6 +100,7 @@ import json as _json
 import logging
 import os
 import re
+import socket
 import time
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -141,6 +142,30 @@ logging.basicConfig(
 # is the dominant log line and serves no operational purpose — silence it.
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("financial-reports-mcp")
+
+
+# ---------------------------------------------------------------------------
+# Instance identity (for diagnosing multi-replica OAuth-state misrouting)
+# ---------------------------------------------------------------------------
+# DCR registers a client_id on ONE replica's OAuth store; a later /authorize or
+# /token can be routed to a DIFFERENT replica. With a per-replica DiskStore that
+# replica has never seen the client_id -> invalid_client -> "reconnect the
+# connector". Stamping every OAuth-state log line with the replica id makes that
+# cross-replica split visible (registration on A, lookup-miss on B).
+#
+# Azure Container Apps injects CONTAINER_APP_REPLICA_NAME per replica; fall back
+# to the hostname elsewhere. This is an instance label, never a secret.
+def _instance_id() -> str:
+    rid = os.environ.get("CONTAINER_APP_REPLICA_NAME", "").strip()
+    if rid:
+        return rid
+    try:
+        return socket.gethostname() or "unknown"
+    except OSError:
+        return "unknown"
+
+
+INSTANCE_ID = _instance_id()
 
 # ---------------------------------------------------------------------------
 # Configuration (env-driven, no hardcoded secrets)
@@ -387,6 +412,39 @@ def _redact_redis_url(url: str) -> str:
     return f"{host}:{parsed.port}" if parsed.port else host
 
 
+def _redis_db_number(url: str) -> str:
+    """Return the Redis DB number from the URL path (e.g. rediss://h:6380/3 → "3").
+
+    The DB number is operationally important (we deliberately use a dedicated DB
+    that does not collide with Celery/Django) and carries no secret. Returns "?"
+    if the URL is unparseable or no DB segment is present.
+    """
+    try:
+        path = (urlsplit(url).path or "").lstrip("/")
+    except ValueError:
+        return "?"
+    return path if path.isdigit() else "?"
+
+
+def _disk_store_path() -> str:
+    """Best-effort path of FastMCP's default encrypted DiskStore for OAuth state.
+
+    When client_storage is None, FastMCP builds a DiskStore at
+    ``<fastmcp-data-home>/oauth-proxy`` (see OAuthProxy.__init__). Resolving the
+    same path here lets the startup line name the exact ephemeral location.
+    Falls back to a descriptive label if the FastMCP settings shape changes. The
+    path is a directory location, never a secret.
+    """
+    try:
+        # Same import OAuthProxy.__init__ uses to build the default DiskStore,
+        # so the logged path matches the real on-disk location exactly.
+        from fastmcp import settings as _fastmcp_settings
+
+        return str(_fastmcp_settings.home / "oauth-proxy")
+    except Exception:  # pragma: no cover - defensive, never blocks startup
+        return "<fastmcp-data-home>/oauth-proxy"
+
+
 # ---------------------------------------------------------------------------
 # FastMCP server with AWS Cognito OAuth proxy
 # ---------------------------------------------------------------------------
@@ -436,13 +494,22 @@ if MCP_REDIS_URL:
         client=_redis_client,
         default_collection="financial-reports-mcp-oauth",
     )
-    logger.info("OAuth state -> Redis (%s)", _redact_redis_url(MCP_REDIS_URL))
+    logger.info(
+        "OAuth state backend=RedisStore (durable, shared across replicas) "
+        "redis=%s db=%s instance=%s",
+        _redact_redis_url(MCP_REDIS_URL),
+        _redis_db_number(MCP_REDIS_URL),
+        INSTANCE_ID,
+    )
 else:
     logger.warning(
-        "MCP_REDIS_URL not set — using FastMCP default DiskStore for OAuth "
-        "state. Refresh tokens will NOT persist across container restarts "
-        "or be shared across replicas; users will be forced to re-auth on "
-        "every deploy."
+        "OAuth state backend=DiskStore (EPHEMERAL, per-replica) path=%s "
+        "instance=%s — MCP_REDIS_URL not set. Client registrations + refresh "
+        "tokens will NOT persist across container restarts or be shared across "
+        "replicas; downstream clients will hit invalid_client and be forced to "
+        "re-auth on every deploy or replica rotation.",
+        _disk_store_path(),
+        INSTANCE_ID,
     )
 
 # Explicit allowlist of redirect URIs MCP clients (Claude, ChatGPT,
@@ -491,6 +558,57 @@ def _require_secure_upstream(name, url):
     )
 
 
+# ---------------------------------------------------------------------------
+# OAuth client-lookup HIT/MISS observability
+# ---------------------------------------------------------------------------
+# `OAuthProxy.get_client(client_id)` is the single lookup the MCP SDK calls on
+# BOTH /authorize and /token to resolve a downstream-registered client out of
+# the OAuth-state store. It returns None for an unknown client_id — which is the
+# exact path that surfaces to the user as 400/invalid_client ("reconnect the
+# connector"). That happens when the presented client_id was evicted (Redis
+# memory pressure) or never existed on THIS replica (per-replica DiskStore wiped
+# on redeploy, or a registration that landed on a different replica).
+#
+# This mixin logs a structured HIT/MISS for every lookup so the failure mode is
+# self-diagnosing in logs, then delegates to the real implementation unchanged.
+# It is logging-only: it returns exactly what super().get_client() returns and
+# alters no control flow or response. AWSCognitoProvider -> OIDCProxy ->
+# OAuthProxy, so the same override instruments both production auth paths.
+#
+# SECURITY: logs ONLY the client_id (a public DCR identifier, not a secret), a
+# boolean hit/miss, and the replica id. It NEVER logs the returned client object,
+# client_secret, tokens, authorization codes, or PKCE verifiers.
+class _ClientLookupLoggingMixin:
+    async def get_client(self, client_id):  # type: ignore[override]
+        client = await super().get_client(client_id)
+        found = client is not None
+        logger.info(
+            "oauth client lookup client_id=%s found=%s instance=%s",
+            client_id,
+            found,
+            INSTANCE_ID,
+        )
+        if not found:
+            # MISS is the invalid_client root cause — surface it at WARNING so it
+            # stands out in production logs without changing any behaviour.
+            logger.warning(
+                "oauth client lookup MISS client_id=%s instance=%s — not in "
+                "OAuth-state store (evicted, or registered on another replica / "
+                "before a redeploy). Downstream client will see invalid_client.",
+                client_id,
+                INSTANCE_ID,
+            )
+        return client
+
+
+class _LoggingOAuthProxy(_ClientLookupLoggingMixin, OAuthProxy):
+    """OAuthProxy with client-lookup HIT/MISS logging. Behaviour-identical."""
+
+
+class _LoggingAWSCognitoProvider(_ClientLookupLoggingMixin, AWSCognitoProvider):
+    """AWSCognitoProvider with client-lookup HIT/MISS logging. Behaviour-identical."""
+
+
 # In production the AWSCognitoProvider constructor makes a live HTTPS
 # call to AWS Cognito's OIDC discovery endpoint, so it cannot run with
 # synthetic creds. When DEV_MODE_API_KEY is active we want a local
@@ -532,7 +650,7 @@ elif MCP_UPSTREAM_AUTH_BASE:
     _cognito_issuer = (
         f"https://cognito-idp.{COGNITO_REGION}.amazonaws.com/{COGNITO_USER_POOL_ID}"
     )
-    auth_provider = OAuthProxy(
+    auth_provider = _LoggingOAuthProxy(
         upstream_authorization_endpoint=f"{MCP_UPSTREAM_AUTH_BASE}/oauth/authorize",
         upstream_token_endpoint=f"{MCP_UPSTREAM_TOKEN_BASE}/oauth/token",
         upstream_client_id=MCP_OAUTH_CLIENT_ID,
@@ -549,7 +667,7 @@ elif MCP_UPSTREAM_AUTH_BASE:
         client_storage=_oauth_storage,
     )
 else:
-    auth_provider = AWSCognitoProvider(
+    auth_provider = _LoggingAWSCognitoProvider(
         user_pool_id=COGNITO_USER_POOL_ID,
         aws_region=COGNITO_REGION,
         client_id=COGNITO_CLIENT_ID,
