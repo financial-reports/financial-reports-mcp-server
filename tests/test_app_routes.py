@@ -162,6 +162,37 @@ def test_well_known_oauth_protected_resource_root(mcp_module) -> None:
     assert "openid" in body["scopes_supported"]
 
 
+def test_well_known_oauth_authorization_server_advertises_none(mcp_module) -> None:
+    """AS metadata must include `none` in `token_endpoint_auth_methods_supported`.
+
+    Microsoft Copilot Studio's `oauth2pkcewithprm` connector is a public-PKCE
+    client (no client_secret) — it reads this metadata at connect time and only
+    attempts `/token` if `none` appears in the advertised auth methods. Without
+    it, Copilot completes `/authorize` but never posts `/token` (the bug seen
+    in issue #704). Our @app.get override must win over FastMCP's default
+    (which only advertises `client_secret_*`) — that's what this test guards.
+    """
+    with TestClient(mcp_module.app) as client:
+        resp = client.get("/.well-known/oauth-authorization-server")
+    assert resp.status_code == 200
+    body = resp.json()
+    base = mcp_module.MCP_BASE_URL.rstrip("/")
+    assert body["issuer"] == base + "/"
+    assert body["authorization_endpoint"] == f"{base}/authorize"
+    assert body["token_endpoint"] == f"{base}/token"
+    assert body["registration_endpoint"] == f"{base}/register"
+    # The load-bearing assertion — the whole point of the override.
+    assert "none" in body["token_endpoint_auth_methods_supported"], body
+    # Preserve the confidential-client methods for Claude/ChatGPT (DCR-issued
+    # clients that use client_secret_*).
+    assert "client_secret_post" in body["token_endpoint_auth_methods_supported"]
+    assert "client_secret_basic" in body["token_endpoint_auth_methods_supported"]
+    # Copilot's connector prefers to see response_modes advertised explicitly.
+    assert body["response_modes_supported"] == ["query"]
+    assert body["code_challenge_methods_supported"] == ["S256"]
+    assert set(body["grant_types_supported"]) == {"authorization_code", "refresh_token"}
+
+
 def test_icon_png_proxies_cdn_and_caches(mcp_module, respx_router) -> None:
     """/icon.png pulls bytes from the CDN once, then serves from cache."""
     route = respx_router.get(mcp_module.ICON_URL).mock(
