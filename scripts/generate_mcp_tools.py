@@ -1855,6 +1855,52 @@ async def oauth_protected_resource_root() -> JSONResponse:
     )
 
 
+@app.get("/.well-known/oauth-authorization-server")
+async def oauth_authorization_server_metadata() -> JSONResponse:
+    """Override FastMCP's default AS metadata so it advertises `none` in
+    `token_endpoint_auth_methods_supported`.
+
+    Microsoft Copilot Studio's `oauth2pkcewithprm` MCP connector is a public
+    (secretless) PKCE client. It reads our AS discovery metadata at connect
+    time and only attempts the `/token` code-exchange if `none` appears in
+    the advertised auth methods. FastMCP 2.13.3 accepts secretless public
+    PKCE clients at both `/register` and `/token` — verified live: DCR with
+    `token_endpoint_auth_method=none` issues a client with no secret, and
+    a subsequent `POST /token` for that client (fake code) fails at code
+    validation with `invalid_grant`, not at client-auth — so the token
+    handler already honours it. Only the discovery metadata is missing
+    `none`, which is why Copilot's public-PKCE client reads the metadata,
+    doesn't see `none`, and never attempts the token exchange (the exact
+    "GET /authorize but never POST /token" signature seen in prod).
+
+    Also add `response_modes_supported = ["query"]` — the OAuth 2.0 default,
+    but some clients (incl. Copilot's connector) prefer to see it explicitly.
+
+    FastAPI matches routes in registration order and `app.mount("/", …)` is
+    the LAST route declaration, so this handler wins over FastMCP's default
+    at `/.well-known/oauth-authorization-server`.
+    """
+    base = MCP_BASE_URL.rstrip("/")
+    return JSONResponse(
+        {
+            "issuer": base + "/",
+            "authorization_endpoint": f"{base}/authorize",
+            "token_endpoint": f"{base}/token",
+            "registration_endpoint": f"{base}/register",
+            "scopes_supported": ["openid", "email", "profile"],
+            "response_types_supported": ["code"],
+            "response_modes_supported": ["query"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": [
+                "none",
+                "client_secret_post",
+                "client_secret_basic",
+            ],
+            "code_challenge_methods_supported": ["S256"],
+        }
+    )
+
+
 @app.get("/.well-known/openai-apps-challenge")
 async def openai_apps_challenge() -> PlainTextResponse:
     """OpenAI ChatGPT Apps Directory domain-verification token."""
