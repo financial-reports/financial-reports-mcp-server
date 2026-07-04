@@ -460,10 +460,13 @@ def test_initialize_advertises_multi_size_icons(mcp_module) -> None:
 
 def test_advertised_icons_are_same_origin(mcp_module) -> None:
     """REGRESSION: previously we advertised CDN URLs in MCP `Icon` metadata.
-    FastMCP's auto-generated /consent OAuth page renders that URL as the
-    page logo and our own CSP (img-src 'self' data:) blocks any
-    cross-origin image — so the consent page lost its branding. Some host
-    UIs also prefer same-origin connector icons.
+    Historically FastMCP's auto-generated /consent OAuth page rendered that
+    URL as the page logo, and our own CSP (img-src 'self' data:) blocked any
+    cross-origin image — so the consent page lost its branding. We've since
+    disabled that consent page for this first-party connector (see
+    `test_authorize_skips_consent_screen`), but some host UIs still prefer
+    same-origin connector icons, so the same-origin requirement stands on
+    its own merits.
 
     The /icon-*.png server-relative routes proxy + cache the same CDN
     bytes, so there's no asset cost in pointing at our own origin.
@@ -474,9 +477,53 @@ def test_advertised_icons_are_same_origin(mcp_module) -> None:
         src = str(icon.src)
         assert src.startswith(base), (
             f"icon {src!r} is cross-origin; advertise from {base}/icon-*.png "
-            f"so the FastMCP consent page can render it under our own CSP "
+            f"so any consumer can render it under our own CSP "
             f"(img-src 'self' data:)"
         )
+
+
+def test_authorize_skips_consent_screen(mcp_module) -> None:
+    """This is a first-party, fixed-scope connector: Claude/OpenAI already
+    collect their own connect-consent, our downstream login is the real
+    identity gate, and ALLOWED_CLIENT_REDIRECT_URI_PATTERNS is the
+    confused-deputy control. FastMCP's own consent interstitial is a
+    redundant second approval, so `require_authorization_consent=False` is
+    set on both provider constructors in `scripts/generate_mcp_tools.py`.
+
+    With consent disabled, GET /authorize must redirect straight to the
+    upstream IdP's authorization endpoint — never to our local /consent
+    page — for a client that has completed Dynamic Client Registration.
+    """
+    with TestClient(mcp_module.app) as client:
+        register_resp = client.post(
+            "/register",
+            json={
+                "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],
+                "token_endpoint_auth_method": "none",
+            },
+        )
+        assert register_resp.status_code == 201, register_resp.text
+        client_id = register_resp.json()["client_id"]
+
+        resp = client.get(
+            "/authorize",
+            params={
+                "client_id": client_id,
+                "redirect_uri": "https://claude.ai/api/mcp/auth_callback",
+                "response_type": "code",
+                "code_challenge": "test-code-challenge-value",
+                "code_challenge_method": "S256",
+            },
+            follow_redirects=False,
+        )
+    assert resp.status_code == 302, resp.text
+    location = resp.headers.get("location", "")
+    assert location, "expected a Location header on the /authorize redirect"
+    assert "/consent" not in location, (
+        f"/authorize redirected to a consent interstitial ({location!r}); "
+        f"require_authorization_consent=False should send it straight to "
+        f"the upstream IdP"
+    )
 
 
 def test_serverinfo_exposes_website_url(mcp_module) -> None:

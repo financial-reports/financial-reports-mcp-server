@@ -665,6 +665,12 @@ elif MCP_UPSTREAM_AUTH_BASE:
         valid_scopes=["openid", "email", "profile"],
         allowed_client_redirect_uris=ALLOWED_CLIENT_REDIRECT_URI_PATTERNS,
         client_storage=_oauth_storage,
+        # First-party, fixed-scope connector: Claude/OpenAI already collect their own
+        # connect-consent, our downstream login is the real identity gate, and
+        # ALLOWED_CLIENT_REDIRECT_URI_PATTERNS is the confused-deputy control. The extra
+        # FastMCP consent screen is a redundant second approval, so we skip it. Redirect
+        # allowlist + fixed read-only scopes + PKCE remain in force.
+        require_authorization_consent=False,
     )
 else:
     auth_provider = _LoggingAWSCognitoProvider(
@@ -677,6 +683,13 @@ else:
         required_scopes=["openid", "email", "profile"],
         allowed_client_redirect_uris=ALLOWED_CLIENT_REDIRECT_URI_PATTERNS,
         client_storage=_oauth_storage,
+        # First-party, fixed-scope connector: Claude/OpenAI already collect their own
+        # connect-consent, our downstream login is the real identity gate, and
+        # ALLOWED_CLIENT_REDIRECT_URI_PATTERNS is the confused-deputy control. The extra
+        # FastMCP consent screen is a redundant second approval, so we skip it. Redirect
+        # allowlist + fixed read-only scopes + PKCE remain in force. Kept consistent with
+        # the OAuthProxy path above so a fallback deploy doesn't resurrect the screen.
+        require_authorization_consent=False,
     )
 
 import datetime as _dt
