@@ -1539,7 +1539,18 @@ def _safe_error(func_name: str, exc: BaseException) -> str:
 _usage_emitter = build_emitter_from_env()
 mcp.add_middleware(UsageAnalyticsMiddleware(_usage_emitter, server_version=MCP_VERSION))
 
-mcp_app = mcp.http_app(path="/mcp")
+# stateless_http=True — build a fresh transport per request instead of holding an
+# in-memory session table keyed by `Mcp-Session-Id`. This connector runs as a
+# horizontally-scaled Azure Container App with NO ingress session affinity, so a
+# stateful session minted on replica A is unknown to replica B: the follow-up
+# `POST /mcp` 404s (spec-mandated "session not found"), the client surfaces
+# McpSessionTerminated, and its now-orphaned SSE GET stream idles out (~5 min) as
+# stream_timeout. Those three are the connector's dominant errors. Auth is fully
+# per-request — the presented bearer JWT is re-swapped against the Redis-backed
+# OAuth store (`_oauth_storage`), NOT the transport session — so dropping session
+# state is safe and eliminates all three failure modes. Do not remove without a
+# shared (Redis-backed) session store AND ingress affinity in place.
+mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
 
 
 # Cache static asset bytes in-process so connector probes (Claude, Cursor,
