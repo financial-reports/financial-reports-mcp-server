@@ -114,6 +114,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastmcp import FastMCP
+import fastmcp.server.auth.handlers.authorize as _fastmcp_authorize_handlers
 from fastmcp.server.auth.providers.aws import (
     AWSCognitoProvider,
     AWSCognitoTokenVerifier,
@@ -607,6 +608,150 @@ class _LoggingOAuthProxy(_ClientLookupLoggingMixin, OAuthProxy):
 
 class _LoggingAWSCognitoProvider(_ClientLookupLoggingMixin, AWSCognitoProvider):
     """AWSCognitoProvider with client-lookup HIT/MISS logging. Behaviour-identical."""
+
+
+# FastMCP's stock "Client Not Registered" page (create_unregistered_client_html
+# in fastmcp/server/auth/handlers/authorize.py) is written for LOCAL MCP clients.
+# It tells the user to "clear authentication tokens in your MCP client (or
+# restart it)" and states the client "should automatically re-register".
+#
+# Neither holds for a hosted connector. ChatGPT and Claude.ai keep the DCR
+# registration on their own servers: there is no token-clearing control in the
+# UI, restarting the app changes nothing, and because the OAuth hop is
+# browser-delegated the client never learns the sign-in failed — it waits on a
+# callback that never arrives. After the 2026-07-14 OAuth-state loss, prod logs
+# show individual connectors replaying one dead client_id 253-2320 times without
+# ever re-registering. The stock page sent exactly those users in a circle.
+#
+# This renderer states the only action that resolves it — remove the connector,
+# add it again — and is installed over FastMCP's module-level function, which
+# AuthorizationHandler._create_enhanced_error_response resolves by global lookup
+# at call time. Status code, headers and control flow are untouched; only the
+# HTML body differs. The JSON branch (non-browser Accept) is left as upstream
+# ships it — that one is read by programs, not people.
+#
+# SECURITY: client_id is reflected from the query string, so it is escaped with
+# html.escape() exactly as upstream does. Nothing else is interpolated.
+_UNREGISTERED_CLIENT_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex">
+<title>__TITLE__</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9; --surface: #ffffff; --text: #10131a; --muted: #5b6472;
+    --line: #e4e7ec; --accent: #1c56d6; --warn-bg: #fff8e6; --warn-line: #f0c65a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1017; --surface: #161a23; --text: #eef1f6; --muted: #9aa4b2;
+      --line: #262c38; --accent: #7aa2f7; --warn-bg: #2a2312; --warn-line: #6b5622;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    padding: 1.5rem; line-height: 1.55;
+  }
+  main {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+    max-width: 40rem; width: 100%; padding: 2rem;
+  }
+  h1 { font-size: 1.45rem; letter-spacing: -0.01em; margin-bottom: 0.5rem; }
+  p { color: var(--muted); margin-bottom: 1rem; }
+  .fix {
+    background: var(--warn-bg); border: 1px solid var(--warn-line);
+    border-radius: 10px; padding: 1rem 1.25rem; margin: 1.25rem 0;
+  }
+  .fix strong { color: var(--text); }
+  dl { margin: 0.75rem 0 0; }
+  dt { font-weight: 600; font-size: 0.9rem; margin-top: 0.75rem; }
+  dd { color: var(--muted); font-size: 0.9rem; margin-left: 0; }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 5px;
+    padding: 0.1rem 0.35rem; word-break: break-all;
+  }
+  .note { font-size: 0.875rem; border-top: 1px solid var(--line);
+          margin-top: 1.5rem; padding-top: 1rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Reconnect __SERVER_NAME__</h1>
+  <p>Sign-in could not be completed. This connector is using a registration that
+     no longer exists on our server, so authorization stops here.</p>
+
+  <div class="fix">
+    <strong>To fix it: remove the connector, then add it again.</strong>
+    <dl>
+      <dt>ChatGPT</dt>
+      <dd>Settings &rarr; Connectors &rarr; remove __SERVER_NAME__, then add it
+          back and sign in.</dd>
+      <dt>Claude.ai / Claude Desktop</dt>
+      <dd>Settings &rarr; Connectors &rarr; remove __SERVER_NAME__, then re-add
+          and sign in.</dd>
+      <dt>Claude Code, Codex, Cursor, opencode</dt>
+      <dd>Remove and re-add the server, or run your client's login command again.</dd>
+    </dl>
+  </div>
+
+  <p><strong>Retrying or reloading this page will not help.</strong> Your client
+     cannot detect this failure — it is waiting for a response that will never
+     arrive — so it will keep sending the same expired registration until the
+     connector is removed. Restarting the app does not clear it either, because
+     hosted connectors store the registration on their own servers.</p>
+
+  <p>Nothing is wrong with your account and no data is affected. Adding the
+     connector again creates a fresh registration and restores normal access.</p>
+
+  <div class="note">
+    <p style="margin:0">If it still fails after re-adding, contact support and
+       include this client ID: <code>__CLIENT_ID__</code></p>
+  </div>
+</main>
+</body>
+</html>
+"""
+
+
+def _fr_unregistered_client_html(
+    client_id: str,
+    registration_endpoint: str,
+    discovery_endpoint: str,
+    server_name: str | None = None,
+    server_icon_url: str | None = None,
+    title: str = "Client Not Registered",
+) -> str:
+    """Render the unregistered-client page with recovery steps that actually work.
+
+    Signature mirrors FastMCP's create_unregistered_client_html so it is a drop-in
+    for the handler's keyword call. `registration_endpoint`, `discovery_endpoint`
+    and `server_icon_url` are accepted for that compatibility and intentionally
+    unused: re-registration is not a user-actionable step here, which is the whole
+    point of this override.
+    """
+    import html as _html
+
+    return (
+        _UNREGISTERED_CLIENT_PAGE.replace("__CLIENT_ID__", _html.escape(client_id))
+        .replace("__SERVER_NAME__", _html.escape(server_name or "this connector"))
+        .replace("__TITLE__", _html.escape(title))
+    )
+
+
+# Install over the upstream renderer. The handler looks this name up on the module
+# at call time, so rebinding the attribute is what swaps the page; subclassing the
+# handler would additionally require re-wiring the SDK route table.
+_fastmcp_authorize_handlers.create_unregistered_client_html = (
+    _fr_unregistered_client_html
+)
 
 
 # In production the AWSCognitoProvider constructor makes a live HTTPS
