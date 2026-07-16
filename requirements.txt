@@ -1,8 +1,14 @@
 # Direct dependencies only — pip resolves the rest.
 
-# MCP framework — FastMCP 2.x. Auth module is unstable across minor versions
-# per upstream policy, so pin tight. mcp SDK is pulled transitively.
-fastmcp>=2.13.3,<3.0.0
+# MCP framework — FastMCP. The auth module is unstable across minor versions per
+# upstream policy, and the OAuth proxy's DCR client store is the load-bearing part:
+# a minor bump that changes the `mcp-oauth-proxy-clients` collection name, the key
+# format, or the ProxyDCRClient model makes every existing registration deserialize
+# to None. That reaches users as "client not found" and forces every connector to
+# be removed and re-added. A range re-resolved on every image rebuild, so dev ran
+# 2.13.3 while prod ran 2.14.7. Keep this exact; bump deliberately, and diff
+# fastmcp/server/auth/oauth_proxy.py first. 3.x exists — do not move without an audit.
+fastmcp==2.14.7
 
 # HTTP host
 fastapi>=0.115.0
