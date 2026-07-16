@@ -145,6 +145,25 @@ Most MCP-aware harnesses accept a `mcpServers` object. Point it at the endpoint 
 
 Clients with native remote-MCP OAuth (Claude, Cursor, Windsurf, VS Code, opencode, Codex via `codex mcp login`) run the sign-in in a browser automatically. For **OpenClaw** and other MCP-aware harnesses, use this block with the connector URL and complete OAuth when prompted — see your client's own MCP configuration docs for the exact file location.
 
+### Troubleshooting: "Client Not Registered"
+
+If signing in sends you to a page titled **Client Not Registered** — "The client ID `…` was not found in the server's client registry" — your client is presenting a registration this server no longer has.
+
+**Remove the connector and add it again.** That is the only thing that resolves it, and it takes a few seconds:
+
+| Client | What to do |
+|---|---|
+| **ChatGPT / OpenAI** | Settings → Connectors → remove **FinancialReports** → add it back with `https://mcp.financialfilings.com/mcp` and sign in again. |
+| **Claude.ai / Claude Desktop** | Settings → Connectors → remove **FinancialReports** → re-add and sign in again. |
+| **Claude Code / Codex / Cursor / opencode** | Remove and re-add the server (e.g. `claude mcp remove financialreports`, then re-add), or run the client's login command again (`codex mcp login financialreports`). |
+
+Two things the error page itself doesn't tell you:
+
+- **It won't fix itself, and retrying won't help.** Sign-in happens in your browser, so your client never learns it failed — it waits for a callback that never arrives and simply replays the same dead ID. Restarting doesn't help either: hosted connectors (ChatGPT, Claude.ai) keep the registration server-side, so only removing the connector clears it.
+- **Nothing is wrong with your account and no data is affected.** Re-adding creates a fresh registration and everything works as before.
+
+**If you were affected on or after 14 July 2026:** a cache failover dropped stored client registrations. Sign-ins have worked normally since — only connectors added *before* that date need the remove-and-re-add above.
+
 ---
 
 ## What you get
