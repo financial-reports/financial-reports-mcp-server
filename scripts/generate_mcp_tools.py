@@ -447,6 +447,253 @@ def _disk_store_path() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Durable client registrations
+# ---------------------------------------------------------------------------
+# OAuthProxy keeps ALL its state in one `client_storage`, partitioned by
+# collection. Those collections are NOT equally recoverable:
+#
+#   mcp-upstream-tokens / mcp-refresh-tokens / mcp-authorization-codes /
+#   mcp-oauth-transactions / mcp-jti-mappings
+#       -> losing these costs the user a re-login. Annoying, but self-healing.
+#
+#   mcp-oauth-proxy-clients (DCR registrations)
+#       -> losing these is PERMANENT. A hosted connector caches its client_id on
+#          the vendor's servers and replays it forever; it never re-registers on
+#          invalid_client, because a browser-delegated flow never tells it the
+#          sign-in failed. The connector is dead until a human removes and
+#          re-adds it — and in the OpenAI platform app editor there is no such
+#          control at all.
+#
+# On 2026-07-14 Azure wiped the cache (Standard SKU = no persistence): 2,846 keys
+# -> 20 in one hour, evictions 0, no admin action. Every registration died. So
+# registrations get mirrored to a durable tier while Redis stays the hot path.
+OAUTH_CLIENTS_COLLECTION = "mcp-oauth-proxy-clients"
+
+MCP_CLIENT_STORE_URL = os.environ.get("MCP_CLIENT_STORE_URL", "").strip()
+
+
+class HttpBackingStore:
+    """Durable tier for DCR registrations: Postgres, via the main app.
+
+    The MCP server has no database access, so it reaches Postgres over the same
+    shared-secret internal channel the analytics emitter already uses. Keyed by
+    client_id; the stored payload is opaque to this class.
+    """
+
+    def __init__(self, base_url: str, secret: str, timeout: float = 5.0) -> None:
+        self._base = base_url.rstrip("/")
+        self._secret = secret
+        self._timeout = timeout
+
+    def _url(self, client_id: str) -> str:
+        from urllib.parse import quote
+
+        return f"{self._base}/{quote(client_id, safe='')}/"
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        return {"X-Internal-Token": self._secret}
+
+    async def get(self, client_id: str) -> dict[str, Any] | None:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.get(self._url(client_id), headers=self._headers)
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        payload = resp.json().get("payload")
+        return payload if isinstance(payload, dict) else None
+
+    async def put(self, client_id: str, payload: dict[str, Any]) -> None:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.put(
+                self._url(client_id),
+                json={"payload": dict(payload)},
+                headers=self._headers,
+            )
+        resp.raise_for_status()
+
+    async def delete(self, client_id: str) -> bool:
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.delete(self._url(client_id), headers=self._headers)
+        if resp.status_code == 404:
+            return False
+        resp.raise_for_status()
+        return True
+
+
+class DurableMirrorStore:
+    """Redis hot path, durable mirror behind it. Restores on a cache miss.
+
+    put -> cache, then mirror. get -> cache; on MISS, restore from the mirror and
+    RE-HYDRATE the cache so the next lookup is a plain hit. That re-hydrate is
+    what turns a cache wipe from "every client permanently dead" into "one slow
+    lookup, then normal".
+
+    Durability must never cost availability: a mirror failure is logged and
+    swallowed. Registration still succeeds (without durability) and lookups still
+    serve Redis. Never log the payload — a registration can carry a secret.
+    """
+
+    def __init__(self, *, cache: Any, backing: Any) -> None:
+        self._cache = cache
+        self._backing = backing
+
+    async def get(self, key: str, *, collection: str | None = None):
+        cached = await self._cache.get(key, collection=collection)
+        if cached is not None:
+            return cached
+
+        try:
+            restored = await self._backing.get(key)
+        except Exception:
+            logger.warning(
+                "durable client store unreachable on read client_id=%s instance=%s "
+                "— serving cache miss",
+                key,
+                INSTANCE_ID,
+            )
+            return None
+
+        if restored is None:
+            return None
+
+        try:
+            await self._cache.put(key, restored, collection=collection)
+        except Exception:
+            logger.warning(
+                "restored client_id=%s from durable store but could not re-hydrate "
+                "the cache instance=%s",
+                key,
+                INSTANCE_ID,
+            )
+        logger.info(
+            "restored client registration from durable store client_id=%s "
+            "instance=%s — the cache had lost it",
+            key,
+            INSTANCE_ID,
+        )
+        return restored
+
+    async def put(
+        self,
+        key: str,
+        value: dict[str, Any],
+        *,
+        collection: str | None = None,
+        ttl: Any = None,
+    ) -> None:
+        await self._cache.put(key, value, collection=collection, ttl=ttl)
+        try:
+            await self._backing.put(key, value)
+        except Exception:
+            logger.warning(
+                "durable mirror write FAILED client_id=%s instance=%s — the "
+                "registration is live but NOT durable; it will not survive a "
+                "cache wipe",
+                key,
+                INSTANCE_ID,
+            )
+
+    async def delete(self, key: str, *, collection: str | None = None) -> bool:
+        removed = await self._cache.delete(key, collection=collection)
+        try:
+            await self._backing.delete(key)
+        except Exception:
+            logger.warning(
+                "durable mirror delete FAILED client_id=%s instance=%s — the "
+                "registration may be restored from the durable tier on next miss",
+                key,
+                INSTANCE_ID,
+            )
+        return removed
+
+    async def ttl(self, key: str, *, collection: str | None = None):
+        return await self._cache.ttl(key, collection=collection)
+
+    async def get_many(self, keys, *, collection: str | None = None):
+        return [await self.get(k, collection=collection) for k in keys]
+
+    async def put_many(self, keys, values, *, collection=None, ttl=None) -> None:
+        for key, value in zip(keys, values):
+            await self.put(key, value, collection=collection, ttl=ttl)
+
+    async def delete_many(self, keys, *, collection: str | None = None) -> int:
+        return sum([await self.delete(k, collection=collection) for k in keys])
+
+    async def ttl_many(self, keys, *, collection: str | None = None):
+        return [await self.ttl(k, collection=collection) for k in keys]
+
+
+class CollectionRoutingStore:
+    """Dispatch by collection: only the named ones get the durable treatment.
+
+    Everything else — auth codes, transactions, jti mappings, tokens — keeps
+    hitting Redis exactly as before. Short-lived state has no business in
+    Postgres, and the auth hot path stays off the network.
+    """
+
+    def __init__(self, *, cache: Any, durable: Any, durable_collections) -> None:
+        self._cache = cache
+        self._durable = durable
+        self._durable_collections = frozenset(durable_collections)
+
+    def _store_for(self, collection: str | None) -> Any:
+        if collection is not None and collection in self._durable_collections:
+            return self._durable
+        return self._cache
+
+    async def get(self, key: str, *, collection: str | None = None):
+        return await self._store_for(collection).get(key, collection=collection)
+
+    async def put(self, key, value, *, collection=None, ttl=None) -> None:
+        await self._store_for(collection).put(
+            key, value, collection=collection, ttl=ttl
+        )
+
+    async def delete(self, key: str, *, collection: str | None = None) -> bool:
+        return await self._store_for(collection).delete(key, collection=collection)
+
+    async def ttl(self, key: str, *, collection: str | None = None):
+        return await self._store_for(collection).ttl(key, collection=collection)
+
+    async def get_many(self, keys, *, collection: str | None = None):
+        return await self._store_for(collection).get_many(keys, collection=collection)
+
+    async def put_many(self, keys, values, *, collection=None, ttl=None):
+        return await self._store_for(collection).put_many(
+            keys, values, collection=collection, ttl=ttl
+        )
+
+    async def delete_many(self, keys, *, collection: str | None = None) -> int:
+        return await self._store_for(collection).delete_many(
+            keys, collection=collection
+        )
+
+    async def ttl_many(self, keys, *, collection: str | None = None):
+        return await self._store_for(collection).ttl_many(keys, collection=collection)
+
+
+def _build_oauth_storage(cache: Any, client_store_url: str, secret: str) -> Any:
+    """Wrap `cache` so registrations are mirrored — or return it untouched.
+
+    Inert unless BOTH the URL and the shared secret are present, so this ships
+    dark and rolls back by unsetting one env var. Disk mode (no Redis: dev,
+    tests) is left alone — there is no cache worth mirroring.
+    """
+    if cache is None or not client_store_url or not secret:
+        return cache
+
+    return CollectionRoutingStore(
+        cache=cache,
+        durable=DurableMirrorStore(
+            cache=cache,
+            backing=HttpBackingStore(client_store_url, secret),
+        ),
+        durable_collections=frozenset({OAUTH_CLIENTS_COLLECTION}),
+    )
+
+
+# ---------------------------------------------------------------------------
 # FastMCP server with AWS Cognito OAuth proxy
 # ---------------------------------------------------------------------------
 # Build OAuth state storage. Redis if MCP_REDIS_URL is set, otherwise None
@@ -512,6 +759,30 @@ else:
         _disk_store_path(),
         INSTANCE_ID,
     )
+
+# Mirror DCR registrations to the durable tier, if configured. Wraps the store
+# built above; everything except `mcp-oauth-proxy-clients` keeps hitting Redis
+# directly, so the auth hot path is unchanged.
+_durable_client_store_secret = os.environ.get("MCP_INGEST_SHARED_SECRET", "").strip()
+if _oauth_storage is not None and MCP_CLIENT_STORE_URL:
+    if not _durable_client_store_secret:
+        logger.warning(
+            "MCP_CLIENT_STORE_URL is set but MCP_INGEST_SHARED_SECRET is not — "
+            "client registrations are NOT durable and will not survive a cache "
+            "wipe. instance=%s",
+            INSTANCE_ID,
+        )
+    else:
+        _oauth_storage = _build_oauth_storage(
+            _oauth_storage, MCP_CLIENT_STORE_URL, _durable_client_store_secret
+        )
+        logger.info(
+            "OAuth client registrations mirrored to durable store url=%s "
+            "collection=%s instance=%s — a cache wipe now self-heals on lookup",
+            MCP_CLIENT_STORE_URL,
+            OAUTH_CLIENTS_COLLECTION,
+            INSTANCE_ID,
+        )
 
 # Explicit allowlist of redirect URIs MCP clients (Claude, ChatGPT,
 # Cursor, etc.) may register via Dynamic Client Registration. Passing an
