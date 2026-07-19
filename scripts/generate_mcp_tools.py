@@ -925,12 +925,18 @@ class _JitReregistrationMixin:
             return None
         from pydantic import AnyUrl
 
+        # Real DCR clients declare "openid email profile" (the Cognito scope set) at
+        # registration. A proxy with no required_scopes has an empty
+        # _default_scope_str; reconstructing with that would make the SDK reject the
+        # connector's own openid/email/profile request as invalid_scope. Fall back to
+        # the connector scope so a healed client can request what it always requests.
+        scope = getattr(self, "_default_scope_str", "") or "openid email profile"
         return ProxyDCRClient(
             client_id=client_id,
             client_secret=None,
             redirect_uris=[AnyUrl("http://localhost")],
             grant_types=["authorization_code", "refresh_token"],
-            scope=getattr(self, "_default_scope_str", "") or "",
+            scope=scope,
             token_endpoint_auth_method="none",
             allowed_redirect_uri_patterns=allowed,
             client_name="Restored connector",
