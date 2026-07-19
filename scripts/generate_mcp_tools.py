@@ -119,7 +119,7 @@ from fastmcp.server.auth.providers.aws import (
     AWSCognitoProvider,
     AWSCognitoTokenVerifier,
 )
-from fastmcp.server.auth.oauth_proxy import OAuthProxy
+from fastmcp.server.auth.oauth_proxy import OAuthProxy, ProxyDCRClient
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware
 from mcp.types import Icon, ToolAnnotations
@@ -873,12 +873,80 @@ class _ClientLookupLoggingMixin:
         return client
 
 
-class _LoggingOAuthProxy(_ClientLookupLoggingMixin, OAuthProxy):
-    """OAuthProxy with client-lookup HIT/MISS logging. Behaviour-identical."""
+# ---------------------------------------------------------------------------
+# JIT re-registration: heal orphaned hosted connectors instead of dead-ending
+# ---------------------------------------------------------------------------
+# A hosted connector (ChatGPT, Claude.ai) caches its DCR client_id on the
+# vendor's servers and replays it forever, never re-registering on
+# invalid_client. If that registration is lost from the OAuth-state store — the
+# 2026-07-14 wipe, an eviction, or a client that predates the durable mirror —
+# get_client() returns None and the user hits a permanent dead end (remove +
+# re-add is the only escape).
+#
+# This mixin closes that hole. On a get_client MISS it reconstructs a public
+# ProxyDCRClient from the client_id, IDENTICAL to what OAuthProxy.register_client
+# would build, bounded by the proxy's own trusted redirect allowlist
+# (self._allowed_client_redirect_uris). ProxyDCRClient.validate_redirect_uri then
+# accepts ONLY redirect_uris matching those trusted patterns (chatgpt.com/*,
+# claude.ai/*, cursor, localhost) — so a connector presenting a trusted redirect
+# heals transparently, while an unknown client_id with an untrusted redirect is
+# still rejected downstream. It grants no new capability: these are public
+# clients (client_secret=None, token_endpoint_auth_method="none"), the flow is
+# PKCE-protected, and the authorization code can only be delivered to an
+# already-trusted redirect.
+#
+# It deliberately does NOT persist: reconstruction is deterministic (client_id +
+# fixed allowlist), so re-derivation is free and correct on every /authorize and
+# /token, and an arbitrary client_id can never grow the store. With no allowlist
+# configured it reconstructs nothing and preserves the old None-returning
+# behaviour (it never widens trust).
+class _JitReregistrationMixin:
+    async def get_client(self, client_id):  # type: ignore[override]
+        client = await super().get_client(client_id)
+        if client is not None:
+            return client
+        reconstructed = self._jit_reconstruct_client(client_id)
+        if reconstructed is not None:
+            logger.warning(
+                "oauth client JIT-reconstructed client_id=%s instance=%s — absent "
+                "from the OAuth-state store; healed via allowlist-bounded "
+                "re-registration (orphaned hosted connector).",
+                client_id,
+                INSTANCE_ID,
+            )
+        return reconstructed
+
+    def _jit_reconstruct_client(self, client_id):
+        """Rebuild an orphaned public DCR client from its id + the proxy's trusted
+        redirect allowlist. Mirrors OAuthProxy.register_client exactly. Returns None
+        when no allowlist is configured (never widens trust)."""
+        allowed = getattr(self, "_allowed_client_redirect_uris", None)
+        if not allowed:
+            return None
+        from pydantic import AnyUrl
+
+        return ProxyDCRClient(
+            client_id=client_id,
+            client_secret=None,
+            redirect_uris=[AnyUrl("http://localhost")],
+            grant_types=["authorization_code", "refresh_token"],
+            scope=getattr(self, "_default_scope_str", "") or "",
+            token_endpoint_auth_method="none",
+            allowed_redirect_uri_patterns=allowed,
+            client_name="Restored connector",
+        )
 
 
-class _LoggingAWSCognitoProvider(_ClientLookupLoggingMixin, AWSCognitoProvider):
-    """AWSCognitoProvider with client-lookup HIT/MISS logging. Behaviour-identical."""
+class _LoggingOAuthProxy(_JitReregistrationMixin, _ClientLookupLoggingMixin, OAuthProxy):
+    """OAuthProxy with client-lookup HIT/MISS logging + JIT re-registration of
+    orphaned hosted connectors. Behaviour-identical for known clients."""
+
+
+class _LoggingAWSCognitoProvider(
+    _JitReregistrationMixin, _ClientLookupLoggingMixin, AWSCognitoProvider
+):
+    """AWSCognitoProvider with client-lookup logging + JIT re-registration.
+    Behaviour-identical for known clients."""
 
 
 # FastMCP's stock "Client Not Registered" page (create_unregistered_client_html
