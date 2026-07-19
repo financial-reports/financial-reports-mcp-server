@@ -72,6 +72,23 @@ async def test_reconstructed_client_accepts_trusted_rejects_untrusted(mcp_module
 
 
 @pytest.mark.asyncio
+async def test_reconstructed_client_falls_back_to_connector_scope(mcp_module):
+    # The real proxy has no required_scopes, so _default_scope_str == "". The
+    # reconstructed client must still carry a usable scope, or the connector's own
+    # "openid email profile" request is rejected as invalid_scope (the prod bug
+    # this guards against — a healed connector must be able to sign in).
+    client = await _jit_probe(mcp_module, None, scope="").get_client("orphan")
+    assert client.scope == "openid email profile"
+
+
+@pytest.mark.asyncio
+async def test_reconstructed_client_keeps_configured_default_scope(mcp_module):
+    # When the proxy DOES advertise a default scope, reconstruction uses it verbatim.
+    client = await _jit_probe(mcp_module, None, scope="openid custom:thing").get_client("x")
+    assert client.scope == "openid custom:thing"
+
+
+@pytest.mark.asyncio
 async def test_known_client_is_passed_through_untouched(mcp_module):
     sentinel = object()
     result = await _jit_probe(mcp_module, sentinel).get_client("known-client")
