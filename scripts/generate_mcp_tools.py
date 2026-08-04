@@ -4393,15 +4393,21 @@ def main() -> None:
                 headers={"User-Agent": "FinancialReports-MCP-Generator/1.0"},
             )
             response.raise_for_status()
-            schema = yaml.safe_load(response.content)
-            # Fail loudly on a 200 that isn't a schema. Without this a redirect to a
-            # login page or an HTML error would parse "successfully" and silently
-            # generate a tool-less module — a broken image that builds green.
-            if not isinstance(schema, dict) or not schema.get("paths"):
+            # Validate into a LOCAL and only publish to `schema` once it passes.
+            # Assigning `schema` before the check would leave a bad value bound after
+            # the final retry, so the `if schema is None` guard below would not fire
+            # and we would generate from it — the exact silent failure this check exists
+            # to prevent.
+            parsed = yaml.safe_load(response.content)
+            # Fail loudly on a 200 that isn't a schema: a redirect to a login page or an
+            # HTML error parses "successfully" and would otherwise generate a tool-less
+            # module — a broken image that builds green.
+            if not isinstance(parsed, dict) or not parsed.get("paths"):
                 raise ValueError(
                     f"schema at {SCHEMA_URL} parsed but has no 'paths' "
-                    f"(got {type(schema).__name__}) — refusing to generate"
+                    f"(got {type(parsed).__name__}) — refusing to generate"
                 )
+            schema = parsed
             break
         except Exception as exc:
             last_exc = exc
