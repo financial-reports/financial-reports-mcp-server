@@ -40,7 +40,15 @@ import yaml
 # auth-gated /api/.../markdown/ endpoint that 403s for an unauthenticated human.
 CLIENT_HIDDEN_FIELDS = ("markdown_url",)
 
-SCHEMA_URL = "https://financialreports.eu/api/schema/"
+# Canonical host is financialfilings.com; financialreports.eu 301s here. Only the
+# live-fetch path uses this — prod builds pass FR_PIN_SCHEMA=1 and read the committed
+# snapshot instead, so this affects `make dev` / `make regen` / local regeneration.
+# Overridable so staging/dev can retarget without a code change. The fetch below sets
+# follow_redirects=True so the next hostname move doesn't break local regen with no
+# diff to review, which is how this one broke.
+SCHEMA_URL = os.environ.get(
+    "SCHEMA_URL", "https://financialfilings.com/api/schema/"
+)
 OUTPUT_FILE = Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
 OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 
@@ -4381,10 +4389,25 @@ def main() -> None:
             response = httpx.get(
                 SCHEMA_URL,
                 timeout=120.0,
+                follow_redirects=True,
                 headers={"User-Agent": "FinancialReports-MCP-Generator/1.0"},
             )
             response.raise_for_status()
-            schema = yaml.safe_load(response.content)
+            # Validate into a LOCAL and only publish to `schema` once it passes.
+            # Assigning `schema` before the check would leave a bad value bound after
+            # the final retry, so the `if schema is None` guard below would not fire
+            # and we would generate from it — the exact silent failure this check exists
+            # to prevent.
+            parsed = yaml.safe_load(response.content)
+            # Fail loudly on a 200 that isn't a schema: a redirect to a login page or an
+            # HTML error parses "successfully" and would otherwise generate a tool-less
+            # module — a broken image that builds green.
+            if not isinstance(parsed, dict) or not parsed.get("paths"):
+                raise ValueError(
+                    f"schema at {SCHEMA_URL} parsed but has no 'paths' "
+                    f"(got {type(parsed).__name__}) — refusing to generate"
+                )
+            schema = parsed
             break
         except Exception as exc:
             last_exc = exc
