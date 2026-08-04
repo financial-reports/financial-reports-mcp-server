@@ -209,6 +209,33 @@ def build_emitter_from_env() -> UsageAnalyticsEmitter:
 # load-bearing assumption, pinned by tests/test_text_tool_analytics.py.
 _tool_error: ContextVar[Optional[dict]] = ContextVar("_tool_error", default=None)
 
+# --- clientInfo carry-over across the stateless transport -------------------
+#
+# `clientInfo` (host name/version) is sent ONCE, in the MCP `initialize`
+# handshake, and used to live in the per-session transport state. Since
+# stateless_http=True (#63 — required, it fixed cross-replica session-loss
+# 404s) a fresh transport is built per request, so by the time a tool call
+# arrives `session.client_params` is gone and every event logged a blank host.
+# Measured: 100% blank from 2026-07-16, i.e. the host-split analytics went dark.
+#
+# So we carry it ourselves: capture at `initialize`, key it by the OAuth
+# client_id (which rides the access token, not the session, so it survives),
+# and resolve it on the way into an event. Two tiers — a bounded per-process
+# dict, and the shared Redis the connector already runs — because with
+# horizontal scaling the `initialize` and the tool call routinely land on
+# different replicas, which is the same reason #63 existed.
+_client_info: ContextVar[Optional[tuple]] = ContextVar("_client_info", default=None)
+
+# Bounded so a hostile or buggy client cannot grow it without limit; clientInfo
+# is low-cardinality (one entry per registered OAuth client) so this is ample.
+_CLIENT_INFO_LOCAL_MAX = 512
+_client_info_local: dict[str, tuple] = {}
+
+# Long enough to span a client's normal reconnect cadence, short enough that a
+# renamed/upgraded host converges without manual eviction.
+CLIENT_INFO_TTL_SECONDS = 30 * 24 * 3600
+_CLIENT_INFO_KEY = "mcp-client-info::{client_id}"
+
 
 def record_tool_error(
     error_type: str,
@@ -448,13 +475,101 @@ class UsageAnalyticsMiddleware(Middleware):
     capture work is wrapped so a failure here can never break a tool call.
     """
 
-    def __init__(self, emitter: UsageAnalyticsEmitter, server_version: str = "") -> None:
+    def __init__(
+        self,
+        emitter: UsageAnalyticsEmitter,
+        server_version: str = "",
+        client_info_store: Any = None,
+    ) -> None:
         self._emitter = emitter
         self._server_version = server_version or os.environ.get("MCP_VERSION", "dev")
+        # Optional async Redis handle. None in dev/tests/disk mode — the local
+        # tier alone still restores attribution on a single replica, so this
+        # degrades rather than failing.
+        self._client_info_store = client_info_store
+
+    @staticmethod
+    def _token_client_id() -> str:
+        try:
+            token = get_access_token()
+        except Exception:
+            return ""
+        if token is None:
+            return ""
+        claims = getattr(token, "claims", {}) or {}
+        return str(claims.get("client_id") or getattr(token, "client_id", "") or "")
+
+    async def on_initialize(self, context: MiddlewareContext, call_next):
+        # Capture from the initialize REQUEST — at this point in the chain the
+        # session is not populated yet (verified: reading session.client_params
+        # here raises), but message.params.clientInfo is present in both
+        # stateful and stateless mode.
+        try:
+            params = getattr(getattr(context, "message", None), "params", None)
+            info = getattr(params, "clientInfo", None)
+            name = (getattr(info, "name", "") or "")[:128]
+            version = (getattr(info, "version", "") or "")[:64]
+            client_id = self._token_client_id()
+            if name and client_id:
+                await self._remember_client_info(client_id, (name, version))
+        except Exception:
+            logger.debug("clientInfo capture skipped", exc_info=True)
+        return await call_next(context)
+
+    async def _remember_client_info(self, client_id: str, value: tuple) -> None:
+        if len(_client_info_local) >= _CLIENT_INFO_LOCAL_MAX:
+            _client_info_local.clear()  # cheap bound; repopulates on next initialize
+        _client_info_local[client_id] = value
+        store = self._client_info_store
+        if store is None:
+            return
+        try:
+            await store.set(
+                _CLIENT_INFO_KEY.format(client_id=client_id),
+                json.dumps({"name": value[0], "version": value[1]}),
+                ex=CLIENT_INFO_TTL_SECONDS,
+            )
+        except Exception:
+            logger.debug("clientInfo durable write skipped", exc_info=True)
+
+    async def _resolve_client_info(self, context) -> None:
+        """Populate the contextvar for this call. Never raises, never blocks a tool."""
+        _client_info.set(None)
+        try:
+            # Stateful transports still carry it — prefer the live value and
+            # skip the lookup entirely, so this is a no-op if #63 is ever reverted.
+            fc = getattr(context, "fastmcp_context", None)
+            info = fc.session.client_params.clientInfo
+            if getattr(info, "name", None):
+                return
+        except Exception:
+            pass
+        try:
+            client_id = self._token_client_id()
+            if not client_id:
+                return
+            cached = _client_info_local.get(client_id)
+            if cached:
+                _client_info.set(cached)
+                return
+            store = self._client_info_store
+            if store is None:
+                return
+            raw = await store.get(_CLIENT_INFO_KEY.format(client_id=client_id))
+            if not raw:
+                return
+            data = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+            value = (str(data.get("name") or ""), str(data.get("version") or ""))
+            if value[0]:
+                _client_info_local[client_id] = value
+                _client_info.set(value)
+        except Exception:
+            logger.debug("clientInfo resolve skipped", exc_info=True)
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
         _tool_error.set(None)  # clear any value carried over within this context
+        await self._resolve_client_info(context)
         status, err, result = "ok", _ErrorInfo(), None
         try:
             result = await call_next(context)
@@ -477,6 +592,7 @@ class UsageAnalyticsMiddleware(Middleware):
     async def on_get_prompt(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
         status, err = "ok", _ErrorInfo()
+        await self._resolve_client_info(context)
         try:
             return await call_next(context)
         except Exception as exc:
@@ -573,4 +689,10 @@ class UsageAnalyticsMiddleware(Middleware):
             host_version = getattr(client_info, "version", None)
         except Exception:
             pass
+        if not host_name:
+            # Stateless transport: the session no longer carries clientInfo, so
+            # fall back to what `_resolve_client_info` looked up for this call.
+            carried = _client_info.get()
+            if carried:
+                host_name, host_version = carried
         return sub, client_id, host_name, host_version
