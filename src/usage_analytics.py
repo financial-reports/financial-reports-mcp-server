@@ -236,6 +236,17 @@ _client_info_local: dict[str, tuple] = {}
 CLIENT_INFO_TTL_SECONDS = 30 * 24 * 3600
 _CLIENT_INFO_KEY = "mcp-client-info::{client_id}"
 
+# This module's contract is that capture never adds latency to a real call. A
+# store round-trip inside the request path would break that, and a `try/except`
+# does not catch a HANG — an unreachable Redis blocks rather than raising. So the
+# write is fired and forgotten, and the read is bounded: miss the deadline and we
+# log a blank host, which is strictly better than delaying the user's tool call.
+_CLIENT_INFO_READ_TIMEOUT = 0.25
+
+# create_task returns a task the event loop only weakly references; without a
+# strong ref it can be garbage-collected mid-flight. Keep them until they finish.
+_client_info_writes: set = set()
+
 
 def record_tool_error(
     error_type: str,
@@ -523,14 +534,27 @@ class UsageAnalyticsMiddleware(Middleware):
         store = self._client_info_store
         if store is None:
             return
+
+        async def _write():
+            try:
+                await store.set(
+                    _CLIENT_INFO_KEY.format(client_id=client_id),
+                    json.dumps({"name": value[0], "version": value[1]}),
+                    ex=CLIENT_INFO_TTL_SECONDS,
+                )
+            except Exception:
+                logger.debug("clientInfo durable write skipped", exc_info=True)
+
         try:
-            await store.set(
-                _CLIENT_INFO_KEY.format(client_id=client_id),
-                json.dumps({"name": value[0], "version": value[1]}),
-                ex=CLIENT_INFO_TTL_SECONDS,
-            )
-        except Exception:
-            logger.debug("clientInfo durable write skipped", exc_info=True)
+            # Fire-and-forget: `initialize` must not wait on the store. The local
+            # tier is already populated above, so this replica is correct either way
+            # and the write only matters for the OTHER replicas.
+            task = asyncio.create_task(_write())
+            _client_info_writes.add(task)
+            task.add_done_callback(_client_info_writes.discard)
+        except RuntimeError:
+            # No running loop (sync tests) — the local tier still holds the value.
+            logger.debug("clientInfo durable write not scheduled", exc_info=True)
 
     async def _resolve_client_info(self, context) -> None:
         """Populate the contextvar for this call. Never raises, never blocks a tool."""
@@ -555,7 +579,12 @@ class UsageAnalyticsMiddleware(Middleware):
             store = self._client_info_store
             if store is None:
                 return
-            raw = await store.get(_CLIENT_INFO_KEY.format(client_id=client_id))
+            # Bounded: a stalled store must not hold up the tool call. On timeout we
+            # fall through to a blank host for this call and try again on the next.
+            raw = await asyncio.wait_for(
+                store.get(_CLIENT_INFO_KEY.format(client_id=client_id)),
+                timeout=_CLIENT_INFO_READ_TIMEOUT,
+            )
             if not raw:
                 return
             data = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
