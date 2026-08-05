@@ -2035,7 +2035,17 @@ def _safe_error(func_name: str, exc: BaseException) -> str:
 # are set. Registered on the MCP-protocol layer (mcp.add_middleware) — NOT the
 # FastAPI app — because it needs tool/prompt semantics, not raw HTTP.
 _usage_emitter = build_emitter_from_env()
-mcp.add_middleware(UsageAnalyticsMiddleware(_usage_emitter, server_version=MCP_VERSION))
+# client_info_store: the same Redis the connector already runs. Needed because
+# stateless_http drops `clientInfo` after `initialize`, and with several replicas
+# the initialize and the tool call routinely land on different ones. None when
+# Redis is unset (dev/tests) — attribution then works per-process only.
+mcp.add_middleware(UsageAnalyticsMiddleware(
+    _usage_emitter, server_version=MCP_VERSION,
+    # `_redis_client` is only bound inside the `if MCP_REDIS_URL:` branch above,
+    # so it is genuinely absent in disk mode — read it defensively rather than
+    # NameError'ing the server at import time when Redis is unset.
+    client_info_store=globals().get("_redis_client"),
+))
 
 # stateless_http=True — build a fresh transport per request instead of holding an
 # in-memory session table keyed by `Mcp-Session-Id`. This connector runs as a
