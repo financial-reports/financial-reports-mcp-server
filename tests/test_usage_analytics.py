@@ -41,6 +41,35 @@ def test_unknown_and_secretish_keys_redacted():
     }
 
 
+def test_date_range_keys_are_kept_not_redacted():
+    """The date bounds are the demand signal for history-window sizing.
+
+    These were redacted here, sender-side, so the platform recorded
+    ``<redacted>`` for all 5,005 events carrying release_datetime_from and
+    could not answer "how far back do fenced callers actually ask?". The
+    receiving end already allowlists every key below; the sender was the gap,
+    and because sanitisation runs on both ends the stricter one wins.
+    """
+    args = {
+        "release_datetime_from": "2015-01-01",
+        "release_datetime_to": "2024-12-31",
+        "date_from": "2015-01-01",
+        "date_to": "2024-12-31",
+        "date": "2020-06-01",
+        "year": 2020,
+    }
+    assert sanitize_mcp_arguments(args) == args
+
+
+def test_date_keys_do_not_weaken_the_deny_list():
+    # Deny substrings are checked BEFORE the allowlist, so a key that looks
+    # both date-ish and secret-ish must still be redacted.
+    out = sanitize_mcp_arguments(
+        {"date_auth_token": "v", "release_datetime_from": "2015-01-01"}
+    )
+    assert out == {"date_auth_token": REDACTED, "release_datetime_from": "2015-01-01"}
+
+
 def test_long_value_truncated_and_non_dict_empty():
     assert len(sanitize_mcp_arguments({"search": "x" * 999})["search"]) == 256
     assert sanitize_mcp_arguments(None) == {}

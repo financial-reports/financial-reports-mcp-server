@@ -40,6 +40,16 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_ARG_KEYS = frozenset({
     "search", "ticker", "isin", "lei",
+    # Date bounds. Sanitisation runs on BOTH ends — here, and again in the
+    # platform's users/mcp_analytics.py — so the stricter side wins. The
+    # receiver allowlisted these on 2026-08-06 specifically to measure whether
+    # history-fenced callers request past their cutoff, but this sender was
+    # still stamping them <redacted> first, so every recorded event carried no
+    # usable value and the question stayed unanswerable. Values are query
+    # bounds, not identifiers or secrets, and DENY_ARG_SUBSTRINGS is still
+    # applied first — a key like "date_auth_token" is redacted regardless.
+    "release_datetime_from", "release_datetime_to",
+    "date", "date_from", "date_to", "year",
     "filing_type_code", "filing_category", "category",
     "line_items", "section_keyword",
     "fiscal_year", "fiscal_period", "current_fiscal_year", "prior_fiscal_year",
