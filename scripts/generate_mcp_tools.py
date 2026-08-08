@@ -3753,11 +3753,20 @@ async def {{ func_name }}(
             # Transport-level failure (timeout, connect error, pool limit).
             # Only the exception *type* reaches the client — httpx messages
             # can embed the full request URL.
+            #
+            # Use exc.__class__.__name__, never type(exc).__name__ (issue #80).
+            # Tool parameters are named by the upstream schema and some collide
+            # with builtins — filings_list has a query param literally called
+            # `type`. Inside the emitted body that parameter shadows the builtin,
+            # so type(exc) raised "'NoneType' object is not callable" and
+            # destroyed the real upstream error. Attribute access cannot be
+            # shadowed by a parameter name.
             logger.warning(
-                "upstream {{ func_name }} transport error: %s", type(exc).__name__
+                "upstream {{ func_name }} transport error: %s",
+                exc.__class__.__name__,
             )
             raise UpstreamHTTPError(
-                f"upstream {{ func_name }} request failed ({type(exc).__name__}). "
+                f"upstream {{ func_name }} request failed ({exc.__class__.__name__}). "
                 "The FinancialReports API was unreachable or timed out "
                 "(already retried once)."
             ) from exc
