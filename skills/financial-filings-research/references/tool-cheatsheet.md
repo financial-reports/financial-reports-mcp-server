@@ -1,8 +1,10 @@
 # FinancialReports MCP — Tool Cheatsheet
 
-42 tools across 8 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
+46 tools across 9 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
 
-## Companies (4)
+Note on surface size: only a curated subset is exposed by default (`companies_*`, `filings_*`, `isins_*`, plus the guide tools and in-filing search). The rest — ISIC, reference data, watchlists, webhooks — require `MCP_FULL_SURFACE=1` on the server. If a tool below isn't in your `tools/list`, that's why.
+
+## Companies (6)
 
 ### `companies_list`
 List public companies. **First tool to call** when resolving a name/ticker to an ID.
@@ -35,6 +37,24 @@ Predicted publication date of the next annual report. Useful for monitoring setu
 Key params: `id`.
 
 Returns: `{predicted_date, confidence, basis}`.
+
+### `companies_resolve_create`
+Resolve many identifiers to company IDs in **one** call. Prefer this over a loop of `companies_list` calls whenever the user hands you a list — a portfolio, a screen, a spreadsheet column.
+
+Key params: `rows` (required) — the batch of identifiers to resolve.
+
+Returns: `{summary, results}`.
+
+Pitfall: it is a POST only because a large batch does not fit in a query string — it creates nothing. Treat it as a read.
+
+### `companies_merges_retrieve`
+Company merge records: which shell entity was folded into which canonical company. Use it when an ID or name you were given returns nothing, or two names look like the same issuer.
+
+Key params: none.
+
+Returns: `id`, `shell_id`, `canonical_id`, `shell_name`, `canonical_name`, `pattern`, `confidence`, `merged_at`, `reversed_at`.
+
+Pitfall: `reversed_at` being set means the merge was undone — do not follow `canonical_id` in that case.
 
 ## Filings (4)
 
@@ -94,6 +114,24 @@ Key params: `isin` (12-char alphanumeric).
 Returns: `{isin, company, exchange, country, currency, primary}`.
 
 Pitfall: not every ISIN is in our index. If `isins_retrieve` 404s, fall back to `companies_list?search=`.
+
+## Security Listings (2)
+
+Where a company's shares actually trade. Use these when the user asks about a **ticker on a specific exchange** — ISINs identify the security, listings identify the venue.
+
+### `security_listings_list`
+Exchange + ticker per company, with FIGI identifiers.
+
+Key params: `company`, `ticker`, `mic` (ISO-10383 market code), `exch_code`, `figi`, `page`, `page_size`, `ordering`.
+
+Returns: `id`, `company`, `mic`, `ticker`, `exch_code`, `exchange_name`, `security_type`, `market_sector`, `figi`, `composite_figi`, `share_class_figi`.
+
+Pitfall: one company has many listings, and the same `ticker` string is reused across exchanges (`BMW` on XETR is not `BMW` elsewhere). Always pair a ticker with `mic` or `exch_code` before treating it as unique.
+
+### `security_listings_retrieve`
+One listing by id.
+
+Key params: `id`.
 
 ## Reference Data (8)
 

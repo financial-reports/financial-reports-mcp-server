@@ -1,6 +1,6 @@
 # FinancialReports MCP — Research Workflows
 
-Harness-agnostic guidance for composing the 42 FinancialReports MCP tools into the workflows analysts actually run. Any MCP-aware agent (Claude, Codex, Cursor, Kilo, opencode, Gemini CLI, Hermes, …) with this connector enabled can use this. The Claude Agent Skill at `skills/financial-filings-research/` is built around this same content; this file is the portable source so non-Claude harnesses get equal guidance.
+Harness-agnostic guidance for composing the 46 FinancialReports MCP tools into the workflows analysts actually run. Any MCP-aware agent (Claude, Codex, Cursor, Kilo, opencode, Gemini CLI, Hermes, …) with this connector enabled can use this. The Claude Agent Skill at `skills/financial-filings-research/` is built around this same content; this file is the portable source so non-Claude harnesses get equal guidance.
 
 The MCP server is the **data layer**. This document is the **workflow layer**.
 

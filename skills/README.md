@@ -1,6 +1,6 @@
 # Skills for the FinancialReports MCP
 
-Agent Skills that pair with the [FinancialReports MCP server](https://github.com/financial-reports/financial-reports-mcp-server). The MCP exposes 42 tools for regulatory-filings research; these skills teach Claude how to compose those tools into the workflows analysts actually run.
+Agent Skills that pair with the [FinancialReports MCP server](https://github.com/financial-reports/financial-reports-mcp-server). The MCP exposes 46 tools for regulatory-filings research (16 on the curated default surface; the rest behind `MCP_FULL_SURFACE=1`); these skills teach Claude how to compose those tools into the workflows analysts actually run.
 
 ## Available skills
 
