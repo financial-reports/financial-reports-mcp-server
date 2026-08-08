@@ -4194,10 +4194,16 @@ from mcp.types import PromptMessage, TextContent
 )
 async def compare_financials_yoy(
     ticker_or_name: str,
-    current_fiscal_year: int,
-    prior_fiscal_year: int,
+    current_fiscal_year: str,
+    prior_fiscal_year: str,
 ) -> list[PromptMessage]:
-    """Guided message sequence for a YoY financial comparison workflow."""
+    """Guided message sequence for a YoY financial comparison workflow.
+
+    Both years are annotated `str`, not `int` — see the note in
+    summarize_recent_filings for why. They are only interpolated into the
+    instruction text, so the `int` annotation bought nothing and cost 9
+    masked prod failures (#93).
+    """
     instructions = (
         f"You will compare {ticker_or_name}'s financials for FY"
         f"{current_fiscal_year} vs FY{prior_fiscal_year} using ONLY the "
@@ -4290,14 +4296,29 @@ async def find_filing_section(
 )
 async def summarize_recent_filings(
     ticker_or_name: str,
-    lookback_days: int = 90,
+    lookback_days: str = "90",
 ) -> list[PromptMessage]:
-    """List recent filings and ask the model to produce a tight briefing."""
+    """List recent filings and ask the model to produce a tight briefing.
+
+    `lookback_days` is annotated `str`, not `int`, on purpose. MCP transports
+    prompt arguments as strings (spec: `prompts/get` arguments is
+    `map[string]string`), so a non-`str` annotation makes FastMCP coerce via
+    pydantic in `_convert_string_arguments` — which hard-raises on anything
+    non-numeric and is then masked as the useless "Error rendering prompt
+    <name>." Production sent us '', '$2' (an unsubstituted placeholder),
+    free text, and an entire double-encoded JSON args object in this field.
+    Parse leniently here instead of letting the framework reject the call.
+    """
+    import re
     from datetime import date, timedelta
-    cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
+    _match = re.search(r"\\d+", str(lookback_days or ""))
+    # Clamp to a sane window: junk like '$2' still yields *a* briefing rather
+    # than a crash, and an absurd value can't push `cutoff` out of range.
+    days = min(max(int(_match.group()), 1), 3650) if _match else 90
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
     instructions = (
         f"Summarize {ticker_or_name}'s regulatory filings from the last "
-        f"{lookback_days} days (released on or after {cutoff}).\\n\\n"
+        f"{days} days (released on or after {cutoff}).\\n\\n"
         "Steps:\\n"
         f"1. `companies_list` with search=\\"{ticker_or_name}\\".\\n"
         f"2. `filings_list` with company=<id>, "
