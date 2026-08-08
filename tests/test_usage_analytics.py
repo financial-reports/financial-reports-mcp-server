@@ -457,15 +457,27 @@ async def test_middleware_emits_session_id_and_entities(_fake_token):
 # --- request signals: mcp_meta + correlation_id + header-key discovery ----------
 
 def _ctx_with_meta(meta_dict=None, session_id="", name="companies_list", arguments=None):
-    """Context whose tool-call message carries a JSON-RPC _meta (as ChatGPT sends)."""
+    """Context carrying a JSON-RPC _meta where production actually puts it.
+
+    The _meta hangs off ``fastmcp_context.request_context``, NOT off the middleware
+    message. FastMCP rebuilds that message from name+arguments alone, so a stub that
+    sets ``message.meta`` exercises a path production can never take — which is how
+    #94 stayed invisible. ``message.meta`` is pinned to None here to keep it that way.
+    ``test_meta_survives_real_fastmcp_dispatch`` is the load-bearing proof that this
+    stub matches reality.
+    """
     import mcp.types as mt
-    msg_meta = mt.RequestParams.Meta.model_validate(meta_dict) if meta_dict is not None else None
-    message = types.SimpleNamespace(name=name, arguments=arguments or {}, meta=msg_meta)
+    req_meta = mt.RequestParams.Meta.model_validate(meta_dict) if meta_dict is not None else None
+    message = types.SimpleNamespace(name=name, arguments=arguments or {}, meta=None)
     ci = types.SimpleNamespace(name="openai-mcp", version="1.0")
     session = types.SimpleNamespace(client_params=types.SimpleNamespace(clientInfo=ci))
     return types.SimpleNamespace(
         message=message,
-        fastmcp_context=types.SimpleNamespace(session=session, session_id=session_id),
+        fastmcp_context=types.SimpleNamespace(
+            session=session,
+            session_id=session_id,
+            request_context=types.SimpleNamespace(meta=req_meta),
+        ),
     )
 
 
@@ -610,3 +622,109 @@ async def test_correlation_ignores_whitespace_session(_fake_token, monkeypatch):
     # a whitespace-only session id must not win; it falls through to Mcp-Session-Id
     assert ev["correlation_id"] == "mcp-sess-5"
     assert ev["correlation_source"] == "mcp_session"
+
+
+# --- #94: the x-openai-session header tier ---------------------------------------
+
+async def test_correlation_uses_openai_session_header(_fake_token, monkeypatch):
+    """The tier that actually fires for ChatGPT traffic.
+
+    openai-mcp sends its conversation id as the `x-openai-session` HEADER, not in the
+    JSON-RPC body. Prod measurement: 4,104 requests carried this header and every one
+    fell through to `mcp_session`, producing exactly 1.00 rows per correlation group —
+    each ChatGPT call its own singleton workflow (#94).
+    """
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_http_headers", lambda include_all=False: {
+        "Host": "x", "Mcp-Session-Id": "fresh-per-call", "X-OpenAI-Session": "conv_hdr",
+    })
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    # No _meta at all, but a real Mcp-Session-Id — the exact prod shape.
+    ctx = _ctx_with_meta(None, session_id="fresh-per-call")
+
+    async def call_next(_):
+        return "ok"
+
+    await mw.on_call_tool(ctx, call_next)
+    ev = emitter.events[0]
+    assert ev["correlation_id"] == "conv_hdr"                        # header beats Mcp-Session-Id
+    assert ev["correlation_source"] == "header:x-openai-session"
+    assert ev["session_id"] == "fresh-per-call"                      # still recorded separately
+    # Header NAMES are captured for discovery; no other header VALUE ever is.
+    assert "x-openai-session" in ev["request_header_keys"]
+    assert "fresh-per-call" not in str(ev["request_header_keys"])
+
+
+async def test_meta_outranks_openai_session_header(_fake_token, monkeypatch):
+    """Tier order is meta > header. Both present -> the spec-native channel wins."""
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_http_headers", lambda include_all=False: {
+        "x-openai-session": "conv_hdr",
+    })
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _ctx_with_meta({"openai/session": "conv_meta"}, session_id="mcp-sess-1")
+
+    async def call_next(_):
+        return "ok"
+
+    await mw.on_call_tool(ctx, call_next)
+    ev = emitter.events[0]
+    assert ev["correlation_id"] == "conv_meta"
+    assert ev["correlation_source"] == "meta:openai/session"
+
+
+async def test_blank_openai_session_header_falls_through(_fake_token, monkeypatch):
+    """A present-but-empty header must not shadow the Mcp-Session-Id tier."""
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_http_headers", lambda include_all=False: {
+        "x-openai-session": "   ",
+    })
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+    ctx = _ctx_with_meta(None, session_id="mcp-sess-7")
+
+    async def call_next(_):
+        return "ok"
+
+    await mw.on_call_tool(ctx, call_next)
+    ev = emitter.events[0]
+    assert ev["correlation_id"] == "mcp-sess-7"
+    assert ev["correlation_source"] == "mcp_session"
+
+
+async def test_meta_survives_real_fastmcp_dispatch(monkeypatch):
+    """The load-bearing test for #94: real client, real dispatch, `_meta` on the wire.
+
+    Every other meta test builds the context by hand. FastMCP discards the client's
+    validated request and rebuilds the middleware message from name+arguments alone
+    (fastmcp/server/server.py:1618), so `context.message.meta` is structurally always
+    None — which made `mcp_meta` empty on all 31,541 prod rows and the openai/session
+    tier unreachable. A SimpleNamespace stub cannot catch that, and did not. This can:
+    it fails against the pre-fix code, which read `context.message`.
+    """
+    from fastmcp import Client, FastMCP
+
+    from src import usage_analytics as ua
+    monkeypatch.setattr(ua, "get_access_token", lambda: None)
+
+    emitter = _FakeEmitter()
+    server = FastMCP("meta-probe")
+    server.add_middleware(UsageAnalyticsMiddleware(emitter))
+
+    @server.tool
+    def ping(x: str) -> str:
+        return x
+
+    async with Client(server) as client:
+        await client.call_tool(
+            "ping", {"x": "hello"},
+            meta={"openai/session": "conv_real", "openai/userLocation": "Jakarta"},
+        )
+
+    ev = [e for e in emitter.events if e["name"] == "ping"][-1]
+    assert ev["mcp_meta"]["openai/session"] == "conv_real"
+    assert "openai/userLocation" not in ev["mcp_meta"]   # geo exclusion still holds
+    assert ev["correlation_id"] == "conv_real"
+    assert ev["correlation_source"] == "meta:openai/session"
