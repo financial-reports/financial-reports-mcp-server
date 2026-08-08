@@ -1,11 +1,11 @@
 ---
 name: financial-filings-research
-description: Research public companies' regulatory filings, financial data, and industry context using the FinancialReports MCP server. Use when the user mentions a listed company by name, ticker, or ISIN, asks about 10-Ks, 10-Qs, annual or quarterly reports, financial statements (revenue, EBITDA, debt, cash flow), insider transactions, ESG disclosures, or wants to compare companies, screen by industry (ISIC), or set up filings alerts. The connector exposes 42 tools sourced from official regulators worldwide.
+description: Research public companies' regulatory filings, financial data, and industry context using the FinancialReports MCP server. Use when the user mentions a listed company by name, ticker, or ISIN, asks about 10-Ks, 10-Qs, annual or quarterly reports, financial statements (revenue, EBITDA, debt, cash flow), insider transactions, ESG disclosures, or wants to compare companies, screen by industry (ISIC), or set up filings alerts. The connector exposes 46 tools sourced from official regulators worldwide.
 ---
 
 # Financial Filings Research
 
-This skill teaches Claude how to combine the 42 tools exposed by the FinancialReports MCP server into the workflows analysts actually run — company lookup, filings retrieval, multi-company comparison, industry screening, and ongoing monitoring.
+This skill teaches Claude how to combine the 46 tools exposed by the FinancialReports MCP server into the workflows analysts actually run — company lookup, filings retrieval, multi-company comparison, industry screening, and ongoing monitoring.
 
 The MCP server is the data layer. This skill is the workflow layer.
 
@@ -24,21 +24,30 @@ Skip when the user is asking about market data (prices, volumes, options) — th
 
 ## Tool reference
 
-For the full catalog with input parameters and gotchas see `references/tool-cheatsheet.md`. Quick decision table:
+For the full catalog with input parameters and gotchas see `references/tool-cheatsheet.md`.
+
+**Check your `tools/list` before following a sequence below.** The 46 tools are the *full* schema-derived surface. The hosted server exposes a curated **16** by default — 12 schema-derived, the 3 `get_fr_*` guide tools, and `filings_markdown_search` — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not available and calling them will fail**.
+
+Rows marked **†** need `MCP_FULL_SURFACE=1`. If the user asks for one of those against the hosted connector, say the capability isn't exposed — don't silently substitute a tool that answers a different question.
 
 | Goal | Tool sequence |
 |---|---|
 | Find a company | `companies_list` (name/country filter) → `companies_retrieve` for full detail |
-| Resolve an ISIN | `isins_retrieve` (ISIN → company) |
+| Resolve many identifiers at once | `companies_resolve_create` (batch; prefer over a loop of `companies_list`) |
+| Resolve an ISIN | `isins_retrieve` (ISIN → company); `isins_list` for a company's dual listings |
 | Get filings | `filings_list` → `filings_retrieve` → `filings_markdown_retrieve` for content |
-| Track filing revisions | `filings_history_retrieve` (audit trail of amendments) |
+| Search inside a large filing | `filings_markdown_search` (don't fetch 10 MB to find one section) |
 | Get financials | `companies_financials_retrieve` (annual or quarterly, normalized line items) |
 | Predict next report | `companies_next_annual_report_retrieve` |
-| Industry screening | `isic_sections_list` → `isic_classes_list` → `companies_list?isic_class=…` |
-| Watchlist | `watchlist_retrieve`, `watchlist_companies_create`, `watchlist_companies_bulk_add_create` |
-| Alerts setup | `webhooks_create` → `webhooks_test_create` → `webhooks_deliveries_retrieve` |
-| Reference data | `countries_list`, `filing_categories_list`, `filing_types_list`, `languages_list`, `sources_list` |
-| Line item glossary | `line_item_definitions_list`, `line_item_definitions_retrieve` |
+| Understand filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` |
+| Track filing revisions **†** | `filings_history_retrieve` (audit trail of amendments) |
+| Industry screening **†** | `isic_sections_list` → `isic_classes_list` → `companies_list?isic_class=…` |
+| Watchlist **†** | `watchlist_retrieve`, `watchlist_companies_create`, `watchlist_companies_bulk_add_create` |
+| Alerts setup **†** | `webhooks_create` → `webhooks_test_create` → `webhooks_deliveries_retrieve` |
+| Reference data | `filing_categories_list`, `filing_types_list`; **†** `countries_list`, `languages_list`, `sources_list` |
+| Line item glossary **†** | `line_item_definitions_list`, `line_item_definitions_retrieve` |
+
+Note on `isic_class`: the ISIC *hierarchy* tools are gated, but `companies_list?isic_class=…` is not — and `get_fr_industry_classification_isic` is on the default surface, so a class code is still resolvable without them.
 
 ## Workflows
 

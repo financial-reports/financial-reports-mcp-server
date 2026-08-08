@@ -2,7 +2,7 @@
 the huge-filing search tool, and the sourcing/anti-fabrication guidance.
 
 These assert the default (pruned) surface. MCP_FULL_SURFACE=1 restores the full
-~42-tool surface; that path is exercised by generating with the env var set.
+46-tool surface; that path is exercised by generating with the env var set.
 """
 from __future__ import annotations
 
