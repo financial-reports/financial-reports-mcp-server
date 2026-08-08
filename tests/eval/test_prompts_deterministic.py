@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # Prompt name → set of tool names that the rendered instructions must mention.
 # Add a row here whenever a new @mcp.prompt() lands in scripts/generate_mcp_tools.py.
 EXPECTED_PROMPTS: dict[str, set[str]] = {
