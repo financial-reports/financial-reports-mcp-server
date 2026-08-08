@@ -4,7 +4,7 @@ Agent-facing guide for the **FinancialReports MCP server** repo. This file is th
 
 ## What this repo is
 
-The official remote [Model Context Protocol](https://modelcontextprotocol.io) server for the [FinancialReports](https://financialreports.eu) API. It exposes **15 LLM-callable tools by default** (regulatory filings, financials, company data, in-filing search, plus guide tools); set `MCP_FULL_SURFACE=1` to restore the full **42-tool** surface (adds ISIC industry classification, watchlists, webhooks, and the rest of the reference data). The OpenAPI-derived tools are generated from a committed, reviewed schema snapshot (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build). It runs as a FastAPI host that mounts a FastMCP server behind an AWS Cognito OAuth proxy. Production: `https://mcp.financialfilings.com/mcp`.
+The official remote [Model Context Protocol](https://modelcontextprotocol.io) server for the [FinancialReports](https://financialreports.eu) API. It exposes **16 LLM-callable tools by default** (regulatory filings, financials, company data, batch identifier resolution, in-filing search, plus guide tools); set `MCP_FULL_SURFACE=1` to restore the full **46-tool** surface (adds ISIC industry classification, watchlists, webhooks, company merges, security listings, and the rest of the reference data). The OpenAPI-derived tools are generated from a committed, reviewed schema snapshot (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build). It runs as a FastAPI host that mounts a FastMCP server behind an AWS Cognito OAuth proxy. Production: `https://mcp.financialfilings.com/mcp`.
 
 ## The one rule that matters: `src/` is generated
 

@@ -56,7 +56,12 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # The default generated surface drops cold per-item reference singletons, the
 # ISIC hierarchy family (folded into the get_fr_industry_classification guide
 # tool), and webhooks/watchlist (real features, off the default surface per the
-# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full ~42-tool surface.
+# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full ~46-tool surface.
+#
+# THIS IS A DENYLIST, NOT AN ALLOWLIST. Every operation the OpenAPI schema gains
+# joins the curated default surface automatically the next time the snapshot is
+# refreshed. Keeping a new endpoint OFF requires adding it here in the same PR
+# that bumps scripts/openapi.snapshot.json.
 _PRUNED_EXCLUDE = {
     "countries_list", "countries_retrieve",
     "languages_list", "languages_retrieve",
@@ -74,6 +79,17 @@ _PRUNED_EXCLUDE = {
     "webhooks_retrieve", "webhooks_test_create",
     "watchlist_companies_bulk_add_create", "watchlist_companies_bulk_remove_create",
     "watchlist_companies_create", "watchlist_retrieve",
+    # Added with the schema 1.1.5 -> 1.3.0 refresh. All three are corporate-
+    # actions / market-microstructure reference data an LLM does not need to
+    # reach for directly: `companies_merges_retrieve` is a paginated audit feed
+    # of merge events, and the security-listings pair enumerates per-exchange
+    # listing rows. The same facts now arrive inline on the Company object via
+    # its new `is_merged`, `merged_into`, `listings`, `listing_status`,
+    # `delisting_date`, `delisting_reason` and `primary_isin` properties, so
+    # promoting them to tools would spend context to re-fetch what
+    # companies_retrieve already returns. `MCP_FULL_SURFACE=1` still emits them.
+    "companies_merges_retrieve",
+    "security_listings_list", "security_listings_retrieve",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 
@@ -4628,6 +4644,15 @@ def compute_post_annotations(func_name: str, path: str) -> str:
     it's a probe (open world) but doesn't mutate FR state.
     """
     parts: list[str] = []
+
+    # companies_resolve_create is a POST purely because up to 500 identifier
+    # rows don't fit in a query string. It creates nothing and mutates no FR
+    # state — it's a batch lookup. Emitting destructiveHint=True would make
+    # conforming clients confirmation-gate every call, which defeats the point
+    # of having it on the curated default surface.
+    if func_name == "companies_resolve_create":
+        parts = ["destructiveHint=False", "idempotentHint=True", "openWorldHint=False"]
+        return ",\n        ".join(parts)
 
     if "test_create" in func_name or "test" in func_name.split("_"):
         parts = ["destructiveHint=False", "openWorldHint=True", "idempotentHint=False"]
