@@ -1,0 +1,160 @@
+name: Prod OAuth probe
+
+# Scheduled synthetic that drives the REAL connector OAuth path against production
+# (#78), closing the gap that hid #32. Ordinary CI cannot reach this path: the eval
+# harness runs in DEV_MODE, which bypasses OAuth entirely, so #32 was untestable
+# from CI by construction.
+#
+# Cadence — every 6h at :17. FastMCP proxy access tokens live ~1h and the Cognito
+# refresh boundary is exactly where #32 manifested, so the failure class being
+# guarded is time-triggered; 12h would let a refresh-boundary regression sit half a
+# day. The :17 offset dodges GitHub's top-of-hour scheduler congestion, which delays
+# and occasionally drops on-the-hour crons.
+#
+# Flake policy — a probe that pages on every transient upstream blip is worse than no
+# probe. So: retry once after 60s, then alert only on TWO CONSECUTIVE failures (≤12h
+# to alert). The one exception is a `forbidden` classification: a raw upstream 403
+# reaching a client is never transient, it is a confirmed #32-class regression, so it
+# alerts on the first occurrence.
+#
+# Requires two repo secrets (FR_PROBE_USERNAME / FR_PROBE_PASSWORD) and the
+# `prod-probe` label. Until the secrets exist each run SKIPS cleanly rather than
+# failing every 6 hours — see the credentials guard below.
+#
+# NOTE: GitHub disables scheduled workflows in a repo with 60 days of no commits.
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # gh issue create/comment on failure
+  actions: read   # gh run list, for the consecutive-failure gate
+
+concurrency:
+  # Queue, never cancel: cancelling mid-probe would register as a failure.
+  group: prod-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Prod OAuth synthetic probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install test deps
+        # requirements-test.txt alone is sufficient: it carries pytest + httpx, and
+        # the probe never imports the generated runtime module (tests/conftest.py
+        # imports it lazily inside fixtures this test does not request). No
+        # requirements.txt, no generate_mcp_tools.py, no COGNITO_* vars, no docker.
+        run: pip install -r requirements-test.txt
+
+      - name: Check credentials are configured
+        id: creds
+        env:
+          FR_PROBE_USERNAME: ${{ secrets.FR_PROBE_USERNAME }}
+        run: |
+          if [ -z "${FR_PROBE_USERNAME}" ]; then
+            echo "::notice::FR_PROBE_USERNAME is not set — skipping. Add the probe"
+            echo "::notice::account secrets to activate this workflow (see #78)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the probe (retry once on a soft failure)
+        id: probe
+        if: steps.creds.outputs.ready == 'true'
+        env:
+          FR_E2E_OAUTH_PROBE: "1"
+          FR_E2E_USERNAME: ${{ secrets.FR_PROBE_USERNAME }}
+          FR_E2E_PASSWORD: ${{ secrets.FR_PROBE_PASSWORD }}
+          FR_E2E_BASE_URL: ${{ vars.FR_PROBE_BASE_URL || 'https://mcp.financialfilings.com' }}
+        run: |
+          set -uo pipefail
+          run_once() {
+            : > probe.log
+            pytest tests/e2e/test_prod_oauth_probe.py -q --tb=short 2>&1 | tee probe.log
+            return "${PIPESTATUS[0]}"
+          }
+          run_once; rc=$?
+          if [ "$rc" -ne 0 ] && ! grep -q 'REGRESSION' probe.log; then
+            echo "::warning::soft failure (rc=$rc) — retrying once in 60s"
+            sleep 60
+            run_once; rc=$?
+          fi
+          if grep -q 'REGRESSION' probe.log; then
+            echo "regression=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "regression=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit 0   # gating happens below, not here
+
+      - name: Was the previous scheduled run also red?
+        id: prev
+        if: steps.probe.outputs.rc != '0' && steps.probe.outputs.regression != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh run list --workflow prod-probe.yml --branch main \
+                   --status completed --limit 1 --json conclusion \
+                   --jq '.[0].conclusion // "none"')
+          echo "conclusion=$prev" >> "$GITHUB_OUTPUT"
+          echo "previous completed run: $prev"
+
+      - name: Decide whether to alert
+        id: decide
+        if: steps.creds.outputs.ready == 'true'
+        run: |
+          if [ "${{ steps.probe.outputs.regression }}" = "true" ]; then
+            echo "alert=true" >> "$GITHUB_OUTPUT"
+            echo "reason=#32-class REGRESSION — a raw upstream 403 reached the client" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.probe.outputs.rc }}" != "0" ] && [ "${{ steps.prev.outputs.conclusion }}" = "failure" ]; then
+            echo "alert=true" >> "$GITHUB_OUTPUT"
+            echo "reason=two consecutive probe failures" >> "$GITHUB_OUTPUT"
+          else
+            echo "alert=false" >> "$GITHUB_OUTPUT"
+            echo "reason=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload probe log
+        if: steps.probe.outputs.rc != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-log-${{ github.run_id }}
+          path: probe.log
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Open or update the alert issue
+        if: steps.decide.outputs.alert == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REASON: ${{ steps.decide.outputs.reason }}
+        run: |
+          body=$(printf '**%s**\n\nRun: %s\n\n```\n%s\n```\n' \
+                  "$REASON" "$RUN_URL" "$(tail -c 3000 probe.log)")
+          existing=$(gh issue list --label prod-probe --state open \
+                       --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "Prod OAuth probe failing: $REASON" \
+              --label prod-probe --body "$body"
+          fi
+
+      - name: Fail the run if we alerted
+        if: steps.decide.outputs.alert == 'true'
+        run: exit 1
