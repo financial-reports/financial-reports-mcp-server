@@ -56,7 +56,12 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # The default generated surface drops cold per-item reference singletons, the
 # ISIC hierarchy family (folded into the get_fr_industry_classification guide
 # tool), and webhooks/watchlist (real features, off the default surface per the
-# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full ~42-tool surface.
+# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full ~46-tool surface.
+#
+# THIS IS A DENYLIST, NOT AN ALLOWLIST. Every operation the OpenAPI schema gains
+# joins the curated default surface automatically the next time the snapshot is
+# refreshed. Keeping a new endpoint OFF requires adding it here in the same PR
+# that bumps scripts/openapi.snapshot.json.
 _PRUNED_EXCLUDE = {
     "countries_list", "countries_retrieve",
     "languages_list", "languages_retrieve",
@@ -74,6 +79,17 @@ _PRUNED_EXCLUDE = {
     "webhooks_retrieve", "webhooks_test_create",
     "watchlist_companies_bulk_add_create", "watchlist_companies_bulk_remove_create",
     "watchlist_companies_create", "watchlist_retrieve",
+    # Added with the schema 1.1.5 -> 1.3.0 refresh. All three are corporate-
+    # actions / market-microstructure reference data an LLM does not need to
+    # reach for directly: `companies_merges_retrieve` is a paginated audit feed
+    # of merge events, and the security-listings pair enumerates per-exchange
+    # listing rows. The same facts now arrive inline on the Company object via
+    # its new `is_merged`, `merged_into`, `listings`, `listing_status`,
+    # `delisting_date`, `delisting_reason` and `primary_isin` properties, so
+    # promoting them to tools would spend context to re-fetch what
+    # companies_retrieve already returns. `MCP_FULL_SURFACE=1` still emits them.
+    "companies_merges_retrieve",
+    "security_listings_list", "security_listings_retrieve",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 
@@ -111,6 +127,7 @@ import random
 import re
 import socket
 import time
+import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import wraps
@@ -163,16 +180,27 @@ logger = logging.getLogger("financial-reports-mcp")
 # connector". Stamping every OAuth-state log line with the replica id makes that
 # cross-replica split visible (registration on A, lookup-miss on B).
 #
-# Azure Container Apps injects CONTAINER_APP_REPLICA_NAME per replica; fall back
-# to the hostname elsewhere. This is an instance label, never a secret.
+# Cloud Run injects NO per-instance variable. The only platform-provided env vars
+# are K_SERVICE / K_REVISION / K_CONFIGURATION / PORT, and all four are identical
+# on every instance of a revision; socket.gethostname() returns "localhost"
+# in-container. The previous implementation read CONTAINER_APP_REPLICA_NAME (which
+# only Azure Container Apps ever set) and fell through to gethostname(), so since
+# the migration every one of these log lines read `instance=localhost` and the
+# cross-instance signal above was silently dead.
+#
+# So: anchor on K_REVISION for a human-readable, greppable prefix, then append a
+# per-process random suffix. The suffix is what actually distinguishes instances —
+# K_REVISION alone would collide across every instance of one revision, which is
+# the bug being fixed. Resolved once at import, so it is stable for the process
+# lifetime. An instance label, never a secret.
 def _instance_id() -> str:
-    rid = os.environ.get("CONTAINER_APP_REPLICA_NAME", "").strip()
-    if rid:
-        return rid
-    try:
-        return socket.gethostname() or "unknown"
-    except OSError:
-        return "unknown"
+    base = os.environ.get("K_REVISION", "").strip()
+    if not base:
+        try:
+            base = socket.gethostname() or "unknown"
+        except OSError:
+            base = "unknown"
+    return f"{base}-{uuid.uuid4().hex[:8]}"
 
 
 INSTANCE_ID = _instance_id()
@@ -275,8 +303,8 @@ SUPPORT_URL = os.environ.get(
 # transactions, codes, and refresh tokens in Redis (shared across replicas,
 # survives container restarts). When unset, FastMCP falls back to an
 # encrypted DiskStore on the container's local disk — fine for dev, but on
-# Azure Container Apps the disk is ephemeral, so every deploy or replica
-# rotation forces every user to re-authenticate.
+# Cloud Run the disk is ephemeral, so every deploy or instance rotation
+# forces every user to re-authenticate.
 #
 # Format: standard Redis URL, e.g.
 #   rediss://:<auth-token>@<endpoint>:<port>/3?ssl_cert_reqs=required
@@ -296,7 +324,7 @@ DEV_MODE_API_KEY = os.environ.get("DEV_MODE_API_KEY", "").strip() or None
 _PROD_HOSTS = {"mcp.financialfilings.com"}
 # Fail CLOSED: the dev bypass (single shared key, no JWT validation) may ONLY run
 # against an explicit local/dev base URL. The old guard checked only for the prod
-# hostname, so an EMPTY or Azure-native MCP_BASE_URL slipped through and silently
+# hostname, so an EMPTY or platform-default MCP_BASE_URL slipped through and silently
 # left the bypass active. Require an allow-listed dev marker instead.
 _DEV_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}
 # Parse the hostname and match it EXACTLY. A substring check (`"localhost" in url`)
@@ -310,7 +338,7 @@ if DEV_MODE_API_KEY and _dev_host not in _DEV_HOSTS:
         "DEV_MODE_API_KEY is set but MCP_BASE_URL host is not a recognised local/dev "
         f"host ({MCP_BASE_URL!r} -> host {_dev_host!r}). Refusing to start — the dev "
         "key bypass must never be active outside local development (an empty, "
-        "production, or Azure-native MCP_BASE_URL is exactly the case this guards)."
+        "production, or platform-default MCP_BASE_URL is exactly the case this guards)."
     )
 if DEV_MODE_API_KEY:
     logging.getLogger("financial-reports-mcp").warning(
@@ -391,7 +419,7 @@ DEFAULT_MCP_PROTOCOL_VERSION = "2025-11-25"
 
 MCP_VERSION = os.environ.get("MCP_VERSION", "dev")
 
-# Google Search Console site-verification token. Set on the Container App as
+# Google Search Console site-verification token. Set on the Cloud Run service as
 # `GOOGLE_SITE_VERIFICATION` (the bare content value Search Console gives you).
 # When set, the landing page emits a <meta name="google-site-verification" ...>
 # tag. When unset (default in tests / local dev), no tag is emitted — keeping
@@ -399,7 +427,7 @@ MCP_VERSION = os.environ.get("MCP_VERSION", "dev")
 GOOGLE_SITE_VERIFICATION = os.environ.get("GOOGLE_SITE_VERIFICATION", "").strip()
 
 # OpenAI ChatGPT Apps Directory domain-verification token, served at
-# /.well-known/openai-apps-challenge. Set on the Container App as
+# /.well-known/openai-apps-challenge. Set on the Cloud Run service as
 # `OPENAI_APPS_CHALLENGE`; defaults to the current submission token so the route
 # works without extra config. OpenAI rotates this per submission attempt — to
 # update, change the env var (no code change/redeploy of source needed).
@@ -473,8 +501,9 @@ def _disk_store_path() -> str:
 #          re-adds it — and in the OpenAI platform app editor there is no such
 #          control at all.
 #
-# On 2026-07-14 Azure wiped the cache (Standard SKU = no persistence): 2,846 keys
-# -> 20 in one hour, evictions 0, no admin action. Every registration died. So
+# On 2026-07-14 the then-managed cache (pre-GCP-migration Azure Cache, Standard
+# SKU = no persistence) was wiped: 2,846 keys -> 20 in one hour, evictions 0, no
+# admin action. Every registration died. So
 # registrations get mirrored to a durable tier while Redis stays the hot path.
 OAUTH_CLIENTS_COLLECTION = "mcp-oauth-proxy-clients"
 
@@ -719,8 +748,10 @@ if MCP_REDIS_URL:
     from redis.retry import Retry
 
     # Build the async Redis client with explicit retry on transient connection
-    # errors. Azure Cache for Redis (Standard SKU) recycles idle TLS connections
-    # on maintenance / idle-timeout events. When that happens, the async client
+    # errors. Managed Redis recycles idle TLS connections on maintenance /
+    # idle-timeout events — first observed on Azure Cache for Redis (Standard
+    # SKU) pre-GCP-migration, and Memorystore has the same class of behaviour.
+    # When that happens, the async client
     # gets a `(104, 'Connection reset by peer')` on the next AUTH read and, by
     # default, surfaces that all the way to the OAuth handler — which then hangs
     # every /register and /authorize request indefinitely. The Retry +
@@ -2254,8 +2285,8 @@ def _validate_webhook_url(value: Any) -> str:
 
     The Django backend is responsible for the authoritative check; this is
     defense in depth so a misconfigured backend cannot be used by a
-    subscriber to probe internal Azure metadata, link-local addresses,
-    or loopback.
+    subscriber to probe the cloud instance-metadata endpoint, link-local
+    addresses, or loopback.
     """
     if not isinstance(value, str) or not value:
         raise ToolInputError("webhook url must be a non-empty string")
@@ -2337,15 +2368,15 @@ mcp.add_middleware(UsageAnalyticsMiddleware(
 
 # stateless_http=True — build a fresh transport per request instead of holding an
 # in-memory session table keyed by `Mcp-Session-Id`. This connector runs as a
-# horizontally-scaled Azure Container App with NO ingress session affinity, so a
-# stateful session minted on replica A is unknown to replica B: the follow-up
+# horizontally-scaled Cloud Run service with NO load-balancer session affinity, so
+# a stateful session minted on instance A is unknown to instance B: the follow-up
 # `POST /mcp` 404s (spec-mandated "session not found"), the client surfaces
 # McpSessionTerminated, and its now-orphaned SSE GET stream idles out (~5 min) as
 # stream_timeout. Those three are the connector's dominant errors. Auth is fully
 # per-request — the presented bearer JWT is re-swapped against the Redis-backed
 # OAuth store (`_oauth_storage`), NOT the transport session — so dropping session
 # state is safe and eliminates all three failure modes. Do not remove without a
-# shared (Redis-backed) session store AND ingress affinity in place.
+# shared (Redis-backed) session store AND load-balancer affinity in place.
 mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
 
 
@@ -4622,6 +4653,15 @@ def compute_post_annotations(func_name: str, path: str) -> str:
     it's a probe (open world) but doesn't mutate FR state.
     """
     parts: list[str] = []
+
+    # companies_resolve_create is a POST purely because up to 500 identifier
+    # rows don't fit in a query string. It creates nothing and mutates no FR
+    # state — it's a batch lookup. Emitting destructiveHint=True would make
+    # conforming clients confirmation-gate every call, which defeats the point
+    # of having it on the curated default surface.
+    if func_name == "companies_resolve_create":
+        parts = ["destructiveHint=False", "idempotentHint=True", "openWorldHint=False"]
+        return ",\n        ".join(parts)
 
     if "test_create" in func_name or "test" in func_name.split("_"):
         parts = ["destructiveHint=False", "openWorldHint=True", "idempotentHint=False"]

@@ -10,7 +10,7 @@ env/
 __pycache__/
 
 # Tooling caches (none needed at build time; sneaky context bloat —
-# .mypy_cache alone was ~50 MiB and was timing out ACR uploads)
+# .mypy_cache alone was ~50 MiB and was bloating the build context)
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/

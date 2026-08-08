@@ -1,7 +1,7 @@
 """Durable DCR client registrations — survive an OAuth-cache wipe.
 
-Why this exists: on 2026-07-14 Azure wiped the (non-persistent, Standard-SKU)
-OAuth Redis out from under the server — 2,846 keys -> 20 — and every DCR client
+Why this exists: on 2026-07-14 (pre-GCP-migration) Azure wiped the
+(non-persistent, Standard-SKU) OAuth Redis out from under the server — 2,846 keys -> 20 — and every DCR client
 registration was lost permanently. Tokens are recoverable (the user signs in
 again); a *client registration* is NOT: hosted connectors cache the client_id on
 their own servers and replay it forever, so `get_client()` misses and the client
