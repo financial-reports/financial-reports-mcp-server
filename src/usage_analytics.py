@@ -410,6 +410,14 @@ def _result_metrics(result) -> dict:
     Captures NO response *content* — only how much came back, whether it was empty
     (``has_data=False`` on a 200 = the "demand we couldn't fill" signal), the entity
     ids surfaced, and the distinct country codes (which markets are in demand).
+
+    ``response_bytes`` is a size PROXY, not wire bytes — the name is kept only for
+    column stability across this repo and the web ingest serializer (#54). It is
+    ``len()`` of the re-serialized ``structured_content`` JSON, or of the text
+    payload: a CHARACTER count, which diverges from UTF-8 bytes for non-ASCII, and
+    excludes the MCP envelope, framing, headers, and transport encoding. Good for
+    relative size trends; never reconcile it against load-balancer / APM / CDN
+    byte counters.
     """
     out = {"result_count": None, "has_data": None, "response_bytes": None,
            "returned_ids": [], "result_countries": []}
