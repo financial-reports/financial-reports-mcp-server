@@ -10,7 +10,10 @@ Pins three behaviors:
 """
 from __future__ import annotations
 
+import ast
 import base64
+import builtins
+import inspect
 import json
 import logging
 
@@ -381,3 +384,114 @@ async def test_401_error_kind_is_expired_token(
         await fn()
 
     assert ei.value.error_kind == "expired_token"
+
+
+# ---------------------------------------------------------------------------
+# Builtin-shadowing tool parameters (issue #80)
+# ---------------------------------------------------------------------------
+# `filings_list` declares an OpenAPI query parameter literally named `type`,
+# which shadows the builtin inside the emitted body. The transport-error handler
+# used to call `type(exc).__name__`, so with `type` left at its None default the
+# HANDLER itself crashed with "'NoneType' object is not callable", destroying the
+# real upstream error and surfacing an opaque ToolError instead.
+#
+# Prod: 4 events, every one with latency_ms ~61000 (the httpx timeout=60.0
+# boundary), spanning 4 server versions and both hosting platforms. Fully
+# deterministic on the transport branch — the rarity came only from how rarely
+# the upstream transport fails.
+#
+# Note that test_structured_timeout_raises_typed_error_without_url above covers
+# the same branch on `companies_list`, which has no shadowing parameter — which
+# is exactly why it never caught this. Keep both.
+
+
+@pytest.mark.parametrize(
+    "transport_exc",
+    [
+        httpx.ReadTimeout("timed out"),
+        httpx.ConnectError("no route to host"),
+        httpx.RemoteProtocolError(
+            "<StreamReset stream_id:499, error_code:1, remote_reset:True>"
+        ),
+    ],
+    ids=["ReadTimeout", "ConnectError", "RemoteProtocolError"],
+)
+@pytest.mark.asyncio
+async def test_transport_error_on_tool_that_shadows_a_builtin(
+    mcp_module, monkeypatch, fake_access_token, respx_router, transport_exc
+) -> None:
+    """The real exception class must survive the handler on a shadowing tool.
+
+    These three classes are the ones actually observed in prod: a 60 s read
+    timeout, a connect failure, and the HTTP/2 stream reset behind the
+    2026-07-31 pair.
+    """
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/filings/").mock(side_effect=transport_exc)
+
+    fn = _structured_tool(mcp_module, "filings_list")
+    with pytest.raises(mcp_module.UpstreamHTTPError) as ei:
+        await fn(company=12345, ordering="-release_datetime", page_size=3)
+
+    assert transport_exc.__class__.__name__ in str(ei.value)
+    # No internal hostnames in client-facing text.
+    assert "api.test.invalid" not in str(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_transport_error_survives_an_explicit_type_argument(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """Control case: passing `type=` used to yield "'str' object is not callable".
+
+    Worth its own test because this is what proved the diagnosis — the failure
+    tracked the shadowing argument's *value*, not anything about the client or
+    the upstream.
+    """
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/filings/").mock(
+        side_effect=httpx.ReadTimeout("timed out")
+    )
+
+    fn = _structured_tool(mcp_module, "filings_list")
+    with pytest.raises(mcp_module.UpstreamHTTPError) as ei:
+        await fn(type="10-K", page_size=3)
+
+    assert "ReadTimeout" in str(ei.value)
+
+
+def test_no_generated_tool_calls_a_builtin_its_signature_shadows(mcp_module) -> None:
+    """Structural guard for the whole bug class, not just this one instance.
+
+    A tool parameter may legitimately shadow a builtin — `type` and `id` are real
+    upstream query-parameter names and renaming them would be a breaking
+    tool-schema change. What is never acceptable is *calling* that name inside
+    the body, because its value is caller-controlled and defaults to None.
+
+    This is the assertion that earns its keep: 16 other tools shadow `id`,
+    harmless today only because no template calls `id()`. It fails the moment one
+    does, which no per-tool behavioral test would catch.
+    """
+    tree = ast.parse(inspect.getsource(mcp_module))
+    builtin_names = set(dir(builtins))
+    offenders: list[str] = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            continue
+        args = node.args
+        shadowed = {
+            a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)
+        } & builtin_names
+        if not shadowed:
+            continue
+        offenders.extend(
+            f"{node.name}() calls shadowed builtin {inner.func.id!r} "
+            f"at line {inner.lineno}"
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Call)
+            and isinstance(inner.func, ast.Name)
+            and inner.func.id in shadowed
+        )
+
+    assert not offenders, "\n".join(offenders)
