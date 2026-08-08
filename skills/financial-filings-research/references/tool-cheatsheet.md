@@ -133,6 +133,8 @@ One listing by id.
 
 Key params: `id`.
 
+Returns: the same `SecurityListing` item as `security_listings_list` — `id`, `company`, `mic`, `ticker`, `exch_code`, `exchange_name`, `security_type`, `market_sector`, `figi`, `composite_figi`, `share_class_figi`. So if you already have the row from a list call, you do not need this.
+
 ## Reference Data (8)
 
 Lookups for filtering and labeling. All have `_list` and `_retrieve` variants.
