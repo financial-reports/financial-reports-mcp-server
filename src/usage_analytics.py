@@ -83,11 +83,16 @@ _JWT_SHAPED_RE = re.compile(r"eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
 _BEARER_RE = re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}")
 
 
-def sanitize_error_detail(detail: str) -> str:
-    """Redact token-shaped substrings from an exception message, truncate."""
+def sanitize_error_detail(detail: str, max_len: int = MAX_ERROR_DETAIL) -> str:
+    """Redact token-shaped substrings from an exception message, truncate.
+
+    ``max_len`` defaults to the analytics column budget. Callers forwarding
+    upstream copy on to the *client* pass a larger cap (#73) — there the
+    redaction is the load-bearing part, not the truncation.
+    """
     cleaned = _JWT_SHAPED_RE.sub("<redacted-jwt>", detail)
     cleaned = _BEARER_RE.sub("<redacted-bearer>", cleaned)
-    return cleaned[:MAX_ERROR_DETAIL]
+    return cleaned[:max_len]
 
 
 def _truncate(value: Any) -> Any:
@@ -264,6 +269,7 @@ def record_tool_error(
     *,
     upstream_status: Optional[int] = None,
     request_id: Optional[str] = None,
+    error_kind: str = "",
 ) -> None:
     """Record that the current text-tool call failed but returned an error
     *string* instead of raising. The analytics middleware promotes the event to
@@ -276,6 +282,7 @@ def record_tool_error(
                 "detail": detail,
                 "upstream_status": upstream_status if isinstance(upstream_status, int) else None,
                 "request_id": request_id if isinstance(request_id, str) else None,
+                "error_kind": error_kind if isinstance(error_kind, str) else "",
             }
         )
     except Exception:  # pragma: no cover — contextvar.set effectively never fails
@@ -299,6 +306,21 @@ class _ErrorInfo:
         upstream_status = getattr(exc, "upstream_status", None)
         request_id = getattr(exc, "request_id", None)
         error_kind = getattr(exc, "error_kind", "") or ""
+        # FastMCP's tool manager re-raises anything a tool throws wrapped in a
+        # generic ToolError (`raise ToolError(...) from e`), and this middleware
+        # sits OUTSIDE the tool manager — so what arrives here is the wrapper,
+        # carrying none of our typed context. Look exactly one `__cause__` link
+        # down to recover it. Without this every structured-tool upstream
+        # failure lands as a bare ToolError with a NULL upstream_status: 30 days
+        # of prod showed 4,319 such rows that were really 429s and 403s, which
+        # is why #73's own 429 count came out 5x low. One link only — a deeper
+        # chain is someone else's bug and must not become our classification.
+        if upstream_status is None and request_id is None and not error_kind:
+            cause = exc.__cause__
+            if cause is not None:
+                upstream_status = getattr(cause, "upstream_status", None)
+                request_id = getattr(cause, "request_id", None)
+                error_kind = getattr(cause, "error_kind", "") or ""
         return cls(
             error_type=type(exc).__name__,
             detail=sanitize_error_detail(str(exc)),
@@ -313,11 +335,13 @@ class _ErrorInfo:
         an error string rather than raising)."""
         upstream_status = data.get("upstream_status")
         request_id = data.get("request_id")
+        error_kind = data.get("error_kind") or ""
         return cls(
             error_type=data.get("error_type") or "ToolError",
             detail=sanitize_error_detail(str(data.get("detail") or "")),
             upstream_status=upstream_status if isinstance(upstream_status, int) else None,
             request_id=request_id if isinstance(request_id, str) else None,
+            error_kind=error_kind if isinstance(error_kind, str) else "",
         )
 
 
@@ -386,6 +410,14 @@ def _result_metrics(result) -> dict:
     Captures NO response *content* — only how much came back, whether it was empty
     (``has_data=False`` on a 200 = the "demand we couldn't fill" signal), the entity
     ids surfaced, and the distinct country codes (which markets are in demand).
+
+    ``response_bytes`` is a size PROXY, not wire bytes — the name is kept only for
+    column stability across this repo and the web ingest serializer (#54). It is
+    ``len()`` of the re-serialized ``structured_content`` JSON, or of the text
+    payload: a CHARACTER count, which diverges from UTF-8 bytes for non-ASCII, and
+    excludes the MCP envelope, framing, headers, and transport encoding. Good for
+    relative size trends; never reconcile it against load-balancer / APM / CDN
+    byte counters.
     """
     out = {"result_count": None, "has_data": None, "response_bytes": None,
            "returned_ids": [], "result_countries": []}
