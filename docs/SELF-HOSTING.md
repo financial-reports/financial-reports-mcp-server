@@ -28,8 +28,8 @@ Copy `.env.example` to `.env` and populate:
 | `COGNITO_REGION` | optional | AWS region (default `eu-central-1`) |
 | `MCP_BASE_URL` | ✅ | Public URL of this server (`https://mcp.example.com`); must match a Cognito redirect URI |
 | `API_BASE_URL` | ✅ | Upstream API base (default `https://api.financialreports.eu`) |
-| `VERIFY_URL` | ✅ | Subscription-tier verification endpoint (default `<API_BASE_URL>/api/mcp/verify/`) |
 | `MCP_VERSION` | optional | Version label exposed at `/health` |
+| `MCP_STARTUP_SELFCHECK` | optional | Upstream reachability probe at boot: `warn` (default) logs a warning and serves anyway, `strict` fails the boot, `off` skips it. Any HTTP response counts as reachable — the upstream health endpoint sits behind an anonymous burst throttle, so a 429 is still proof of life |
 | `MCP_REDIS_URL` | optional | `rediss://:<token>@host:6380/0` for persistent OAuth state. Without it, FastMCP's per-replica DiskStore is used (refresh tokens are lost on deploy/restart) |
 | `GOOGLE_SITE_VERIFICATION` | optional | If set, the landing page emits `<meta name="google-site-verification" content="...">` for Search Console verification |
 | `MCP_ANALYTICS_INGEST_URL` | optional | Backend endpoint for usage-analytics events (e.g. `<API_BASE_URL>/api/internal/mcp-events/`). Capture is inert unless this and `MCP_INGEST_SHARED_SECRET` are both set |
