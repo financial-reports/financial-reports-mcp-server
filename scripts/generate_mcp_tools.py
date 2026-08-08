@@ -107,6 +107,7 @@ import ipaddress
 import json as _json
 import logging
 import os
+import random
 import re
 import socket
 import time
@@ -1419,22 +1420,49 @@ async def _inject_auth(request: httpx.Request) -> None:
         request.headers["Authorization"] = f"Bearer {token}"
 
 
+# Limits are explicit to bound burst load against the upstream API (a single
+# Claude session routinely fans out 5–10 parallel tool calls; at 10 instances the
+# unbounded default lets us spike hundreds of TLS handshakes against
+# api.financialreports.eu). Hoisted to a constant because the transport below
+# needs the same values — see the warning there.
+_API_LIMITS = httpx.Limits(
+    max_connections=100,
+    max_keepalive_connections=20,
+    keepalive_expiry=30.0,
+)
+
+# ⚠️  http2= and limits= MUST be repeated here, not just on the AsyncClient.
+# httpx's _init_transport() returns a caller-supplied transport verbatim and only
+# uses its own http2/limits/verify kwargs to BUILD the default one. So passing
+# transport= silently discards those client-level kwargs — which would drop the
+# HTTP/2 multiplexing and the explicit pool bounds this comment block exists to
+# guarantee.
+#
+# retries=2 covers connect-phase failures only (DNS, TCP, TLS) and never a
+# request that reached the server, so it is safe for POST as well. Note it is
+# invisible to the test suite: respx patches
+# httpcore.AsyncConnectionPool.handle_async_request, which is the method that
+# *contains* httpcore's retry loop, so a mocked ConnectError is seen exactly
+# once. Prod-only hardening by construction — do not add a test asserting it.
+_api_transport = httpx.AsyncHTTPTransport(
+    retries=2,
+    http2=True,
+    limits=_API_LIMITS,
+)
+
 # A single AsyncClient per process. Connection pool + HTTP keep-alive are
 # reused across all tool calls. Closed on shutdown via the FastAPI lifespan
-# below. Limits are explicit to bound burst load against the upstream API
-# (a single Claude session routinely fans out 5–10 parallel tool calls;
-# at 10 replicas the unbounded default lets us spike hundreds of TLS
-# handshakes against api.financialreports.eu). HTTP/2 multiplexes those
-# parallel calls over a single connection.
+# below. HTTP/2 multiplexes parallel calls over a single connection.
+#
+# The timeout is split rather than flat: a single 60 s budget meant an
+# unreachable upstream burned the full 60 s per call before failing, while the
+# read phase genuinely needs that long for large filing bodies.
 _api_client = httpx.AsyncClient(
     base_url=API_BASE_URL,
-    timeout=60.0,
-    limits=httpx.Limits(
-        max_connections=100,
-        max_keepalive_connections=20,
-        keepalive_expiry=30.0,
-    ),
+    timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=10.0),
+    limits=_API_LIMITS,
     http2=True,
+    transport=_api_transport,
     event_hooks={"request": [_inject_auth]},
     headers={
         # Must start with "FinancialReports-MCP-Server" — the Django admin
@@ -1442,6 +1470,128 @@ _api_client = httpx.AsyncClient(
         "User-Agent": f"FinancialReports-MCP-Server/{MCP_VERSION}",
     },
 )
+
+# ---------------------------------------------------------------------------
+# Retrying transient upstream failures — GET only
+# ---------------------------------------------------------------------------
+# One retry, GET only. POST is deliberately excluded: the upstream POST surface
+# (webhooks, watchlist) is not idempotent, and replaying a request that may
+# already have been applied is the exact failure mode this restriction prevents.
+_RETRY_STATUSES = frozenset({502, 503, 504})
+_RETRY_BACKOFF = 0.25
+_RETRY_JITTER = 0.25
+# DRF hands out Retry-After values of 47 s on burst limits and up to 1_209_600 s
+# (14 days) on quota errors. Anything past this cap outlives every MCP client's
+# tool timeout, so we skip the retry rather than clamp down to the cap —
+# clamping would guarantee a second request the upstream has already refused.
+_RETRY_AFTER_MAX = 2.0
+
+
+async def _retry_sleep(seconds: float) -> None:
+    """Backoff sleep. A seam so tests can neutralise it without real delays."""
+    await asyncio.sleep(seconds)
+
+
+def _retry_delay(status: int, body_text: str, retry_after: str) -> Optional[float]:
+    """Seconds to wait before the single retry, or None to fail immediately.
+
+    5xx is narrowed to 502/503/504 — the load-balancer/gateway family that is
+    genuinely transient. 500 and 501 are usually deterministic, so retrying them
+    just doubles the latency of a guaranteed failure.
+
+    For 429 the decision is delegated to the #74 classifier rather than
+    re-derived: only `burst_limit` and `rate_limited` can clear inside a tool
+    call, while `quota_exhausted` / `spend_cap_daily` / `spend_ceiling_monthly`
+    do not reset within the period. `_classify_upstream_429` deliberately routes
+    unknown and malformed bodies to `rate_limited`, so testing against
+    `_NON_RETRYABLE_429` inherits that intended asymmetry for free.
+    """
+    if status == 429:
+        if _classify_upstream_429(body_text) in _NON_RETRYABLE_429:
+            return None
+    elif status not in _RETRY_STATUSES:
+        return None
+    if retry_after:
+        wait = float(int(retry_after))
+        return wait if wait <= _RETRY_AFTER_MAX else None
+    return _RETRY_BACKOFF + random.uniform(0.0, _RETRY_JITTER)
+
+
+async def _api_get(url: str, **kwargs: Any) -> httpx.Response:
+    """GET the upstream, retrying once on a transient failure.
+
+    Retries by re-calling `.get()`, never by re-sending the same Request object.
+    That matters: `_inject_auth` is a per-Request event hook, so a fresh Request
+    re-runs the fail-closed credential guard with the current `_current_token`.
+    Re-sending a built Request would skip the hook entirely.
+    """
+    try:
+        response = await _api_client.get(url, **kwargs)
+    except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        logger.warning(
+            "upstream GET transport error, retrying once: %s",
+            exc.__class__.__name__,
+        )
+        await _retry_sleep(_RETRY_BACKOFF + random.uniform(0.0, _RETRY_JITTER))
+        return await _api_client.get(url, **kwargs)
+
+    delay = _retry_delay(response.status_code, response.text, _retry_after_seconds(response))
+    if delay is None:
+        return response
+    logger.warning(
+        "upstream GET returned %s, retrying once after %.2fs",
+        response.status_code,
+        delay,
+    )
+    await _retry_sleep(delay)
+    return await _api_client.get(url, **kwargs)
+
+
+@asynccontextmanager
+async def _api_stream_get(url: str, **kwargs: Any) -> AsyncIterator[httpx.Response]:
+    """Streaming GET, retrying once on a transient failure.
+
+    The retry decision is made on the status line, before any body byte is
+    consumed. A mid-body failure must NEVER be retried: re-streaming could
+    re-download up to _MAX_FILING_BYTES. The `handed_off` flag is what enforces
+    that — once the response is yielded to the caller, a timeout raised inside
+    the caller's own `aiter_bytes()` loop surfaces here, and re-raising is the
+    only correct response.
+
+    Classifying a 429 needs the body, so it is read here. httpx caches after
+    `aread()`, so the caller's own `aread()` still works.
+    """
+    delay: Optional[float] = None
+    handed_off = False
+    try:
+        async with _api_client.stream("GET", url, **kwargs) as response:
+            body_text = ""
+            if response.status_code == 429:
+                body_text = (await response.aread()).decode("utf-8", errors="replace")
+            delay = _retry_delay(
+                response.status_code, body_text, _retry_after_seconds(response)
+            )
+            if delay is None:
+                handed_off = True
+                yield response
+                return
+            logger.warning(
+                "upstream stream returned %s, retrying once after %.2fs",
+                response.status_code,
+                delay,
+            )
+    except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        if handed_off:
+            raise
+        logger.warning(
+            "upstream stream transport error, retrying once: %s",
+            exc.__class__.__name__,
+        )
+        delay = _RETRY_BACKOFF + random.uniform(0.0, _RETRY_JITTER)
+
+    await _retry_sleep(delay)
+    async with _api_client.stream("GET", url, **kwargs) as response:
+        yield response
 
 
 def _auth_error(msg: str) -> str:
@@ -1821,7 +1971,10 @@ def _upstream_hint(
         wait = f" Retry after {retry_after}s." if retry_after else ""
         return "Rate limited by the FinancialReports API — wait a moment and retry." + wait
     if status >= 500:
-        return "Transient upstream error — retry once; report if it persists."
+        # The server already retried once before surfacing this (see _api_get),
+        # so do not tell the caller to retry immediately — that would be a third
+        # attempt against an upstream that has failed twice.
+        return "Transient upstream error, already retried once — report if it persists."
     return "The request was rejected upstream — check the arguments."
 
 
@@ -2240,13 +2393,49 @@ async def _fetch_asset(url: str, fallback_media: str) -> Optional[tuple[bytes, s
             return None
 
 
+# MCP_STARTUP_SELFCHECK: "warn" (default) logs and boots; "strict" fails boot;
+# "off" skips the probe entirely (used by the e2e compose stack, which boots two
+# containers against the real upstream and would otherwise trip the throttle).
+_SELFCHECK_MODE = os.environ.get("MCP_STARTUP_SELFCHECK", "warn").strip().lower()
+_SELFCHECK_PATH = "/health/"
+
+
+async def _upstream_selfcheck() -> None:
+    """Confirm the upstream is reachable at boot instead of at first user call.
+
+    Routed through `_api_client` on purpose: that way an API_BASE_URL or
+    transport misconfiguration surfaces here rather than silently degrading every
+    tool call. `_inject_auth` returns immediately when `_current_token` is empty
+    (its default), so this is genuinely unauthenticated.
+
+    Success means "the upstream answered", NOT "the upstream answered 200".
+    /health/ sits behind the anonymous burst throttle — 12 rapid unauthenticated
+    GETs return 200, 200, 200 then 429 — so a cold multi-instance scale-out would
+    see 429s. A 429 still proves reachability, which is the only thing this probe
+    is asking about. Requiring 200 would make boot flaky for no benefit.
+    """
+    if _SELFCHECK_MODE == "off":
+        return
+    try:
+        resp = await _api_client.get(_SELFCHECK_PATH, timeout=5.0)
+    except httpx.HTTPError as exc:
+        msg = "upstream self-check failed at startup: %s"
+        if _SELFCHECK_MODE == "strict":
+            logger.error(msg + " (MCP_STARTUP_SELFCHECK=strict)", exc.__class__.__name__)
+            raise
+        logger.warning(msg, exc.__class__.__name__)
+        return
+    logger.info("upstream self-check ok (status=%s)", resp.status_code)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Compose our shutdown work with FastMCP's existing lifespan.
 
     Also performs an explicit Redis ping when MCP_REDIS_URL is configured,
     so a misconfigured Redis URL fails the revision at boot rather than
-    silently falling back to broken OAuth at first user login.
+    silently falling back to broken OAuth at first user login, plus an
+    unauthenticated upstream reachability probe (see _upstream_selfcheck).
     """
     if _oauth_storage is not None and MCP_REDIS_URL:
         try:
@@ -2261,6 +2450,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         except Exception:
             logger.exception("Redis ping failed — failing fast at startup")
             raise
+
+    await _upstream_selfcheck()
 
     await _usage_emitter.start()
 
@@ -3195,7 +3386,7 @@ async def {{ func_name }}(
         if path_params:
             url = url.format(**path_params)
 
-        response = await _api_client.get(
+        response = await _api_get(
             url,
             params={k: v for k, v in query_params.items() if v is not None},
         )
@@ -3300,7 +3491,7 @@ async def {{ func_name }}(
 
         # Stream so we never buffer more than _MAX_FILING_BYTES into memory,
         # even when the upstream body is much larger than the user's slice.
-        async with _api_client.stream("GET", url) as response:
+        async with _api_stream_get(url) as response:
             if response.status_code != 200:
                 body = await response.aread()
                 return _upstream_error_text(
@@ -3412,7 +3603,7 @@ async def {{ func_name }}(
             url = url.format(**path_params)
 
         try:
-            response = await _api_client.get(
+            response = await _api_get(
                 url,
                 params={k: v for k, v in query_params.items() if v is not None},
             )
@@ -3425,7 +3616,8 @@ async def {{ func_name }}(
             )
             raise UpstreamHTTPError(
                 f"upstream {{ func_name }} request failed ({type(exc).__name__}). "
-                "The FinancialReports API was unreachable or timed out — retry once."
+                "The FinancialReports API was unreachable or timed out "
+                "(already retried once)."
             ) from exc
         if response.status_code != 200:
             _raise_upstream_error("{{ func_name }}", response)
@@ -3719,7 +3911,7 @@ async def filings_markdown_search(
         if not query or not query.strip():
             raise ToolInputError("query must be a non-empty string")
         url = f"/filings/{filing_id}/markdown/"
-        async with _api_client.stream("GET", url) as response:
+        async with _api_stream_get(url) as response:
             if response.status_code != 200:
                 body = await response.aread()
                 return _upstream_error_text(

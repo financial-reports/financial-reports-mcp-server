@@ -45,6 +45,11 @@ services:
       API_BASE_URL: "https://api.financialreports.eu"
       LOG_LEVEL: "INFO"
       MCP_VERSION: "e2e"
+      # Both services here boot against the REAL upstream from a single egress
+      # IP, and its health endpoint is behind an anonymous burst throttle. Skip
+      # the probe rather than have two near-simultaneous boots throttle each
+      # other into a spurious warning.
+      MCP_STARTUP_SELFCHECK: "off"
     ports:
       - "8000:8000"
     healthcheck:
@@ -80,6 +85,8 @@ services:
       LOG_LEVEL: "INFO"
       MCP_VERSION: "e2e-redis"
       MCP_REDIS_URL: "redis://redis:6379/3"
+      # See the note on the `mcp` service above.
+      MCP_STARTUP_SELFCHECK: "off"
     ports:
       - "8001:8000"
     healthcheck:

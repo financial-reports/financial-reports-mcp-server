@@ -109,6 +109,33 @@ def mcp_module(respx_router: respx.MockRouter):
     return m
 
 
+@pytest.fixture(autouse=True)
+def _no_retry_sleep(request):
+    """Neutralise `_api_get`'s backoff so the suite never actually sleeps (#75).
+
+    Autouse rather than opt-in: several pre-existing tests mock a persistent 503
+    or a ConnectTimeout, and every one of them now passes through one retry.
+    Without this seam each would burn the real backoff for no added coverage.
+
+    Resolves `mcp_module` lazily — many tests never import the generated module,
+    and forcing a reload on them would be wasteful.
+    """
+    if "mcp_module" not in request.fixturenames:
+        yield
+        return
+    m = request.getfixturevalue("mcp_module")
+
+    async def _instant(_seconds: float) -> None:
+        return None
+
+    original = m._retry_sleep
+    m._retry_sleep = _instant
+    try:
+        yield
+    finally:
+        m._retry_sleep = original
+
+
 @pytest.fixture()
 def fake_access_token(mcp_module):
     """Stub for FastMCP's access-token object (`get_access_token()` return)."""
