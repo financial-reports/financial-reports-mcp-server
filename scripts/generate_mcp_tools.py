@@ -137,6 +137,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from src.usage_analytics import (
     UsageAnalyticsMiddleware,
     build_emitter_from_env,
+    current_call_id,
     record_tool_error,
     sanitize_error_detail,
 )
@@ -144,10 +145,70 @@ from src.usage_analytics import (
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
+class _StructuredLogFormatter(logging.Formatter):
+    """Single-line JSON so Cloud Logging groups a traceback as ONE entry.
+
+    This is the whole trick, and nothing in Google's Cloud Run docs says it
+    outright: Cloud Logging splits multi-line stdout into separate one-line
+    entries. So a plain `logger.exception()` traceback becomes N unrelated
+    textPayload rows, and Error Reporting gets neither grouping nor a stack
+    trace. Emitting the entire traceback as the `message` STRING value of a
+    one-line JSON object keeps it intact — the embedded newlines are escaped
+    inside the JSON string, so there is exactly one line of output.
+
+    `severity` is the field Cloud Logging reads for log level; the default
+    `levelname` is ignored. A real traceback in `message` is sufficient for
+    Error Reporting to pick the entry up — the @type ReportedErrorEvent marker
+    is not required.
+
+    Off GCP this is just structured logging, which is a defensible default for
+    self-hosters rather than a regression. Enabled when Cloud Run's K_SERVICE is
+    present, or forced with LOG_FORMAT=json.
+    """
+
+    # Cloud Logging's severity vocabulary differs from Python's for one level.
+    _SEVERITY = {"WARNING": "WARNING", "CRITICAL": "CRITICAL"}
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "severity": self._SEVERITY.get(record.levelname, record.levelname),
+            "message": super().format(record),
+            "logging.googleapis.com/sourceLocation": {
+                "file": record.pathname,
+                "line": str(record.lineno),
+                "function": record.funcName,
+            },
+            "logging.googleapis.com/labels": {
+                "logger": record.name,
+                # Looked up lazily: both are defined further down this module, so
+                # a log line emitted during import would NameError on a direct
+                # reference. Empty string is the right answer that early anyway.
+                "instance": globals().get("INSTANCE_ID", ""),
+                "version": globals().get("MCP_VERSION", ""),
+            },
+        }
+        return _json.dumps(payload, default=str)
+
+
+def _configure_logging() -> None:
+    """Plain text locally, single-line JSON on Cloud Run."""
+    level = os.environ.get("LOG_LEVEL", "INFO")
+    want_json = os.environ.get(
+        "LOG_FORMAT", "json" if os.environ.get("K_SERVICE") else "text"
+    ).strip().lower() == "json"
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )
+    if want_json:
+        formatter = _StructuredLogFormatter("%(name)s: %(message)s")
+        for handler in logging.getLogger().handlers:
+            handler.setFormatter(formatter)
+
+
+_configure_logging()
 # httpx logs every request line at INFO. At production traffic volume this
 # is the dominant log line and serves no operational purpose — silence it.
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -1390,6 +1451,27 @@ def _jwt_lacks_kid(token: str) -> bool:
 # ---------------------------------------------------------------------------
 # Shared HTTP client — module-level for connection-pool reuse
 # ---------------------------------------------------------------------------
+async def _inject_correlation(request: httpx.Request) -> None:
+    """Stamp the per-tool-call id so one value joins the MCP log line, the
+    MCPToolEvent row, and the origin's request log.
+
+    Host-scoped for the same reason `_inject_auth` is: this is our own diagnostic
+    id and there is no reason to hand it to the CDN or any other host. Kept as a
+    separate hook rather than folded into `_inject_auth`, whose whole contract is
+    "auth only, host-scoped, fail closed" — mixing a diagnostic concern into a
+    security-critical function is not worth the one line of wiring it saves.
+
+    A hyphenated header name is mandatory: nginx drops headers containing
+    underscores unless `underscores_in_headers` is on, which it is not.
+    """
+    call_id = current_call_id()
+    if not call_id:
+        return
+    if request.url.host and request.url.host != _API_HOST:
+        return
+    request.headers.setdefault("X-Client-Request-Id", call_id)
+
+
 async def _inject_auth(request: httpx.Request) -> None:
     """Add upstream auth header from `_current_token`. Format depends on whether
     the dev API-key bypass is active. Scoped to the FR API host so a caller
@@ -1463,7 +1545,7 @@ _api_client = httpx.AsyncClient(
     limits=_API_LIMITS,
     http2=True,
     transport=_api_transport,
-    event_hooks={"request": [_inject_auth]},
+    event_hooks={"request": [_inject_auth, _inject_correlation]},
     headers={
         # Must start with "FinancialReports-MCP-Server" — the Django admin
         # dashboard filters APIRequestLog by this exact prefix.
@@ -1930,6 +2012,33 @@ def _classify_upstream_error(status: int, body_text: str) -> str:
     return "unknown"
 
 
+# Response headers we will accept as an upstream request identifier, in order of
+# preference. `x-request-id` is first so this stays correct if the monolith ever
+# starts emitting one — but it does not today, which is why
+# MCPToolEvent.upstream_request_id sat at 0 of 31,445 rows despite the MCP having
+# sent it all along. Nothing was being sent because nothing was being received.
+#
+# `cf-ray` is Cloudflare's per-request edge id. It is present on 100% of upstream
+# responses AND already captured in the origin's nginx access log
+# (log_format ... ray=$http_cf_ray), so it joins an MCPToolEvent row to an origin
+# request line with no upstream change and no migration — the column is 128 chars
+# and its whole ingest pipeline is already shipped and idle.
+#
+# Caveat worth knowing: this is a grep-join against nginx logs, not a SQL join,
+# and CDN-cached responses never reach origin (so there is no origin line — but in
+# that case there was nothing to correlate to either).
+_REQUEST_ID_HEADERS = ("x-request-id", "cf-ray")
+
+
+def _upstream_request_id(response: httpx.Response) -> Optional[str]:
+    """First usable per-request identifier from an upstream response."""
+    for header in _REQUEST_ID_HEADERS:
+        value = (response.headers.get(header) or "").strip()
+        if value:
+            return value
+    return None
+
+
 def _upstream_hint(
     status: int,
     error_kind: str = "unknown",
@@ -1986,15 +2095,17 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
     status, request id, and a next-step hint.
     """
     status = response.status_code
-    request_id = response.headers.get("x-request-id")
+    request_id = _upstream_request_id(response)
     body_text = response.text[:1000]
     error_kind = _classify_upstream_error(status, body_text)
     logger.warning(
-        "upstream %s status=%d kind=%s request_id=%s token_fp=%s body=%r",
+        "upstream %s status=%d kind=%s request_id=%s client_request_id=%s "
+        "token_fp=%s body=%r",
         func_name,
         status,
         error_kind,
         request_id,
+        current_call_id(),
         _jwt_fingerprint(_current_token.get()),
         # Redact before logging: some gateways echo the Authorization header
         # in error bodies, and this line ships to the log aggregator.
@@ -2030,7 +2141,7 @@ def _upstream_error_text(response: httpx.Response, body_text: str) -> str:
         "UpstreamHTTPError",
         f"{status} {response.reason_phrase}: {sanitize_error_detail(body_text)}",
         upstream_status=status,
-        request_id=response.headers.get("x-request-id"),
+        request_id=_upstream_request_id(response),
         error_kind=error_kind,
     )
     hint = _upstream_hint(

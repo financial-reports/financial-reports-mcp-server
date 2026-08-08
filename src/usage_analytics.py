@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -223,6 +224,28 @@ def build_emitter_from_env() -> UsageAnalyticsEmitter:
 # middleware finally — propagation through the FastMCP middleware chain is the
 # load-bearing assumption, pinned by tests/test_text_tool_analytics.py.
 _tool_error: ContextVar[Optional[dict]] = ContextVar("_tool_error", default=None)
+
+# --- per-call correlation id -------------------------------------------------
+#
+# A fresh UUID per tool call, forwarded upstream as `X-Client-Request-Id`, so one
+# value joins an MCP log line to its MCPToolEvent row to the origin request log.
+#
+# Distinct from `correlation_id` further down, which stitches a SESSION together
+# and is stable across many calls. This one is deliberately per-call: it answers
+# "which upstream request did THIS tool call make". Note #75's retry can turn one
+# tool call into two upstream requests; both carry the same id, so the origin-side
+# join is intentionally one-to-many.
+#
+# Propagation through the FastMCP middleware chain is the same load-bearing
+# assumption `_tool_error` already relies on: `await call_next(context)` runs in
+# the same task, so the value set here is visible inside the tool body and in
+# httpx's request event hook.
+_call_id: ContextVar[str] = ContextVar("_call_id", default="")
+
+
+def current_call_id() -> str:
+    """This tool call's correlation id, or '' outside a tool call."""
+    return _call_id.get()
 
 # --- clientInfo carry-over across the stateless transport -------------------
 #
@@ -640,6 +663,7 @@ class UsageAnalyticsMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
         _tool_error.set(None)  # clear any value carried over within this context
+        call_id_token = _call_id.set(uuid.uuid4().hex)
         await self._resolve_client_info(context)
         status, err, result = "ok", _ErrorInfo(), None
         try:
@@ -659,6 +683,8 @@ class UsageAnalyticsMiddleware(Middleware):
             self._safe_emit(context, kind="tool", status=status, err=err,
                             latency_ms=int((time.monotonic() - started) * 1000),
                             result=result)
+            # Reset AFTER _safe_emit so _build_event can still read the id.
+            _call_id.reset(call_id_token)
 
     async def on_get_prompt(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
@@ -712,7 +738,14 @@ class UsageAnalyticsMiddleware(Middleware):
             "arguments": sanitize_mcp_arguments(arguments),
             "status": status,
             "upstream_status": err.upstream_status,
+            # Whatever per-request id the upstream response carried. Today that is
+            # Cloudflare's cf-ray (the monolith emits no x-request-id), which the
+            # origin's nginx access log already records as ray=$http_cf_ray.
             "upstream_request_id": err.request_id or "",
+            # Our own per-call id, forwarded upstream as X-Client-Request-Id. The
+            # Django ingest serializer ignores unknown keys, so sending this before
+            # the web-repo column lands is safe — it is simply dropped.
+            "client_request_id": _call_id.get(),
             "error_type": err.error_type or "",
             "error_detail": err.detail or "",
             "error_kind": err.error_kind or "",

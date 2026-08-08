@@ -30,6 +30,7 @@ Copy `.env.example` to `.env` and populate:
 | `API_BASE_URL` | ✅ | Upstream API base (default `https://api.financialreports.eu`) |
 | `MCP_VERSION` | optional | Version label exposed at `/health` |
 | `MCP_STARTUP_SELFCHECK` | optional | Upstream reachability probe at boot: `warn` (default) logs a warning and serves anyway, `strict` fails the boot, `off` skips it. Any HTTP response counts as reachable — the upstream health endpoint sits behind an anonymous burst throttle, so a 429 is still proof of life |
+| `LOG_FORMAT` | optional | `text` (default) or `json`. `json` emits single-line JSON with a `severity` field and the full traceback as one string — required for Google Cloud Logging, which otherwise splits a multi-line traceback into separate unrelated entries and loses the stack trace. Defaults to `json` automatically when `K_SERVICE` is set (i.e. on Cloud Run) |
 | `MCP_REDIS_URL` | optional | `rediss://:<token>@host:6380/0` for persistent OAuth state. Without it, FastMCP's per-replica DiskStore is used (refresh tokens are lost on deploy/restart) |
 | `GOOGLE_SITE_VERIFICATION` | optional | If set, the landing page emits `<meta name="google-site-verification" content="...">` for Search Console verification |
 | `MCP_ANALYTICS_INGEST_URL` | optional | Backend endpoint for usage-analytics events (e.g. `<API_BASE_URL>/api/internal/mcp-events/`). Capture is inert unless this and `MCP_INGEST_SHARED_SECRET` are both set |
