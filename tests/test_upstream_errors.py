@@ -77,11 +77,17 @@ async def test_structured_403_raises_typed_error_with_context(
 
 
 @pytest.mark.asyncio
-async def test_structured_503_message_suggests_retry(
-    mcp_module, monkeypatch, fake_access_token, respx_router
+async def test_structured_503_message_says_the_server_already_retried(
+    mcp_module, monkeypatch, fake_access_token, respx_router, _no_retry_sleep
 ) -> None:
+    """Copy contract changed with #75: the server retries transient GETs itself.
+
+    Telling the caller to "retry once" would invite a third attempt against an
+    upstream that has already failed twice, so the message states what happened
+    instead.
+    """
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    respx_router.get(f"{TEST_API_BASE}/companies/").mock(
+    route = respx_router.get(f"{TEST_API_BASE}/companies/").mock(
         return_value=httpx.Response(503, text="upstream blip")
     )
 
@@ -90,7 +96,8 @@ async def test_structured_503_message_suggests_retry(
         await fn()
 
     assert ei.value.upstream_status == 503
-    assert "retry" in str(ei.value).lower()
+    assert "already retried" in str(ei.value).lower()
+    assert route.call_count == 2  # the retry bounded at exactly one
 
 
 @pytest.mark.asyncio
@@ -112,7 +119,7 @@ async def test_structured_429_message_mentions_rate_limit(
 
 @pytest.mark.asyncio
 async def test_structured_timeout_raises_typed_error_without_url(
-    mcp_module, monkeypatch, fake_access_token, respx_router
+    mcp_module, monkeypatch, fake_access_token, respx_router, _no_retry_sleep
 ) -> None:
     _auth_as(mcp_module, monkeypatch, fake_access_token)
     respx_router.get(f"{TEST_API_BASE}/companies/").mock(
@@ -127,7 +134,7 @@ async def test_structured_timeout_raises_typed_error_without_url(
     assert exc.upstream_status is None
     msg = str(exc)
     assert "ConnectTimeout" in msg
-    assert "retry" in msg.lower()
+    assert "already retried" in msg.lower()
     # No internal hostnames in client-facing text.
     assert "api.test.invalid" not in msg
 

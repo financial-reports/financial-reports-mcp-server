@@ -541,3 +541,90 @@ def test_markdown_clamp_is_150k(mcp_module) -> None:
         body = f.read()
     assert "min(int(limit), 150000)" in body
     assert "min(int(limit), 200000)" not in body
+
+
+# --- startup upstream self-check (issue #75) ---------------------------------
+# The first lifespan assertions in this file. Every test above enters the
+# lifespan via `with TestClient(...)`, but none asserted on what happens inside.
+
+
+def test_startup_selfcheck_warns_but_boots_when_upstream_unreachable(
+    mcp_module, respx_router, caplog
+) -> None:
+    """Default mode is advisory: log it and serve. A dead upstream must not stop
+    the server answering /health or the OAuth routes."""
+    import logging
+
+    respx_router.get("https://api.test.invalid/health/").mock(
+        side_effect=httpx.ConnectError("upstream down")
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with TestClient(mcp_module.app) as client:
+            assert client.get("/health").status_code == 200
+
+    assert any("self-check failed" in r.message for r in caplog.records)
+
+
+def test_startup_selfcheck_treats_429_as_reachable(
+    mcp_module, respx_router, caplog
+) -> None:
+    """A 429 proves reachability, which is all this probe asks.
+
+    /health/ sits behind the anonymous burst throttle — 12 rapid unauthenticated
+    GETs return 200, 200, 200 then nine 429s — so a cold multi-instance
+    scale-out, or the two e2e containers sharing a runner egress IP, would see
+    429s. Requiring 200 would make boot flaky for no benefit.
+    """
+    import logging
+
+    respx_router.get("https://api.test.invalid/health/").mock(
+        return_value=httpx.Response(429, json={"type": "burst_limit_exceeded"})
+    )
+
+    with caplog.at_level(logging.WARNING):
+        with TestClient(mcp_module.app) as client:
+            assert client.get("/health").status_code == 200
+
+    assert not any("self-check failed" in r.message for r in caplog.records)
+
+
+def test_startup_selfcheck_strict_fails_boot(monkeypatch, respx_router) -> None:
+    """MCP_STARTUP_SELFCHECK=strict turns the probe into a boot gate.
+
+    Reloaded inside the test because the mode is read at module import — the same
+    pattern as test_landing_emits_gsv_tag_when_env_set above.
+    """
+    import importlib
+
+    import pytest
+
+    import src.financial_reports_mcp as m  # type: ignore
+
+    monkeypatch.setenv("MCP_STARTUP_SELFCHECK", "strict")
+    importlib.reload(m)
+    respx_router.get("https://api.test.invalid/health/").mock(
+        side_effect=httpx.ConnectError("upstream down")
+    )
+
+    with pytest.raises(httpx.ConnectError):
+        with TestClient(m.app):
+            pass
+
+
+def test_startup_selfcheck_off_skips_the_probe(monkeypatch, respx_router) -> None:
+    """`off` exists for the e2e compose stack, which boots two containers against
+    the real upstream and would otherwise trip the shared-IP throttle."""
+    import importlib
+
+    import src.financial_reports_mcp as m  # type: ignore
+
+    monkeypatch.setenv("MCP_STARTUP_SELFCHECK", "off")
+    importlib.reload(m)
+    route = respx_router.get("https://api.test.invalid/health/").mock(
+        side_effect=httpx.ConnectError("upstream down")
+    )
+
+    with TestClient(m.app) as client:
+        assert client.get("/health").status_code == 200
+    assert route.call_count == 0
