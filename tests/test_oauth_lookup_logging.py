@@ -2,7 +2,7 @@
 
 These cover the DCR "invalid_client" diagnosis additions:
 
-  - `_instance_id()`            -> replica id for multi-replica misrouting visibility
+  - `_instance_id()`            -> per-instance id for multi-instance misrouting visibility
   - `_redis_db_number()`        -> DB segment of the Redis URL (no secret)
   - `_disk_store_path()`        -> ephemeral DiskStore location for the startup line
   - `_ClientLookupLoggingMixin` -> per-lookup HIT/MISS log around get_client()
@@ -18,15 +18,39 @@ import logging
 import pytest
 
 
-def test_instance_id_prefers_container_app_replica_name(mcp_module, monkeypatch):
-    monkeypatch.setenv("CONTAINER_APP_REPLICA_NAME", "mcp--abc123-xyz")
-    assert mcp_module._instance_id() == "mcp--abc123-xyz"
+def test_instance_id_is_prefixed_with_k_revision(mcp_module, monkeypatch):
+    """Cloud Run's K_REVISION is the greppable anchor: the id must START with it
+    so a log line can be tied back to a revision."""
+    monkeypatch.setenv("K_REVISION", "mcp-00123-abc")
+    instance_id = mcp_module._instance_id()
+    assert instance_id.startswith("mcp-00123-abc-")
+    # The revision alone is NOT the whole id — see the uniqueness test below.
+    assert instance_id != "mcp-00123-abc"
+
+
+def test_instance_id_is_unique_per_call(mcp_module, monkeypatch):
+    """REGRESSION GUARD for the `instance=localhost` bug.
+
+    The old implementation read CONTAINER_APP_REPLICA_NAME (Azure-only, never set
+    on Cloud Run) and fell through to socket.gethostname(), which returns
+    "localhost" in every Cloud Run container. Every instance therefore logged the
+    same label and the "registered on A, lookup-miss on B" signal these log sites
+    exist for was silently dead.
+
+    K_REVISION alone does not fix that — it is per-REVISION, identical across all
+    instances of it. Only a per-process suffix makes instances distinguishable, so
+    two successive resolutions MUST differ.
+    """
+    monkeypatch.setenv("K_REVISION", "mcp-00123-abc")
+    assert mcp_module._instance_id() != mcp_module._instance_id()
 
 
 def test_instance_id_falls_back_to_hostname(mcp_module, monkeypatch):
-    monkeypatch.delenv("CONTAINER_APP_REPLICA_NAME", raising=False)
-    # Falls back to a non-empty hostname; never raises, never empty.
+    """With no K_REVISION (local dev, tests), fall back to the hostname. Still
+    non-empty, still unique per call, and never raises."""
+    monkeypatch.delenv("K_REVISION", raising=False)
     assert mcp_module._instance_id()
+    assert mcp_module._instance_id() != mcp_module._instance_id()
 
 
 def test_redis_db_number_parses_path_segment(mcp_module):
@@ -116,8 +140,9 @@ async def test_lookup_miss_returns_none_and_logs_warning(mcp_module, caplog):
 
 @pytest.mark.asyncio
 async def test_lookup_log_contains_instance_id(mcp_module, caplog, monkeypatch):
-    # The replica id must appear so cross-replica misrouting is visible. The
-    # mixin reads the module-level INSTANCE_ID resolved at import.
+    # The instance id must appear so cross-instance misrouting is visible. The
+    # mixin reads the module-level INSTANCE_ID resolved once at import (NOT a
+    # fresh _instance_id() per call, which would defeat correlating log lines).
     probe = _make_probe(mcp_module, None)
     with caplog.at_level(logging.INFO, logger="financial-reports-mcp"):
         await probe.get_client("any-client")
