@@ -472,13 +472,27 @@ def _result_metrics(result) -> dict:
 
 # --- Request-level signals: cross-client workflow stitching + client discovery ---
 # ChatGPT (openai-mcp) mints a fresh Mcp-Session-Id every tool call (a known MCP spec
-# violation, not fixable server-side), so `session_id` can't group its calls. It instead
-# carries per-conversation context in the JSON-RPC `_meta` object: `openai/session`
-# (stable per conversation), `openai/subject` (user), `openai/userAgent`, `openai/locale`.
-# We read those (body, not headers), derive a unified `correlation_id`, and — as a
-# fallback and a discovery aid — capture header NAMES and a salted token fingerprint.
+# violation, not fixable server-side), so `session_id` can't group its calls. It carries
+# per-conversation context in two places, and #94 established that the one we were
+# reading is not the one it actually populates:
+#
+#   * the `x-openai-session` HTTP HEADER — what openai-mcp really sends. Measured over
+#     the whole prod table: 4,104 requests carried it, every one fell through to
+#     `mcp_session`, and each produced exactly 1.00 rows per correlation group (against
+#     1.25 for everything else). Every ChatGPT call was its own singleton "workflow".
+#   * the JSON-RPC `_meta` object — `openai/session`, `openai/userAgent`, `openai/locale`.
+#     Kept as the preferred tier because it is the MCP-spec-native channel, but it has
+#     never been observed in production. See `_request_context` for why we could not
+#     have observed it even if clients did send it.
+#
+# We read both, prefer `_meta`, and — as further fallbacks and a discovery aid — capture
+# header NAMES, the Mcp-Session-Id, and a salted token fingerprint. Header VALUES are
+# never captured except `x-openai-session`, which is an opaque conversation id.
 # No credentials, cookies, client IPs, or response content are ever captured.
 _META_NAMESPACE = "openai/"
+# The correlation header openai-mcp actually sends. Lower-case: `_http_headers`
+# normalizes, and HTTP header names are case-insensitive.
+_CORRELATION_HEADER = "x-openai-session"
 _META_EXCLUDE = frozenset({
     "openai/userLocation",  # user geography — out of analytics scope
     "openai/subject",       # OpenAI account id — avoid cross-platform identity linkage (mcp_sub already identifies the user)
@@ -492,13 +506,53 @@ _HEADER_KEYS_CAP = 60
 _FP_SALT = os.environ.get("MCP_ANALYTICS_FP_SALT") or os.environ.get("MCP_INGEST_SHARED_SECRET", "")
 
 
-def _extract_meta(message) -> dict:
-    """OpenAI control metadata from the tool-call ``_meta`` (JSON-RPC body, not headers).
+def _request_context(context):
+    """The MCP ``RequestContext`` for this call, or ``None``. Never raises.
+
+    Deliberately NOT ``context.message``. FastMCP discards the client's validated
+    request and rebuilds the middleware message from name+arguments alone
+    (``fastmcp/server/server.py:1618`` for tools, ``:1812`` for prompts), so
+    ``context.message.meta`` is structurally always ``None`` — which is why
+    ``mcp_meta`` was empty on all 31,541 prod rows, and why the ``openai/session``
+    tier could never fire regardless of what any client sent (#94).
+
+    The wire ``_meta`` survives only here: the low-level server copies
+    ``params.meta`` onto the RequestContext (``mcp/shared/session.py:367``).
+    """
+    try:
+        return getattr(getattr(context, "fastmcp_context", None), "request_context", None)
+    except Exception:
+        logger.debug("usage analytics: request-context access skipped", exc_info=True)
+        return None
+
+
+def _openai_session_header() -> str:
+    """Value of the ``x-openai-session`` request header, or ``''``. Never raises.
+
+    The only header whose VALUE we capture. It is an opaque per-conversation id —
+    not a credential and not a user identifier (``openai/subject`` stays excluded
+    for exactly that reason). Truncated to match the ``_meta`` tier.
+    """
+    try:
+        raw = get_http_headers(include_all=True) or {}
+        for key, val in raw.items():
+            if str(key).lower() == _CORRELATION_HEADER:
+                return str(val or "").strip()[:128]
+    except Exception:
+        logger.debug("usage analytics: correlation-header capture skipped", exc_info=True)
+    return ""
+
+
+def _extract_meta(request_context) -> dict:
+    """OpenAI control metadata from the request's ``_meta`` (JSON-RPC body, not headers).
     Captures every ``openai/*`` key except user-geography. Values are protocol metadata,
-    never user content or credentials. Never raises."""
+    never user content or credentials. Never raises.
+
+    Takes the ``RequestContext`` from `_request_context`, NOT the middleware message —
+    see that function for why the message can never carry ``_meta``."""
     out: dict = {}
     try:
-        meta = getattr(message, "meta", None)
+        meta = getattr(request_context, "meta", None)
         extra = getattr(meta, "model_extra", None) or {}
     except Exception:
         logger.debug("usage analytics: meta access skipped", exc_info=True)
@@ -717,11 +771,14 @@ class UsageAnalyticsMiddleware(Middleware):
             session_id = (getattr(fc, "session_id", "") or "")[:64]
         except Exception:
             session_id = ""
-        meta = _extract_meta(message)
+        meta = _extract_meta(_request_context(context))
         header_keys = _http_header_keys()
         conv = str(meta.get("openai/session") or "").strip()
+        header_conv = _openai_session_header()
         if conv:
             correlation_id, correlation_source = conv[:128], "meta:openai/session"
+        elif header_conv:
+            correlation_id, correlation_source = header_conv, "header:x-openai-session"
         elif session_id:
             correlation_id, correlation_source = session_id, "mcp_session"
         else:
@@ -762,9 +819,12 @@ class UsageAnalyticsMiddleware(Middleware):
             # Stable per-connection id → stitch a user's call sequence into a workflow.
             "session_id": session_id,
             # Cross-client workflow stitching. ChatGPT mints a fresh Mcp-Session-Id per
-            # call, so session_id can't group its calls; openai/session in _meta can.
-            # correlation_id = best available stable key (openai/session > Mcp-Session-Id
-            # > salted token fingerprint); correlation_source records which one was used.
+            # call, so session_id can't group its calls; its per-conversation id can.
+            # correlation_id = best available stable key (openai/session in _meta >
+            # x-openai-session header > Mcp-Session-Id > salted token fingerprint);
+            # correlation_source records which one was used. The header tier is the one
+            # that actually fires for ChatGPT traffic today — see the block comment
+            # above _META_NAMESPACE for the measurement behind that ordering.
             "correlation_id": correlation_id,
             "correlation_source": correlation_source,
             # OpenAI control metadata from the tool-call _meta (openai/* keys; no user geo).
