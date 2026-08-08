@@ -6,7 +6,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialReports](https://financialreports.eu) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **15 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 42-tool surface). **Free for any FinancialReports account.** Sourced from official regulators.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **16 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 46-tool surface). **Free for any FinancialReports account.** Sourced from official regulators.
 
 ---
 
@@ -168,17 +168,17 @@ Two things the error page itself doesn't tell you:
 
 ## What you get
 
-**15 LLM-callable tools by default** — the curated surface analysts actually use:
+**16 LLM-callable tools by default** — the curated surface analysts actually use:
 
 | Domain | Tools | Use cases |
 |---|---|---|
-| Companies | 4 | Search by name/ticker/ISIN, retrieve full company profiles, get normalized financials, predict next annual report |
+| Companies | 5 | Search by name/ticker/ISIN, retrieve full company profiles, get normalized financials, predict next annual report, batch-resolve a list of identifiers to company IDs |
 | Filings | 4 | List, retrieve, fetch markdown content (capped at 150K chars), keyword-search inside a single filing |
 | ISINs | 2 | Lookup by ISIN, list dual-listings |
 | Reference taxonomy | 2 | Filing categories and filing types |
 | Guides | 3 | Filing-type taxonomy, ISIC industry classification, and markdown-fetch strategy — callable references for tool-only clients that can't read MCP resources |
 
-Set `MCP_FULL_SURFACE=1` to restore the full **42-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, and webhook subscriptions.
+Set `MCP_FULL_SURFACE=1` to restore the full **46-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, webhook subscriptions, the company-merge audit feed, and per-exchange security listings.
 
 The shipped surface is generated from a committed, reviewed snapshot of the [FinancialReports OpenAPI schema](https://financialreports.eu/api/schema/) (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build), so it's deterministic and never drifts silently on a rebuild.
 
@@ -203,7 +203,7 @@ The repository ships an [Agent Skill](skills/financial-filings-research/) — `f
 │  (FastAPI +      │                                       ▼
 │   FastMCP)       │     proxy bearer token         ┌──────────────────┐
 │                  │  ─────────────────────────►    │  api.            │
-│  15 tools        │                                │  financial-      │
+│  16 tools        │                                │  financial-      │
 │  generated from  │                                │  reports.eu      │
 │  OpenAPI schema  │                                │  (first-party)   │
 └──────────────────┘                                └──────────────────┘
@@ -211,7 +211,7 @@ The repository ships an [Agent Skill](skills/financial-filings-research/) — `f
 
 **Key design decisions:**
 
-- **Tools are generated, not hand-written.** `scripts/generate_mcp_tools.py` reads the OpenAPI schema — pinned to a committed snapshot via `FR_PIN_SCHEMA=1` in CI and the Docker build — and emits `src/financial_reports_mcp.py`. The default surface is curated to a focused 15-tool set; `MCP_FULL_SURFACE=1` emits the full surface.
+- **Tools are generated, not hand-written.** `scripts/generate_mcp_tools.py` reads the OpenAPI schema — pinned to a committed snapshot via `FR_PIN_SCHEMA=1` in CI and the Docker build — and emits `src/financial_reports_mcp.py`. The default surface is curated to a focused 16-tool set; `MCP_FULL_SURFACE=1` emits the full surface. Note that `_PRUNED_EXCLUDE` in the generator is a **denylist**, so a new upstream endpoint joins the curated surface unless the snapshot-refresh PR explicitly excludes it.
 - **Bearer-token proxy, not session storage.** The user's Cognito access token is forwarded to the upstream API on every call. No conversation data, no API responses cached server-side.
 - **Subscription gating in-process.** A 15-second LRU cache holds Cognito `sub` → tier mappings to avoid hammering the FR API on every tool call.
 - **Same-origin asset proxy.** `/favicon.ico`, `/icon.png`, `/icon-{32,192,512}.png` are served from this origin (proxied + cached from CDN) so connector UIs and the `/consent` page render without cross-origin CSP friction.
@@ -245,6 +245,7 @@ The list below is regenerated by `scripts/generate_mcp_tools.py` on every build.
 * `companies_financials_retrieve` — Retrieve Company Financials
 * `companies_list` — List Companies
 * `companies_next_annual_report_retrieve` — Predict Next Annual Report
+* `companies_resolve_create` — Resolve Companies by Identifier (Batch)
 * `companies_retrieve` — Retrieve Company Details
 
 ### Filing Categories

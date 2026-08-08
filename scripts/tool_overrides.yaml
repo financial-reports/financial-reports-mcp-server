@@ -33,6 +33,31 @@ companies_list:
       parameters: 'countries="DE", sector="C"'
       notes: "ISIC Section C = Manufacturing"
 
+companies_resolve_create:
+  # The upstream description already explains the status buckets at length, so
+  # this override only adds what the schema can't: which tool to reach for.
+  when_to_use: >
+    Use when the user hands you a **list** of identifiers — a spreadsheet
+    column, a portfolio, a peer set — and you need FinancialReports IDs for all
+    of them. One request covers up to 500 rows and costs one call against quota
+    regardless of row count, so it is far cheaper than a `companies_list` search
+    per name. Pass an opaque `ref` per row to join the results back to the
+    user's own rows. Act only on rows whose `status` is `matched`; for
+    `ambiguous`, ask the user to choose from `candidates` rather than picking
+    one yourself.
+  when_not_to_use: >
+    Don't use for a single company — `companies_list` (name/ticker) or
+    `isins_retrieve` (ISIN) is one hop and returns richer match context.
+    Don't send more than 50 name-only rows in one request: rows past that cap
+    return `not_covered` with `name_tier_skipped`, so split name-heavy batches.
+  examples:
+    - user_says: "Here are 40 tickers from my portfolio — pull their latest filings"
+      parameters: 'rows=[{"ref": "row-1", "ticker": "GOOG", "name": "Alphabet Inc."}, ...]'
+      notes: "Resolve every ID in one call, then fan out to filings_list per matched row"
+    - user_says: "Do you cover these ISINs?"
+      parameters: 'rows=[{"isin": "US5949181045"}, {"isin": "US0378331005"}]'
+      notes: "not_covered means no coverage — say so; never substitute a near match"
+
 companies_retrieve:
   when_to_use: >
     Use to get full company metadata (LEI, description, headquarters,
