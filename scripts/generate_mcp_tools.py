@@ -4312,9 +4312,15 @@ async def summarize_recent_filings(
     import re
     from datetime import date, timedelta
     _match = re.search(r"\\d+", str(lookback_days or ""))
+    # Truncate the digit run BEFORE int(): CPython raises ValueError above
+    # sys.get_int_max_str_digits() (4300 by default since 3.11), and that
+    # exception would surface from this body as the same masked
+    # "Error rendering prompt ..." this fix exists to remove. 8 digits is far
+    # past the clamp below, so nothing legitimate is lost.
+    _digits = _match.group()[:8] if _match else ""
     # Clamp to a sane window: junk like '$2' still yields *a* briefing rather
     # than a crash, and an absurd value can't push `cutoff` out of range.
-    days = min(max(int(_match.group()), 1), 3650) if _match else 90
+    days = min(max(int(_digits), 1), 3650) if _digits else 90
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     instructions = (
         f"Summarize {ticker_or_name}'s regulatory filings from the last "

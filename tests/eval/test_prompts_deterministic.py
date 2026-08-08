@@ -82,6 +82,10 @@ WIRE_ARGS: dict[str, list[dict[str, object]]] = {
         {"ticker_or_name": "AAPL", "lookback_days": '{"lookback_days": 30}'},
         # Explicit JSON null — reached the body and raised TypeError from timedelta.
         {"ticker_or_name": "AAPL", "lookback_days": None},
+        # A digit run past CPython's int-from-string limit (4300 by default since
+        # 3.11). int() raises ValueError above it, and timedelta overflows well
+        # before that, so the digits are truncated before conversion and clamped.
+        {"ticker_or_name": "AAPL", "lookback_days": "9" * 5000},
     ],
 }
 
