@@ -1637,11 +1637,16 @@ class UpstreamHTTPError(RuntimeError):
         self.request_id = request_id
         # Stable enum-ish string so analytics can GROUP BY failure class
         # without re-parsing the human message. Values:
-        #   "missing_profile"     — Cognito sub has no matching FR UserProfile
-        #   "expired_token"       — upstream said the token expired (or HTTP 401)
-        #   "invalid_credentials" — any other 401/403
-        #   "transient"           — HTTP 5xx
-        #   "unknown"             — anything else
+        #   "missing_profile"       — Cognito sub has no matching FR UserProfile
+        #   "expired_token"         — upstream said the token expired (or HTTP 401)
+        #   "invalid_credentials"   — any other 401/403
+        #   "quota_exhausted"       — 429, plan allowance spent for the period
+        #   "spend_cap_daily"       — 429, PAYG daily spend cap
+        #   "spend_ceiling_monthly" — 429, PAYG monthly self-serve ceiling
+        #   "burst_limit"           — 429, too many requests per minute
+        #   "rate_limited"          — 429 we could not classify (retry advice)
+        #   "transient"             — HTTP 5xx
+        #   "unknown"               — anything else
         self.error_kind = error_kind
 
 
@@ -1650,6 +1655,15 @@ class UpstreamHTTPError(RuntimeError):
 # so wording tweaks upstream don't silently flip us back to the wrong hint.
 _PROFILE_MISSING_MARKER = "user profile not found"
 _TOKEN_EXPIRED_MARKER = "token has expired"
+
+
+def _parse_upstream_json(body_text: str) -> Optional[dict]:
+    """Best-effort JSON-object parse of an upstream error body. Never raises."""
+    try:
+        payload = _json.loads(body_text)
+    except Exception:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _classify_upstream_403(body_text: str) -> str:
@@ -1661,11 +1675,8 @@ def _classify_upstream_403(body_text: str) -> str:
     never anything that could carry a credential.
     """
     detail = ""
-    try:
-        payload = _json.loads(body_text)
-    except Exception:
-        payload = None
-    if isinstance(payload, dict):
+    payload = _parse_upstream_json(body_text)
+    if payload is not None:
         raw = payload.get("detail", "") or ""
         if isinstance(raw, str):
             detail = raw
@@ -1677,18 +1688,105 @@ def _classify_upstream_403(body_text: str) -> str:
     return "invalid_credentials"
 
 
+# Upstream 429 discriminator. Source of truth: financialreports
+# `users/exceptions.py` — DRF's exception handler REPLACES the whole response
+# body and stamps exactly one of these four `type` values.
+#
+# Keyed on `type`, never on `detail`: on paid tiers the quota case carries DRF's
+# generic "Request was throttled. Expected available in N seconds." — byte-
+# identical to the burst case — so substring matching cannot separate them.
+_RATE_LIMIT_KINDS = {
+    "quota_limit_exceeded": "quota_exhausted",
+    "daily_spend_cap_reached": "spend_cap_daily",
+    "monthly_spend_ceiling_reached": "spend_ceiling_monthly",
+    "burst_limit_exceeded": "burst_limit",
+}
+
+# The 429s that retrying cannot fix within the current period. These get the
+# upstream's own remediation copy instead of "wait a moment and retry".
+_NON_RETRYABLE_429 = frozenset(
+    {"quota_exhausted", "spend_cap_daily", "spend_ceiling_monthly"}
+)
+
+# Client-facing cap for forwarded upstream copy. Larger than MAX_ERROR_DETAIL
+# (the analytics column budget) because the free-tier quota sentence plus its
+# absolute payg_url runs ~250 chars and must survive intact.
+_MAX_UPSTREAM_COPY = 400
+
+
+def _classify_upstream_429(body_text: str) -> str:
+    """Map a raw 429 body to a stable `error_kind` token.
+
+    Unrecognized, malformed, and empty bodies all fall through to
+    `"rate_limited"`, which renders as retry advice. That asymmetry is
+    deliberate: telling a burst-limited caller their allowance is gone until
+    next month is a far worse failure than telling a quota-exhausted caller to
+    retry, and a `type` the monolith adds later must not be read as quota.
+    """
+    payload = _parse_upstream_json(body_text)
+    if payload is None:
+        return "rate_limited"
+    raw_type = payload.get("type")
+    if not isinstance(raw_type, str):
+        return "rate_limited"
+    return _RATE_LIMIT_KINDS.get(raw_type, "rate_limited")
+
+
+def _upstream_429_copy(body_text: str) -> str:
+    """The upstream's own remediation sentence for a non-retryable 429.
+
+    Prefers `message` + `resolution` over `detail`: on paid tiers `detail` is
+    DRF's generic throttle string, while `message`/`resolution` always carry the
+    real copy. Forwarded rather than reconstructed here because the amounts, the
+    requests-vs-credits unit, the period wording and the absolute `payg_url` are
+    all runtime/env-dependent in the monolith — the URL is absolute
+    *specifically* so it survives this proxy.
+
+    Upstream text is untrusted input: redact credential-shaped substrings and
+    cap the length before any of it reaches the model's context.
+    """
+    payload = _parse_upstream_json(body_text)
+    if payload is None:
+        return ""
+    parts = [payload.get("message"), payload.get("resolution")]
+    text = " ".join(p.strip() for p in parts if isinstance(p, str) and p.strip())
+    if not text:
+        raw = payload.get("detail")
+        text = raw.strip() if isinstance(raw, str) else ""
+    return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_COPY) if text else ""
+
+
+def _retry_after_seconds(response: httpx.Response) -> str:
+    """`Retry-After` when it is the integer-seconds form DRF emits (#40 §5).
+
+    RFC 9110 also permits an HTTP-date, which the monolith never produces.
+    Dropping anything non-numeric is safer than interpolating a date into a
+    sentence that reads as a number of seconds.
+    """
+    raw = (response.headers.get("retry-after") or "").strip()
+    return raw if raw.isdigit() else ""
+
+
 def _classify_upstream_error(status: int, body_text: str) -> str:
     """Compute the `error_kind` for any non-2xx upstream response."""
     if status == 403:
         return _classify_upstream_403(body_text)
     if status == 401:
         return "expired_token"
+    if status == 429:
+        return _classify_upstream_429(body_text)
     if status >= 500:
         return "transient"
     return "unknown"
 
 
-def _upstream_hint(status: int, error_kind: str = "unknown") -> str:
+def _upstream_hint(
+    status: int,
+    error_kind: str = "unknown",
+    *,
+    upstream_copy: str = "",
+    retry_after: str = "",
+) -> str:
     if status in (401, 403):
         if error_kind == "missing_profile":
             # Reconnecting won't help — the Cognito identity has no matching
@@ -1713,7 +1811,15 @@ def _upstream_hint(status: int, error_kind: str = "unknown") -> str:
     if status == 404:
         return "The requested resource does not exist upstream — check the id/arguments."
     if status == 429:
-        return "Rate limited by the FinancialReports API — wait a moment and retry."
+        # Quota and spend-cap exhaustion are not retryable within the period —
+        # "wait a moment" is actively wrong there (a credit allowance resets at
+        # the start of next month). Forward the upstream's own remediation,
+        # which carries the absolute payg_url. Anything unclassified falls
+        # through to retry advice on purpose. (#73)
+        if error_kind in _NON_RETRYABLE_429 and upstream_copy:
+            return upstream_copy
+        wait = f" Retry after {retry_after}s." if retry_after else ""
+        return "Rate limited by the FinancialReports API — wait a moment and retry." + wait
     if status >= 500:
         return "Transient upstream error — retry once; report if it persists."
     return "The request was rejected upstream — check the arguments."
@@ -1742,12 +1848,45 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
         sanitize_error_detail(body_text),
     )
     suffix = f" (request-id: {request_id})" if request_id else ""
+    hint = _upstream_hint(
+        status,
+        error_kind,
+        upstream_copy=_upstream_429_copy(body_text) if status == 429 else "",
+        retry_after=_retry_after_seconds(response),
+    )
     raise UpstreamHTTPError(
-        f"upstream {func_name} returned {status}{suffix}. {_upstream_hint(status, error_kind)}",
+        f"upstream {func_name} returned {status}{suffix}. {hint}",
         upstream_status=status,
         request_id=request_id,
         error_kind=error_kind,
     )
+
+
+def _upstream_error_text(response: httpx.Response, body_text: str) -> str:
+    """Client-facing error string for a text tool, plus the analytics side-effect.
+
+    The mirror of `_raise_upstream_error` for tools that return their failure as
+    a normal string rather than raising. Records structured context so the
+    middleware promotes the event to `status="error"` with a real `error_kind`,
+    and returns status + classified hint only — the raw upstream body stays
+    server-side, reaching analytics sanitized and the client never at all.
+    """
+    status = response.status_code
+    error_kind = _classify_upstream_error(status, body_text)
+    record_tool_error(
+        "UpstreamHTTPError",
+        f"{status} {response.reason_phrase}: {sanitize_error_detail(body_text)}",
+        upstream_status=status,
+        request_id=response.headers.get("x-request-id"),
+        error_kind=error_kind,
+    )
+    hint = _upstream_hint(
+        status,
+        error_kind,
+        upstream_copy=_upstream_429_copy(body_text) if status == 429 else "",
+        retry_after=_retry_after_seconds(response),
+    )
+    return f"Error {status} {response.reason_phrase}: {hint}"
 
 
 async def _authorize_or_raise() -> tuple[Any, ...]:
@@ -1874,15 +2013,11 @@ def _format_response(response: httpx.Response) -> str:
         data = _scrub_response(response.json())
         return f"```json\\n{_json.dumps(data, indent=2, ensure_ascii=False)}\\n```"
     except httpx.HTTPStatusError as exc:
-        record_tool_error(
-            "UpstreamHTTPError",
-            f"{exc.response.status_code} {exc.response.reason_phrase}",
-            upstream_status=exc.response.status_code,
-        )
-        return (
-            f"Error {exc.response.status_code} {exc.response.reason_phrase}: "
-            f"{exc.response.text[:500]}"
-        )
+        # Text tools are ~9 of 15 and used to return the raw upstream body here,
+        # unsanitized — both a leak risk and the reason they never got the
+        # quota upsell. Same classifier as the structured path now (#73); the
+        # unredacted-but-sanitized body still reaches analytics for triage.
+        return _upstream_error_text(exc.response, exc.response.text[:1000])
     except Exception as exc:
         record_tool_error("ResponseFormatError", str(exc))
         return f"Error formatting response: {exc}"
@@ -3168,14 +3303,8 @@ async def {{ func_name }}(
         async with _api_client.stream("GET", url) as response:
             if response.status_code != 200:
                 body = await response.aread()
-                record_tool_error(
-                    "UpstreamHTTPError",
-                    f"{response.status_code} {response.reason_phrase}",
-                    upstream_status=response.status_code,
-                )
-                return (
-                    f"Error {response.status_code} {response.reason_phrase}: "
-                    f"{body[:500].decode('utf-8', errors='replace')}"
+                return _upstream_error_text(
+                    response, body[:1000].decode("utf-8", errors="replace")
                 )
 
             buf = bytearray()
@@ -3593,12 +3722,9 @@ async def filings_markdown_search(
         async with _api_client.stream("GET", url) as response:
             if response.status_code != 200:
                 body = await response.aread()
-                record_tool_error(
-                    "UpstreamHTTPError",
-                    f"{response.status_code} {response.reason_phrase}",
-                    upstream_status=response.status_code,
+                return _upstream_error_text(
+                    response, body[:1000].decode("utf-8", errors="replace")
                 )
-                return f"Error {response.status_code}: {body[:300].decode('utf-8', errors='replace')}"
             buf = bytearray()
             async for _chunk in response.aiter_bytes():
                 if len(buf) + len(_chunk) > _MAX_FILING_BYTES:
