@@ -12,7 +12,7 @@ For most use cases the **hosted server at `https://mcp.financialfilings.com/mcp`
 - An **AWS Cognito user pool** with an app client configured
 - Access to the FinancialReports API (or a fork-modified upstream)
 - A public URL where this server will be reachable (must be added as an allowed redirect URI on your Cognito app client)
-- Optional: a Redis instance (Azure Cache, Upstash, AWS ElastiCache) for OAuth-state persistence across restarts
+- Optional: a Redis instance (GCP Memorystore, Azure Cache, Upstash, AWS ElastiCache) for OAuth-state persistence across restarts
 
 ---
 
@@ -130,7 +130,7 @@ The advertised `Icon` URLs in the MCP `initialize` response always point at this
 | `GET /.well-known/oauth-protected-resource/mcp` | RFC 9728 metadata (path-scoped) |
 | `GET /.well-known/oauth-authorization-server` | RFC 8414 metadata |
 
-There's no built-in metrics endpoint. For production, wrap the FastAPI app with the Prometheus middleware of your choice or hook Azure Container Apps' built-in scaling metrics.
+There's no built-in metrics endpoint. For production, wrap the FastAPI app with the Prometheus middleware of your choice or use your platform's built-in request/scaling metrics — on Cloud Run (what we run) those land in Cloud Monitoring with no instrumentation on your side.
 
 ---
 

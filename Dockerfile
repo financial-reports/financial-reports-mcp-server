@@ -25,7 +25,7 @@ RUN . /app/venv/bin/activate && FR_PIN_SCHEMA=1 python scripts/generate_mcp_tool
 # --- Stage 2: Runtime ---
 FROM python:3.11-slim-bookworm
 
-# curl is needed for HEALTHCHECK
+# curl is needed for the local HEALTHCHECK below
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
@@ -49,10 +49,15 @@ ENV PATH="/home/appuser/venv/bin:$PATH" \
 
 EXPOSE 8000
 
-# Honest health signal for Container Apps probes and local docker.
+# LOCAL-ONLY health signal, for `docker run` and docker compose (including
+# docker-compose.test.yml). Cloud Run — what serves production — IGNORES the
+# Docker HEALTHCHECK instruction entirely; it applies its own tcpSocket startup
+# probe against the container port instead. So nothing below affects prod
+# readiness, and prod probe behaviour cannot be changed by editing it.
+# See docs/OPERATIONS.md.
 # start-period=30s leaves headroom for the synchronous startup work
-# (Cognito OIDC discovery + JWKS fetch + optional Redis ping) before
-# Container Apps starts marking the revision unhealthy.
+# (Cognito OIDC discovery + JWKS fetch + optional Redis ping) before the
+# local runtime starts reporting the container unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 

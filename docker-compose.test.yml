@@ -1,6 +1,6 @@
 # Local end-to-end test harness.
 #
-# Brings up the same image we deploy to Azure Container Apps, plus a Redis 7
+# Brings up the same image we deploy to Google Cloud Run, plus a Redis 7
 # sidecar so the optional MCP_REDIS_URL code path is actually exercised.
 # Run via `scripts/test-e2e.sh` or `make test-e2e`.
 #
@@ -12,7 +12,8 @@
 #   - /.well-known/oauth-protected-resource (bare and /mcp suffix) both serve
 #   - OAuth /register (RFC 7591 dynamic client registration) round-trips
 #     through the configured store (the operation that broke production
-#     in v1.4.37-audit2 against Azure Cache for Redis)
+#     in v1.4.37-audit2 against the managed Redis of the day
+#     (pre-GCP-migration Azure Cache))
 #   - Restarting the server preserves registered clients when MCP_REDIS_URL
 #     is set, and DOESN'T preserve them when it isn't
 

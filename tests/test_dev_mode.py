@@ -66,7 +66,7 @@ def test_prod_hostname_guard(monkeypatch) -> None:
     URL slip through and re-open the single-shared-key bypass in prod."""
     monkeypatch.setenv("DEV_MODE_API_KEY", "leak_attempt")
 
-    # Must REFUSE to import: prod host, empty/Azure-native, and embedded-marker URLs
+    # Must REFUSE to import: prod host, empty/platform-default, and embedded-marker URLs
     # whose *hostname* is not exactly an allow-listed dev host.
     bad_urls = (
         "https://mcp.financialfilings.com",    # prod

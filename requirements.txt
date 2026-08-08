@@ -39,5 +39,7 @@ Jinja2>=3.1
 # This pin is auto-bumped by the `Generate and Publish SDKs` workflow in the
 # financial-reports/web repo (.github/workflows/generate_sdks.yml on master)
 # whenever the OpenAPI schema changes. That workflow also rebuilds and
-# redeploys this MCP server's image to Azure Container Apps.
+# redeploys this MCP server's image to Google Cloud Run. It deletes this pin
+# by literal string match before building, so keep it on its own line.
+# See docs/OPERATIONS.md.
 financial_reports_generated_client==1.4.56
