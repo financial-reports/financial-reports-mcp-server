@@ -5,3 +5,22 @@ pytest>=8,<10
 pytest-asyncio>=0.23,<2
 respx>=0.22,<1
 httpx>=0.28
+
+# Lint gate — EXACT pins, unlike everything above.
+#
+# ruff's DEFAULT rule set expands between releases, so a range would make this
+# gate silently stricter on some future CI run with no diff to review. That is
+# not hypothetical: #76 recorded "ruff check is already clean", and at 0.16.2 the
+# default set reports 48 findings in this repo. The version AND the `--select`
+# must both be pinned for the gate to mean one fixed thing — hence
+# `[tool.ruff.lint] select` in pyproject.toml plus the explicit `--select` in
+# .github/workflows/ci.yml. Widening either is a deliberate, reviewable diff.
+#
+# Precedent: requirements.txt:11 pins fastmcp==2.14.7 exactly for the same class
+# of reason — a re-resolved range meant dev ran 2.13.3 while prod ran 2.14.7.
+#
+# isort is pinned at the current latest. Note that 6.2.0 does not exist on PyPI
+# (the 6.x line ends at 6.1.0); 6.1.0 and 8.0.1 flag an identical set of files
+# in this repo, so the pin choice is not load-bearing — only its exactness is.
+ruff==0.16.2
+isort==8.0.1

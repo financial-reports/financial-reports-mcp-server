@@ -1,0 +1,45 @@
+# Tooling configuration only.
+#
+# There is deliberately NO [project] or [build-system] table: this server ships
+# as a container image (see Dockerfile), not as a wheel, and adding those tables
+# would advertise `pip install .` as supported when it isn't.
+#
+# Why this file exists at all: before it, there was no lint config anywhere in
+# the repo OR in any parent directory, so every contributor's `ruff check` used
+# whatever default rule set their installed ruff happened to ship. That is how
+# issue #76 came to record "ruff check is already clean" — a claim that does not
+# reproduce on ruff 0.16.2, whose defaults report 48 findings here. Config lives
+# here so a local run and the CI gate return the same verdict.
+
+[tool.ruff]
+line-length = 88
+
+# src/financial_reports_mcp.py is build-time generated (~218 KB) and git-ignored,
+# but it exists on disk after `make regen` and CI renders it before testing.
+# ruff honours .gitignore when walking a directory, so `ruff check src` already
+# skips it — this states the intent explicitly and also covers someone naming the
+# file directly. (It reports 28 findings of its own, none actionable: the fix
+# would be to edit template strings inside scripts/generate_mcp_tools.py.)
+extend-exclude = ["src/financial_reports_mcp.py"]
+
+[tool.ruff.lint]
+# PINNED DELIBERATELY — the version pin in requirements-test.txt is only half the
+# guarantee. ruff's DEFAULT rule set expands between releases, so "no config"
+# means the gate silently gets stricter on every bump. At 0.16.2 the default set
+# reports 48 findings in this repo: 16 UP045, 11 BLE001, 5 I001, 4 RUF100,
+# 3 SIM117, 3 S110, 2 UP037, 2 B017, 1 SIM118, 1 S112 — 27 of them in
+# src/usage_analytics.py.
+#
+# This subset is the one that only ever catches real bugs: E4 (imports),
+# E7 (statement errors), E9 (syntax and IO errors), F (pyflakes — undefined
+# names, unused imports). Widening it is a separate PR: several of the BLE001
+# blind-excepts are deliberate fail-closed handlers in the auth path and need
+# individual review, not a sweep.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.isort]
+profile = "black"
+
+# Same generated module. isort does NOT honour .gitignore, so without this the
+# gate fails on a 218 KB file no human wrote.
+extend_skip_glob = ["*/financial_reports_mcp.py"]

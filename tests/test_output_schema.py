@@ -12,7 +12,6 @@ import pytest
 
 from .conftest import TEST_API_BASE, TEST_CLIENT_ID
 
-
 # Tools we promoted to structured output. Keep this list in sync with
 # `STRUCTURED_OUTPUT_TOOLS` in scripts/generate_mcp_tools.py.
 STRUCTURED_TOOL_NAMES = [
