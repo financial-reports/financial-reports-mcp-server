@@ -23,8 +23,8 @@ import pytest
 
 if not os.environ.get("FR_E2E_OAUTH_PROBE"):
     pytest.skip(
-        "prod OAuth probe — set FR_E2E_OAUTH_PROBE=1 (+ FR_E2E_TOKEN or "
-        "FR_E2E_INTERACTIVE=1) to run",
+        "prod OAuth probe — set FR_E2E_OAUTH_PROBE=1 (+ FR_E2E_USERNAME/"
+        "FR_E2E_PASSWORD, FR_E2E_TOKEN, or FR_E2E_INTERACTIVE=1) to run",
         allow_module_level=True,
     )
 
@@ -33,13 +33,32 @@ from tests.e2e import oauth_probe  # noqa: E402  (after the gate by design)
 
 @pytest.fixture(scope="module")
 def probe_report() -> dict:
+    """Acquire a token, then drive the probe.
+
+    Three modes, in precedence order:
+
+      1. FR_E2E_USERNAME + FR_E2E_PASSWORD — headless password login. **This is the
+         scheduled-probe mode.** It is the only one that works unattended: a FastMCP
+         proxy token lives ~60 minutes and its refresh token rotates on every use, so
+         no token can be stored as a secret and reused across cron runs.
+      2. FR_E2E_TOKEN — bring your own, for a one-off manual run inside that hour.
+      3. FR_E2E_INTERACTIVE=1 — mint via a real browser login. Blocks.
+    """
     base = os.environ.get("FR_E2E_BASE_URL", oauth_probe.PROD_BASE)
+    username = os.environ.get("FR_E2E_USERNAME")
+    password = os.environ.get("FR_E2E_PASSWORD")
     token = os.environ.get("FR_E2E_TOKEN")
-    if not token:
+
+    if username and password:
+        token = oauth_probe.mint_token_headless(username, password, base)
+    elif not token:
         if os.environ.get("FR_E2E_INTERACTIVE"):
             token = oauth_probe.mint_token(base)
         else:
-            pytest.skip("set FR_E2E_TOKEN, or FR_E2E_INTERACTIVE=1 to mint one via browser")
+            pytest.skip(
+                "set FR_E2E_USERNAME + FR_E2E_PASSWORD (scheduled mode), or "
+                "FR_E2E_TOKEN, or FR_E2E_INTERACTIVE=1 to mint one via browser"
+            )
     return oauth_probe.run_probe(token, base)
 
 
