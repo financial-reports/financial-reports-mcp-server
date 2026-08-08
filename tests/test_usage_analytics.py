@@ -380,7 +380,9 @@ def test_result_metrics_single_object_retrieve_has_data():
 
 def test_result_metrics_structured_content_attr_and_text_fallback():
     import types
+
     from src.usage_analytics import _result_metrics
+
     # FastMCP-style result object exposing structured_content
     res = types.SimpleNamespace(structured_content={"results": [1, 2, 3]})
     assert _result_metrics(res)["result_count"] == 3
@@ -469,6 +471,7 @@ def _ctx_with_meta(meta_dict=None, session_id="", name="companies_list", argumen
 
 def test_extract_meta_captures_openai_keys_excludes_user_location():
     import mcp.types as mt
+
     from src.usage_analytics import _extract_meta
     meta = mt.RequestParams.Meta.model_validate({
         "openai/session": "conv_1", "openai/subject": "user_1",
@@ -492,7 +495,8 @@ def test_extract_meta_missing_or_none_returns_empty():
 
 def test_extract_meta_value_truncated():
     import mcp.types as mt
-    from src.usage_analytics import _extract_meta, _META_VAL_CAP
+
+    from src.usage_analytics import _META_VAL_CAP, _extract_meta
     meta = mt.RequestParams.Meta.model_validate({"openai/session": "x" * 1000})
     out = _extract_meta(types.SimpleNamespace(meta=meta))
     assert len(out["openai/session"]) == _META_VAL_CAP

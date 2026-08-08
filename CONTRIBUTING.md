@@ -16,7 +16,7 @@ Thanks for your interest. This server is the official MCP for the FinancialRepor
 - ❌ **Hand-edits to `src/financial_reports_mcp.py`** — it's auto-generated. Edits there get overwritten on every build. Update the generator instead.
 - ❌ **Speculative features** — new tools that aren't backed by an actual FR API endpoint, abstractions for hypothetical future use cases
 - ❌ **Drive-by dependency bumps** — unless they fix a CVE or a real bug
-- ❌ **Code-style-only changes** — please run `black`/`ruff` locally before submitting; PRs that only reformat existing code generally aren't merged
+- ❌ **Code-style-only changes** — please run the CI-gated `ruff`/`isort` commands from [Code style](#code-style) locally before submitting; PRs that only reformat existing code generally aren't merged
 - ❌ **Branding changes** — colors, copy, icons. The hosted server is FinancialReports-owned; adapt your fork instead
 
 ## Development workflow
@@ -81,9 +81,26 @@ The body should explain **why** the change is needed, not just **what** changed.
 
 ## Code style
 
-- **Black** for formatting (`black src tests scripts`)
-- **isort** for imports (`isort src tests scripts`)
-- **Ruff** for linting (`ruff check src tests scripts`)
+**Gated in CI** — the `lint` job in `.github/workflows/ci.yml` runs exactly these, and a PR stays red until they pass:
+
+```bash
+ruff check src tests scripts --select E4,E7,E9,F --exclude src/financial_reports_mcp.py
+isort --check-only --profile black src tests scripts
+```
+
+Both tools are pinned **exactly** in `requirements-test.txt` (`ruff==0.16.2`, `isort==8.0.1`), and `pyproject.toml` carries the same `select` and `profile`, so a local run returns the same verdict as CI. Drop `--check-only` to have isort fix your imports in place.
+
+Two things worth knowing about that command line:
+
+- **The `--select` is pinned as deliberately as the version.** Ruff's default rule set expands between releases; under 0.16.2's defaults this repo reports 48 findings (mostly `UP045` annotation modernization and `BLE001` blind-except). Widening the selection is welcome, but as its own PR — several of those blind-excepts are intentional fail-closed handlers in the auth path and need individual review, not a bulk fix.
+- **`src/financial_reports_mcp.py` is excluded.** It's generated and git-ignored, but it exists on disk after `make regen`, and linting ~218 KB of emitted code is noise: the only real fix would be editing template strings in `scripts/generate_mcp_tools.py`.
+
+**Not gated yet:**
+
+- **Black** (`black src tests scripts`) — the repo is not black-clean at black's default 88 columns: 27 of 33 files would be reformatted, about 866 diff lines. That reformat lands as its own whitespace-only PR, reviewable at a glance, and gets gated here afterwards. Until then, please **don't** run `black` over files your change doesn't otherwise touch — it buries the diff reviewers need to read.
+
+Also:
+
 - **Type hints required** on all new function signatures (PEP 484)
 - **Match existing patterns** in adjacent code over introducing new ones — consistency beats personal preference
 
