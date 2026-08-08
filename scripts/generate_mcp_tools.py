@@ -110,6 +110,7 @@ import os
 import re
 import socket
 import time
+import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import wraps
@@ -162,16 +163,27 @@ logger = logging.getLogger("financial-reports-mcp")
 # connector". Stamping every OAuth-state log line with the replica id makes that
 # cross-replica split visible (registration on A, lookup-miss on B).
 #
-# Azure Container Apps injects CONTAINER_APP_REPLICA_NAME per replica; fall back
-# to the hostname elsewhere. This is an instance label, never a secret.
+# Cloud Run injects NO per-instance variable. The only platform-provided env vars
+# are K_SERVICE / K_REVISION / K_CONFIGURATION / PORT, and all four are identical
+# on every instance of a revision; socket.gethostname() returns "localhost"
+# in-container. The previous implementation read CONTAINER_APP_REPLICA_NAME (which
+# only Azure Container Apps ever set) and fell through to gethostname(), so since
+# the migration every one of these log lines read `instance=localhost` and the
+# cross-instance signal above was silently dead.
+#
+# So: anchor on K_REVISION for a human-readable, greppable prefix, then append a
+# per-process random suffix. The suffix is what actually distinguishes instances —
+# K_REVISION alone would collide across every instance of one revision, which is
+# the bug being fixed. Resolved once at import, so it is stable for the process
+# lifetime. An instance label, never a secret.
 def _instance_id() -> str:
-    rid = os.environ.get("CONTAINER_APP_REPLICA_NAME", "").strip()
-    if rid:
-        return rid
-    try:
-        return socket.gethostname() or "unknown"
-    except OSError:
-        return "unknown"
+    base = os.environ.get("K_REVISION", "").strip()
+    if not base:
+        try:
+            base = socket.gethostname() or "unknown"
+        except OSError:
+            base = "unknown"
+    return f"{base}-{uuid.uuid4().hex[:8]}"
 
 
 INSTANCE_ID = _instance_id()
