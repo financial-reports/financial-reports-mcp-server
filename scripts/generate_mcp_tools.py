@@ -287,8 +287,8 @@ SUPPORT_URL = os.environ.get(
 # transactions, codes, and refresh tokens in Redis (shared across replicas,
 # survives container restarts). When unset, FastMCP falls back to an
 # encrypted DiskStore on the container's local disk — fine for dev, but on
-# Azure Container Apps the disk is ephemeral, so every deploy or replica
-# rotation forces every user to re-authenticate.
+# Cloud Run the disk is ephemeral, so every deploy or instance rotation
+# forces every user to re-authenticate.
 #
 # Format: standard Redis URL, e.g.
 #   rediss://:<auth-token>@<endpoint>:<port>/3?ssl_cert_reqs=required
@@ -308,7 +308,7 @@ DEV_MODE_API_KEY = os.environ.get("DEV_MODE_API_KEY", "").strip() or None
 _PROD_HOSTS = {"mcp.financialfilings.com"}
 # Fail CLOSED: the dev bypass (single shared key, no JWT validation) may ONLY run
 # against an explicit local/dev base URL. The old guard checked only for the prod
-# hostname, so an EMPTY or Azure-native MCP_BASE_URL slipped through and silently
+# hostname, so an EMPTY or platform-default MCP_BASE_URL slipped through and silently
 # left the bypass active. Require an allow-listed dev marker instead.
 _DEV_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "host.docker.internal"}
 # Parse the hostname and match it EXACTLY. A substring check (`"localhost" in url`)
@@ -322,7 +322,7 @@ if DEV_MODE_API_KEY and _dev_host not in _DEV_HOSTS:
         "DEV_MODE_API_KEY is set but MCP_BASE_URL host is not a recognised local/dev "
         f"host ({MCP_BASE_URL!r} -> host {_dev_host!r}). Refusing to start — the dev "
         "key bypass must never be active outside local development (an empty, "
-        "production, or Azure-native MCP_BASE_URL is exactly the case this guards)."
+        "production, or platform-default MCP_BASE_URL is exactly the case this guards)."
     )
 if DEV_MODE_API_KEY:
     logging.getLogger("financial-reports-mcp").warning(
@@ -403,7 +403,7 @@ DEFAULT_MCP_PROTOCOL_VERSION = "2025-11-25"
 
 MCP_VERSION = os.environ.get("MCP_VERSION", "dev")
 
-# Google Search Console site-verification token. Set on the Container App as
+# Google Search Console site-verification token. Set on the Cloud Run service as
 # `GOOGLE_SITE_VERIFICATION` (the bare content value Search Console gives you).
 # When set, the landing page emits a <meta name="google-site-verification" ...>
 # tag. When unset (default in tests / local dev), no tag is emitted — keeping
@@ -411,7 +411,7 @@ MCP_VERSION = os.environ.get("MCP_VERSION", "dev")
 GOOGLE_SITE_VERIFICATION = os.environ.get("GOOGLE_SITE_VERIFICATION", "").strip()
 
 # OpenAI ChatGPT Apps Directory domain-verification token, served at
-# /.well-known/openai-apps-challenge. Set on the Container App as
+# /.well-known/openai-apps-challenge. Set on the Cloud Run service as
 # `OPENAI_APPS_CHALLENGE`; defaults to the current submission token so the route
 # works without extra config. OpenAI rotates this per submission attempt — to
 # update, change the env var (no code change/redeploy of source needed).
@@ -485,8 +485,9 @@ def _disk_store_path() -> str:
 #          re-adds it — and in the OpenAI platform app editor there is no such
 #          control at all.
 #
-# On 2026-07-14 Azure wiped the cache (Standard SKU = no persistence): 2,846 keys
-# -> 20 in one hour, evictions 0, no admin action. Every registration died. So
+# On 2026-07-14 the then-managed cache (pre-GCP-migration Azure Cache, Standard
+# SKU = no persistence) was wiped: 2,846 keys -> 20 in one hour, evictions 0, no
+# admin action. Every registration died. So
 # registrations get mirrored to a durable tier while Redis stays the hot path.
 OAUTH_CLIENTS_COLLECTION = "mcp-oauth-proxy-clients"
 
@@ -731,8 +732,10 @@ if MCP_REDIS_URL:
     from redis.retry import Retry
 
     # Build the async Redis client with explicit retry on transient connection
-    # errors. Azure Cache for Redis (Standard SKU) recycles idle TLS connections
-    # on maintenance / idle-timeout events. When that happens, the async client
+    # errors. Managed Redis recycles idle TLS connections on maintenance /
+    # idle-timeout events — first observed on Azure Cache for Redis (Standard
+    # SKU) pre-GCP-migration, and Memorystore has the same class of behaviour.
+    # When that happens, the async client
     # gets a `(104, 'Connection reset by peer')` on the next AUTH read and, by
     # default, surfaces that all the way to the OAuth handler — which then hangs
     # every /register and /authorize request indefinitely. The Retry +
@@ -2266,8 +2269,8 @@ def _validate_webhook_url(value: Any) -> str:
 
     The Django backend is responsible for the authoritative check; this is
     defense in depth so a misconfigured backend cannot be used by a
-    subscriber to probe internal Azure metadata, link-local addresses,
-    or loopback.
+    subscriber to probe the cloud instance-metadata endpoint, link-local
+    addresses, or loopback.
     """
     if not isinstance(value, str) or not value:
         raise ToolInputError("webhook url must be a non-empty string")
@@ -2349,15 +2352,15 @@ mcp.add_middleware(UsageAnalyticsMiddleware(
 
 # stateless_http=True — build a fresh transport per request instead of holding an
 # in-memory session table keyed by `Mcp-Session-Id`. This connector runs as a
-# horizontally-scaled Azure Container App with NO ingress session affinity, so a
-# stateful session minted on replica A is unknown to replica B: the follow-up
+# horizontally-scaled Cloud Run service with NO load-balancer session affinity, so
+# a stateful session minted on instance A is unknown to instance B: the follow-up
 # `POST /mcp` 404s (spec-mandated "session not found"), the client surfaces
 # McpSessionTerminated, and its now-orphaned SSE GET stream idles out (~5 min) as
 # stream_timeout. Those three are the connector's dominant errors. Auth is fully
 # per-request — the presented bearer JWT is re-swapped against the Redis-backed
 # OAuth store (`_oauth_storage`), NOT the transport session — so dropping session
 # state is safe and eliminates all three failure modes. Do not remove without a
-# shared (Redis-backed) session store AND ingress affinity in place.
+# shared (Redis-backed) session store AND load-balancer affinity in place.
 mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
 
 

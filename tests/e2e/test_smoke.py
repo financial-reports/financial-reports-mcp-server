@@ -208,10 +208,11 @@ def test_dynamic_client_registration_round_trip(
 ) -> None:
     """REGRESSION TEST FOR THE PROD BUG.
 
-    In v1.4.37-audit2 deployed against Azure Cache for Redis, this
-    operation crashed with `redis.exceptions.ConnectionError: Connection
-    reset by peer` and surfaced to users as `Couldn't reach the MCP
-    server`. Catch it locally next time.
+    In v1.4.37-audit2 deployed against Azure Cache for Redis
+    (pre-GCP-migration), this operation crashed with
+    `redis.exceptions.ConnectionError: Connection reset by peer` and
+    surfaced to users as `Couldn't reach the MCP server`. Catch it
+    locally next time.
     """
     payload = {
         "client_name": "e2e-probe",
@@ -240,8 +241,9 @@ def test_dynamic_client_registration_round_trip_redis(
     """Same registration round-trip but against the Redis-backed variant.
 
     Verifies the *write path* hits Redis without erroring — this is exactly
-    what failed against Azure Cache for Redis in production. Local Redis
-    won't reproduce Azure-specific TLS bugs, but it WILL catch:
+    what failed against Azure Cache for Redis in production
+    (pre-GCP-migration). Local Redis won't reproduce provider-specific TLS
+    bugs, but it WILL catch:
       - The image being unable to import the redis client
       - The boot-time ping erroring
       - The RedisStore wiring not matching FastMCP's expected interface
