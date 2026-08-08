@@ -1,0 +1,133 @@
+name: fastmcp 3.x migration-readiness probe
+
+# This is NOT a "latest dependency" canary, and the distinction matters.
+#
+# The obvious job — `pip install -U fastmcp` before pytest — is worthless here.
+# requirements.txt:11 pins fastmcp==2.14.7, and 2.14.7 is the TERMINAL 2.x
+# release: PyPI has no 2.x after it, and latest is 3.4.6. So `-U` means "jump a
+# major version", which requirements.txt:10 explicitly forbids without an audit
+# of fastmcp/server/auth/oauth_proxy.py. Such a job would go red on its first run
+# and stay red forever, and a permanently-failing check is one people learn to
+# ignore — worse than no check at all.
+#
+# What is actually useful is a standing answer to "how far is the 3.x migration
+# from working, and what breaks first?" That is what this does: it installs
+# fastmcp>=3,<4 OVER the pinned tree and reports which stage falls over, so the
+# eventual audit starts with a work list instead of a blank page.
+#
+# Why its own workflow rather than a job in ci.yml (which is what #76 suggested):
+#   - It is expected to FAIL for now. Attaching an expected-failure job to every
+#     PR spends a runner per PR to render a permanent orange check next to the
+#     real gates — exactly the "trained to ignore it" failure mode above.
+#   - The useful cadence is periodic, not per-PR. Nothing in a PR changes whether
+#     fastmcp 3.x works; a new fastmcp release does. Adding `schedule:` to ci.yml
+#     would instead run the whole suite, including the docker e2e job, weekly.
+#   - It keeps a `continue-on-error` experiment textually separate from the
+#     merge-blocking gates.
+#
+# Every step that can legitimately fail carries `continue-on-error: true`, so the
+# workflow always ends green and never emails anyone. The verdict lives in the run
+# summary — the same discipline as snapshot-drift.yml, which always exits 0.
+#
+# WHAT TO CHECK BY HAND ON ANY ACTUAL BUMP — this probe cannot do it for you:
+# `_resolve_upstream_access_token`'s docstring (scripts/generate_mcp_tools.py)
+# records that AWSCognitoTokenVerifier strips the swapped AccessToken's `claims`
+# to {sub, username, cognito:groups}, so the client_id binding check passes via
+# the `AccessToken.client_id` ATTRIBUTE only. tests/test_client_id_binding.py now
+# covers that attribute path against a stub — but a stub cannot prove fastmcp
+# still populates the attribute from a real Cognito token. Re-verify the live
+# chain (or run tests/e2e/) before merging any bump.
+
+on:
+  schedule:
+    # Wednesdays 05:23 UTC — a different day and minute from snapshot-drift.yml
+    # so the two never queue together.
+    - cron: "23 5 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FR_PIN_SCHEMA: "1"
+
+jobs:
+  probe:
+    name: Install fastmcp 3.x over the pinned tree and run the unit suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-test.txt
+
+      - name: Install the pinned tree first
+        run: pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Overwrite the pin with fastmcp 3.x
+        id: install3x
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          # Deliberately unpinned WITHIN the 3.x line: the question this probe
+          # answers is "does the current 3.x work", so it has to float.
+          pip install "fastmcp>=3,<4"
+          resolved=$(pip show fastmcp | awk '/^Version:/ {print $2}')
+          echo "resolved=${resolved}" >> "$GITHUB_OUTPUT"
+          echo "Resolved fastmcp ${resolved} (pin in requirements.txt is 2.14.7)"
+
+      # Careful reading this stage: the generator only WRITES Python text, it
+      # never imports fastmcp, so a green "render" says nothing about API
+      # compatibility. Measured on 3.4.6: render succeeds, pytest does not. The
+      # `unit suite` row below is the only one that means anything.
+      - name: Render the generated module under 3.x
+        id: generate
+        continue-on-error: true
+        run: python scripts/generate_mcp_tools.py
+        env:
+          COGNITO_USER_POOL_ID: eu-central-1_CITESTPOOL
+          COGNITO_CLIENT_ID: ci_client
+          COGNITO_CLIENT_SECRET: ci_secret
+
+      - name: Run the unit suite under 3.x
+        id: pytest
+        continue-on-error: true
+        run: pytest tests/test_*.py -q --tb=short
+        env:
+          COGNITO_USER_POOL_ID: eu-central-1_CITESTPOOL
+          COGNITO_CLIENT_ID: ci_client
+          COGNITO_CLIENT_SECRET: ci_secret
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## fastmcp 3.x migration-readiness probe"
+            echo
+            echo "| stage | outcome |"
+            echo "|---|---|"
+            echo "| install fastmcp>=3,<4 | ${{ steps.install3x.outcome }} |"
+            echo "| render generated module | ${{ steps.generate.outcome }} |"
+            echo "| unit suite | ${{ steps.pytest.outcome }} |"
+            echo
+            echo "Resolved version: \`${{ steps.install3x.outputs.resolved || 'install failed' }}\`"
+            echo "Pinned in requirements.txt: \`2.14.7\` (terminal 2.x)"
+            echo
+            if [ "${{ steps.pytest.outcome }}" = "success" ]; then
+              echo "**3.x passes the unit suite.** That is a green light to START the"
+              echo "audit, not to bump: diff fastmcp/server/auth/oauth_proxy.py for"
+              echo "changes to the \`mcp-oauth-proxy-clients\` collection name, the key"
+              echo "format, or the ProxyDCRClient model — any of those makes existing"
+              echo "DCR registrations deserialize to None and forces every connector"
+              echo "to be removed and re-added. Then run tests/e2e/ and re-verify the"
+              echo "client_id attribute chain against a live token."
+            else
+              echo "**3.x does not pass yet.** The failures above are the migration"
+              echo "work list. Expected until someone does the audit; this workflow"
+              echo "stays green on purpose so it never pages anyone."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
