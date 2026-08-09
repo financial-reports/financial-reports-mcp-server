@@ -496,6 +496,11 @@ _CORRELATION_HEADER = "x-openai-session"
 _META_EXCLUDE = frozenset({
     "openai/userLocation",  # user geography — out of analytics scope
     "openai/subject",       # OpenAI account id — avoid cross-platform identity linkage (mcp_sub already identifies the user)
+    # OpenAI org id — same identifier class as openai/subject, excluded for the same reason.
+    # Undocumented in #55; only became visible once #96 fixed the _meta plumbing, by which
+    # point it was already being persisted. Default to not retaining a third-party account
+    # id we have no question for. See #98 before re-enabling.
+    "openai/organization",
 })
 _META_KEYS_CAP = 20
 _META_VAL_CAP = 256

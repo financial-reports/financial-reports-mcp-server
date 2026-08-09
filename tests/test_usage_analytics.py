@@ -488,6 +488,7 @@ def test_extract_meta_captures_openai_keys_excludes_user_location():
     meta = mt.RequestParams.Meta.model_validate({
         "openai/session": "conv_1", "openai/subject": "user_1",
         "openai/userAgent": "ChatGPT", "openai/userLocation": "Jakarta",
+        "openai/organization": "org_1",
         "progressToken": "p", "other/ns": "ignored",
     })
     out = _extract_meta(types.SimpleNamespace(meta=meta))
@@ -495,8 +496,16 @@ def test_extract_meta_captures_openai_keys_excludes_user_location():
     assert out["openai/userAgent"] == "ChatGPT"
     assert "openai/subject" not in out        # OpenAI account id excluded (cross-platform linkage)
     assert "openai/userLocation" not in out   # user geography deliberately excluded
+    assert "openai/organization" not in out   # OpenAI org id — same class as subject (#98)
     assert "progressToken" not in out         # non-namespaced metadata excluded
     assert "other/ns" not in out              # foreign namespace excluded
+
+    # The namespace is captured wholesale, so any NEW openai/* key OpenAI introduces is
+    # retained by default. That is deliberate for discovery, but it means an unreviewed
+    # identifier starts persisting the moment they ship it — which is exactly how
+    # openai/organization arrived (#98). Assert the set is exactly what we expect, so a
+    # new key fails here rather than silently landing in the analytics column.
+    assert set(out) == {"openai/session", "openai/userAgent"}
 
 
 def test_extract_meta_missing_or_none_returns_empty():
