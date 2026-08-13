@@ -3546,7 +3546,6 @@ POST_TOOL_TEMPLATE = '''
     tags={{ tags }},
     annotations=ToolAnnotations(
         title="{{ title }}",
-        readOnlyHint=False,
         {{ annotations_str }}
     ),
 )
@@ -4794,22 +4793,45 @@ def compute_post_annotations(func_name: str, path: str) -> str:
 
     # companies_resolve_create is a POST purely because up to 500 identifier
     # rows don't fit in a query string. It creates nothing and mutates no FR
-    # state — it's a batch lookup. Emitting destructiveHint=True would make
-    # conforming clients confirmation-gate every call, which defeats the point
-    # of having it on the curated default surface.
+    # state — it's a batch lookup, so it is the one POST that is genuinely
+    # readOnlyHint=True. Gallery reviewers (e.g. Microsoft 365 Copilot
+    # federated connectors) only enable tools annotated read-only, and
+    # destructiveHint=True would make conforming clients confirmation-gate
+    # every call, which defeats the point of having it on the curated
+    # default surface.
     if func_name == "companies_resolve_create":
-        parts = ["destructiveHint=False", "idempotentHint=True", "openWorldHint=False"]
+        parts = [
+            "readOnlyHint=True",
+            "destructiveHint=False",
+            "idempotentHint=True",
+            "openWorldHint=False",
+        ]
         return ",\n        ".join(parts)
 
     if "test_create" in func_name or "test" in func_name.split("_"):
-        parts = ["destructiveHint=False", "openWorldHint=True", "idempotentHint=False"]
+        parts = [
+            "readOnlyHint=False",
+            "destructiveHint=False",
+            "openWorldHint=True",
+            "idempotentHint=False",
+        ]
         return ",\n        ".join(parts)
 
     if "replay" in func_name:
-        parts = ["destructiveHint=False", "openWorldHint=True", "idempotentHint=False"]
+        parts = [
+            "readOnlyHint=False",
+            "destructiveHint=False",
+            "openWorldHint=True",
+            "idempotentHint=False",
+        ]
         return ",\n        ".join(parts)
 
-    parts = ["destructiveHint=True", "idempotentHint=False", "openWorldHint=False"]
+    parts = [
+        "readOnlyHint=False",
+        "destructiveHint=True",
+        "idempotentHint=False",
+        "openWorldHint=False",
+    ]
     return ",\n        ".join(parts)
 
 
