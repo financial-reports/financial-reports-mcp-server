@@ -42,4 +42,4 @@ Jinja2>=3.1
 # redeploys this MCP server's image to Google Cloud Run. It deletes this pin
 # by literal string match before building, so keep it on its own line.
 # See docs/OPERATIONS.md.
-financial_reports_generated_client==1.4.60
+financial_reports_generated_client==1.4.61
