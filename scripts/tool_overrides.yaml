@@ -89,6 +89,24 @@ companies_financials_retrieve:
     the figures directly from the filing body — citing the filing type, date, and
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
+    ARITHMETIC SELF-CHECK (do this first — it needs NO extra tool call): the
+    response already contains the whole statement, so verify it ties before you
+    report it. Balance sheet: total assets == total liabilities + total equity.
+    Income statement: the components under a parent (use `depth` / `parent_code`)
+    should sum to that parent. A small number of statements contain a figure that
+    was computed to force a balance rather than read from the filing, and those
+    do not tie. VERIFY AGAINST THE SOURCE when — and only when — (a) the
+    arithmetic above does not tie, or (b) the figure is decision-critical for the
+    user (a headline number they will act on). To verify: `filings_list` for this
+    company, then `filings_markdown_retrieve` on the filing named in
+    `source_filing`/`sources`, and read the figure from the statement in the
+    document body. Do NOT verify every figure by default — it is slow and burns
+    the request budget. WHEN COMPARING TO THE DOCUMENT, compare `raw_value`
+    together with `scale`, never the normalized `value`: the document prints the
+    raw figure in its own units (often thousands or millions), so a normalized
+    value will look mismatched when it is in fact correct. If the document and
+    the API genuinely disagree, report BOTH, say which came from which, and
+    prefer the figure you read in the filing.
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without
