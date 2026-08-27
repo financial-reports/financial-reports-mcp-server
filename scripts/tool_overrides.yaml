@@ -89,24 +89,29 @@ companies_financials_retrieve:
     the figures directly from the filing body — citing the filing type, date, and
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
-    ARITHMETIC SELF-CHECK (do this first — it needs NO extra tool call): the
-    response already contains the whole statement, so verify it ties before you
-    report it. Balance sheet: total assets == total liabilities + total equity.
-    Income statement: the components under a parent (use `depth` / `parent_code`)
-    should sum to that parent. A small number of statements contain a figure that
-    was computed to force a balance rather than read from the filing, and those
-    do not tie. VERIFY AGAINST THE SOURCE when — and only when — (a) the
-    arithmetic above does not tie, or (b) the figure is decision-critical for the
-    user (a headline number they will act on). To verify: `filings_list` for this
-    company, then `filings_markdown_retrieve` on the filing named in
-    `source_filing`/`sources`, and read the figure from the statement in the
-    document body. Do NOT verify every figure by default — it is slow and burns
-    the request budget. WHEN COMPARING TO THE DOCUMENT, compare `raw_value`
-    together with `scale`, never the normalized `value`: the document prints the
-    raw figure in its own units (often thousands or millions), so a normalized
-    value will look mismatched when it is in fact correct. If the document and
-    the API genuinely disagree, report BOTH, say which came from which, and
-    prefer the figure you read in the filing.
+    PROVENANCE — CHECK THIS FIRST, NO EXTRA CALL NEEDED: a line item whose
+    `value` is present but whose `raw_value` AND `scale` are BOTH null is one
+    where the API withheld the as-reported pair — the figure was computed to
+    close a balance, or its printed pair could not be asserted. It was NOT read
+    off the page. Never present it as sourced from the filing.
+    AN ARITHMETIC TIE PROVES INTERNAL CONSISTENCY, NOT PROVENANCE: a computed
+    figure is chosen to make total assets == total liabilities + total equity
+    hold, so a clean tie is not evidence a number came from the filing — the
+    withheld pair above is the signal that it did not. Skip that check when
+    `filters.line_items` is non-null, or the three totals are not all present for
+    one period and currency (the response is filtered; a mismatch is an
+    artifact). Children under a `parent_code` are not guaranteed to sum to their
+    parent — `depth`/`parent_code` are rendering hierarchy, not an additive
+    contract.
+    VERIFY AGAINST THE SOURCE when, and only when, the pair is withheld or the
+    figure is decision-critical: `filings_list` for this company, then
+    `filings_markdown_retrieve` on the filing in `source_filing`/`sources`, and
+    read the figure from the statement body. Do NOT verify every figure — it is
+    slow and burns the request budget. WHEN COMPARING TO THE DOCUMENT, compare
+    `raw_value` with `scale`, never the normalized `value`: the document prints
+    the raw figure in its own units, so a normalized value looks mismatched when
+    it is in fact correct. If they genuinely disagree, report BOTH, say which
+    came from which, and prefer the figure you read in the filing.
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without
