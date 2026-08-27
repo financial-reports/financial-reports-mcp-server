@@ -89,12 +89,13 @@ regen:
 	python scripts/generate_mcp_tools.py
 
 audit:
-	./venv/bin/python scripts/audit_token_budget.py > docs/token-budget.md
+	@command -v "$(PY)" >/dev/null 2>&1 || { echo "ERROR: $(PY) not found — run 'make install' in a venv first"; exit 1; }
+	"$(PY)" scripts/audit_token_budget.py > docs/token-budget.md
 	@echo "Baseline written to docs/token-budget.md"
 
 # Fast, deterministic prompt-registration tests. Run on every PR.
 eval-fast:
-	./venv/bin/python -m pytest tests/eval/ -v
+	"$(PY)" -m pytest tests/eval/ -v
 
 # LLM-backed eval against the local MCP. Requires:
 #   - DEV_MODE_API_KEY set in .env and the local server running on :8000
