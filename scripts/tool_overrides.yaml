@@ -85,8 +85,9 @@ companies_financials_retrieve:
     being expanded). Do NOT stop and do NOT estimate — FALL BACK to the filing:
     call `filings_list` for this `id` filtered with `type` (or `types`) to an
     annual report (e.g. 10-K, 20-F, or the local annual type) with
-    `ordering='-release_datetime'` and `page_size=1` so you fetch exactly the
-    latest, retrieve it with `filings_markdown_retrieve`, and read
+    `ordering='-release_datetime'` and `page_size=10`, then take the newest row
+    whose `processing_status` is 'COMPLETED' (the very newest may still be
+    processing), retrieve it with `filings_markdown_retrieve`, and read
     the figures directly from the filing body — citing the filing type, date, and
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
@@ -175,8 +176,11 @@ filings_markdown_retrieve:
   when_to_use: >
     Use to get the full text of a filing as Markdown. Supports
     pagination via offset/limit for long documents. Start with
-    offset=0 and repeat with increasing offsets until no truncation
-    marker appears.
+    offset=0 and repeat with increasing offsets until the truncation
+    marker is gone, you have found what you were asked for, or you have
+    made 10 calls — whichever comes first. Stop at the cap and say the
+    document was truncated rather than paginating a long filing
+    indefinitely against the request budget.
   when_not_to_use: >
     Don't use to search for filings — use `filings_list` first. Not
     every filing has Markdown content; only filings whose

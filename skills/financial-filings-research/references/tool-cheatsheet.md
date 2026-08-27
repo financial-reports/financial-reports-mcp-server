@@ -9,7 +9,9 @@ Note on surface size: only a curated subset is exposed by default (`companies_*`
 ### `companies_list`
 List public companies. **First tool to call** when resolving a name/ticker to an ID.
 
-Key params: `search`, `countries` (comma-separated ISO-3166 alpha-2), `sector` / `industry_group` / `industry` / `sub_industry` (ISIC Section / Division / Group / Class codes), `isin`, `lei`, `ticker`, `cik`, `listing_status`, `page`, `page_size`, `ordering`. There is no `country` or `isic_class` param.
+Key params: `search`, `countries` (comma-separated ISO-3166 alpha-2), `sector` / `industry_group` / `industry` / `sub_industry` (ISIC Section / Division / Group / Class codes), `isin`, `lei`, `ticker`, `cik`, `listing_status`, `page`, `page_size`, `ordering`.
+
+Not parameters: country (singular) and isic_class. Use `countries`, and pass the 4-digit class code to `sub_industry`.
 
 Returns (CompanyMinimal): `id`, `name`, `tagline`, `isins`, `lei`, `sub_industry_code`, `country_code`. The full field set (`sector`, `industry`, `sub_industry`, `ticker`, ...) comes from `companies_retrieve`.
 
@@ -20,12 +22,14 @@ Full detail for one company. Call after `companies_list` when the user asks for 
 
 Key params: `id`.
 
-Returns: everything from `companies_list` + `lei`, `description`, `website`, `headquarters`, parent/subsidiary relationships.
+Returns (Company): the CompanyMinimal fields plus `description`, `homepage_link`, `ir_link`, `address`/`city`/`zip_code`, `country_code`, `ticker`, `sector`/`industry_group`/`industry`/`sub_industry`, `isins`/`primary_isin`, `lei`, `listing_status`/`delisting_date`, `legal_status`/`legal_form`/`jurisdiction`, `is_merged`/`merged_into`. There is no `website`, `headquarters`, or parent/subsidiary field.
 
 ### `companies_financials_retrieve`
 Normalized financial line items. **outputSchema-advertised** — Claude can render structured cards.
 
-Key params: `id` (company, path), `fiscal_period` (`FY`/`H1`/`Q1`...), `fiscal_year`, `fiscal_year_from`, `fiscal_year_to`, `statement_type` (`BS`/`IS`/`CFS`), `line_items` (comma-separated KPI codes), `as_of`. There is no `period_type`, `from_date` or `to_date`.
+Key params: `id` (company, path), `fiscal_period` (`FY`/`H1`/`Q1`...), `fiscal_year`, `fiscal_year_from`, `fiscal_year_to`, `statement_type` (`BS`/`IS`/`CFS`), `line_items` (comma-separated KPI codes), `as_of`.
+
+Not parameters: period_type, from_date, to_date. Annual is `fiscal_period='FY'`; year ranges use `fiscal_year_from` / `fiscal_year_to`.
 
 Returns: `{company_id, currency, sources_masked, filters, period_count, periods[]}`; each period carries `statements[]`, each statement `line_items[]` of `{code, name, statement_type, depth, parent_code, value, raw_value, scale, currency, source_page}`.
 
@@ -72,7 +76,7 @@ Single filing detail. **outputSchema-advertised**.
 
 Key params: `id`.
 
-Returns: `filings_list` row + `summary`, `language`, `regulator`, `pdf_url`, `markdown_available`.
+Returns (Filing): `id`, `company`, `filing_type`, `language`, `filing_date`, `title`, `added_to_platform`, `updated_date`, `dissemination_datetime`, `release_datetime`, `source`, `document`, `proxy_url`, `viewer_url`, `file_extension`, `file_size`, `markdown_url`, `filing_type_confidence`, `filing_type_reasoning`, `fiscal_year`, `fiscal_period`, `period_ending_date`. It is NOT a superset of the list row — notably `processing_status` is on the `filings_list` (FilingSummary) shape only. There is no `summary`, `regulator`, `pdf_url` or `markdown_available`.
 
 ### `filings_history_retrieve`
 Audit trail — every revision of a filing (originals, amendments, restatements).
@@ -109,12 +113,18 @@ ISIC = International Standard Industrial Classification (UN). Hierarchy: section
 ### `isins_list`
 **outputSchema-advertised.** All ISINs for a company (handles dual-listings).
 
-Key params: `company`, `country`.
+Key params: `company`, `code`, `codes`, `is_primary`, `search`, `page`, `page_size`.
+
+Not a parameter: country.
 
 ### `isins_retrieve`
 ISIN → company lookup.
 
-Key params: `isin` (12-char alphanumeric).
+Key params: `code` (12-char ISIN, path).
+
+Not a parameter: isin — the path parameter is `code`.
+
+Returns (ISIN): `code`, `is_primary`, `company`, `figi`, `composite_figi`, `share_class_figi`, `security_type`, `security_type2`, `market_sector`, `exch_code`, `figi_last_updated`.
 
 Returns: `{isin, company, exchange, country, currency, primary}`.
 

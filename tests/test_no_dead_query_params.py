@@ -13,9 +13,16 @@ real defect, and it fails in one of two ways:
     returns a wrong answer with no signal, which is why it is tested here.
 
 Both classes shipped simultaneously across 15 references before this test
-existed. The denylist is deliberately literal rather than clever: it encodes
-names that were actually wrong in this repo, so it cannot drift into false
-positives on prose.
+existed.
+
+SCOPE, stated honestly: this is a REGRESSION DENYLIST, not a general proof that
+every documented parameter exists. It catches the specific names that were wrong
+in this repo, in two syntactic forms (`name=value` and a backticked name in a
+"Key params:"-style list). It does NOT map each mention to its operation, so it
+cannot catch a NEW wrong name, nor a name that is real on some other endpoint but
+wrong on the one being documented. Operation-aware validation would be the
+stronger guard; until it exists, do not read a pass here as "the docs are
+correct".
 """
 from __future__ import annotations
 
@@ -54,9 +61,20 @@ DEAD_ORDERING = ["publication_datetime", "publication_date"]
 # `name=` used as a query parameter, i.e. preceded by ? & , ( or whitespace and
 # followed by a value. Avoids matching prose comparisons like `x == y`.
 def _param_uses(text: str, name: str) -> list[str]:
+    """Two forms, both of which shipped as real defects:
+
+      `name=value`            an explicit query-parameter instruction
+      Key params: `name`      a backticked name in a parameter listing
+
+    The second is why an earlier version of this guard passed while
+    ``Key params: `country``` sat in the cheatsheet.
+    """
     hits = []
     for m in re.finditer(rf"[?&,(\s`]{re.escape(name)}\s*=(?!=)", text):
         hits.append(text[max(0, m.start() - 60):m.start() + 40].replace("\n", " "))
+    for line in text.splitlines():
+        if re.search(r"\b(key params|params|parameters)\b\s*:", line, re.I) and f"`{name}`" in line:
+            hits.append(line.strip()[:110])
     return hits
 
 
@@ -84,7 +102,13 @@ def test_no_silently_dropped_ordering_values(relpath: str) -> None:
     if not path.exists():
         pytest.skip(f"{relpath} not present")
     text = path.read_text(encoding="utf-8")
-    bad = [v for v in DEAD_ORDERING if v in text]
+    # Only in an ordering context. Matching the bare word anywhere made this
+    # fire on prose like "cite the publication date", i.e. fail for the wrong
+    # reason — a detector that cries wolf gets suppressed.
+    bad = [
+        v for v in DEAD_ORDERING
+        if re.search(rf"ordering\s*[=:]\s*['\"`]?-?{re.escape(v)}", text)
+    ]
     assert not bad, (
         f"{relpath} references ordering field(s) {bad} that are not in "
         f"filings_list's ordering allow-list (release_datetime, "
@@ -100,13 +124,15 @@ def test_denylisted_names_are_genuinely_absent_from_the_schema() -> None:
     correct instructions. A denylist nobody re-validates becomes wrong silently.
     """
     snapshot = json.loads((REPO / "scripts/openapi.snapshot.json").read_text())
+    by_op: dict[str, set[str]] = {}
     real_params = set()
     for item in snapshot.get("paths", {}).values():
         for op in item.values():
             if not isinstance(op, dict):
                 continue
-            for param in op.get("parameters", []):
-                real_params.add(param.get("name"))
+            names = {p.get("name") for p in op.get("parameters", [])}
+            by_op[op.get("operationId", "")] = names
+            real_params |= names
 
     now_real = sorted(set(DEAD_PARAMS) & real_params)
     assert not now_real, (
@@ -114,15 +140,25 @@ def test_denylisted_names_are_genuinely_absent_from_the_schema() -> None:
         f"from DEAD_PARAMS — this guard is currently rejecting valid usage."
     )
     # And the replacements this test steers people toward must actually exist.
-    # Every parameter named in DEAD_PARAMS' replacement guidance, plus the ones
-    # the docstrings steer toward. If any disappears, the guard starts pointing
-    # people at a parameter that no longer exists.
-    for expected in ("type", "types", "category", "categories",
-                     "release_datetime_from", "release_datetime_to",
-                     "sub_industry", "fiscal_period", "fiscal_year",
-                     "fiscal_year_from", "fiscal_year_to", "countries",
-                     "page_size", "ordering"):
-        assert expected in real_params, (
-            f"{expected!r} is recommended by this test but is not a real "
-            f"parameter — the guidance itself has drifted."
+    # Validate each recommended parameter against the SPECIFIC operation it is
+    # recommended for. Pooling every operation's params into one set (the first
+    # version of this control) passes whenever a name exists anywhere in the
+    # API — which is exactly the mistake the guard is supposed to catch.
+    expected_by_op = {
+        "filings_list": {"type", "types", "category", "categories", "countries",
+                         "release_datetime_from", "release_datetime_to",
+                         "page_size", "ordering"},
+        "companies_list": {"countries", "sector", "industry_group", "industry",
+                           "sub_industry", "page_size", "ordering"},
+        "companies_financials_retrieve": {"fiscal_period", "fiscal_year",
+                                          "fiscal_year_from", "fiscal_year_to",
+                                          "statement_type", "line_items"},
+        "isins_retrieve": {"code"},
+    }
+    for op_id, expected in expected_by_op.items():
+        assert op_id in by_op, f"operation {op_id!r} vanished from the schema"
+        missing = sorted(expected - by_op[op_id])
+        assert not missing, (
+            f"{missing} are recommended for {op_id} by this repo's guidance but "
+            f"are not parameters of that operation — the guidance has drifted."
         )
