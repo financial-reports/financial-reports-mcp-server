@@ -9,9 +9,11 @@ Note on surface size: only a curated subset is exposed by default (`companies_*`
 ### `companies_list`
 List public companies. **First tool to call** when resolving a name/ticker to an ID.
 
-Key params: `search`, `country` (ISO-3166), `isic_class`, `page`, `page_size` (max 100), `ordering`.
+Key params: `search`, `countries` (comma-separated ISO-3166 alpha-2), `sector` / `industry_group` / `industry` / `sub_industry` (ISIC Section / Division / Group / Class codes), `isin`, `lei`, `ticker`, `cik`, `listing_status`, `page`, `page_size`, `ordering`.
 
-Returns: paginated list with `id`, `name`, `legal_name`, `isin_primary`, `country`, `isic_class`, `lei`.
+Not parameters: country (singular) and isic_class. Use `countries`, and pass the 4-digit class code to `sub_industry`.
+
+Returns (CompanyMinimal): `id`, `name`, `tagline`, `isins`, `lei`, `sub_industry_code`, `country_code`. The full field set (`sector`, `industry`, `sub_industry`, `ticker`, ...) comes from `companies_retrieve`.
 
 Pitfall: `search` is fuzzy. "Apple" matches Apple Inc., Apple Hospitality REIT, etc. Inspect results, don't auto-pick.
 
@@ -20,14 +22,16 @@ Full detail for one company. Call after `companies_list` when the user asks for 
 
 Key params: `id`.
 
-Returns: everything from `companies_list` + `lei`, `description`, `website`, `headquarters`, parent/subsidiary relationships.
+Returns (Company): the CompanyMinimal fields plus `description`, `homepage_link`, `ir_link`, `address`/`city`/`zip_code`, `country_code`, `ticker`, `sector`/`industry_group`/`industry`/`sub_industry`, `isins`/`primary_isin`, `lei`, `listing_status`/`delisting_date`, `legal_status`/`legal_form`/`jurisdiction`, `is_merged`/`merged_into`. There is no `website`, `headquarters`, or parent/subsidiary field.
 
 ### `companies_financials_retrieve`
 Normalized financial line items. **outputSchema-advertised** — Claude can render structured cards.
 
-Key params: `id` (company), `period_type` (`annual` | `quarterly`), `from_date`, `to_date`, `line_items` (list).
+Key params: `id` (company, path), `fiscal_period` (`FY`/`H1`/`Q1`...), `fiscal_year`, `fiscal_year_from`, `fiscal_year_to`, `statement_type` (`BS`/`IS`/`CFS`), `line_items` (comma-separated KPI codes), `as_of`.
 
-Returns: time series of `{period_end_date, currency, line_item, value}`.
+Not parameters: period_type, from_date, to_date. Annual is `fiscal_period='FY'`; year ranges use `fiscal_year_from` / `fiscal_year_to`.
+
+Returns: `{company_id, currency, sources_masked, filters, period_count, periods[]}`; each period carries `statements[]`, each statement `line_items[]` of `{code, name, statement_type, depth, parent_code, value, raw_value, scale, currency, source_page}`.
 
 Pitfall: line items are normalized across regulators but currency is per-filing. Don't aggregate currencies without conversion.
 
@@ -36,7 +40,7 @@ Predicted publication date of the next annual report. Useful for monitoring setu
 
 Key params: `id`.
 
-Returns: `{predicted_date, confidence, basis}`.
+Returns (NextAnnualReport): `start_date`, `end_date`, `confidence`, `is_overdue`. There is no predicted_date or basis field.
 
 ### `companies_resolve_create`
 Resolve many identifiers to company IDs in **one** call. Prefer this over a loop of `companies_list` calls whenever the user hands you a list — a portfolio, a screen, a spreadsheet column.
@@ -61,18 +65,18 @@ Pitfall: `reversed_at` being set means the merge was undone — do not follow `c
 ### `filings_list`
 List filings across companies. **outputSchema-advertised**.
 
-Key params: `company`, `filing_type`, `filing_category`, `country`, `from_date`, `to_date`, `ordering` (default `-publication_date`).
+Key params: `company`, `type` (one filing-type code) / `types` (comma-separated), `category` / `categories` (numeric FilingCategory ids), `countries` (comma-separated ISO2), `release_datetime_from`, `release_datetime_to`, `page_size`, `ordering`. `ordering` accepts ONLY `release_datetime`, `added_to_platform`, `id` (prefix `-` to reverse) — any other value is silently ignored and you get default order back.
 
-Returns: `{id, company, filing_type, publication_date, period_end_date, language, source_url, pdf_url}`.
+Returns (FilingSummary): `{id, title, release_datetime, document_url, proxy_url, viewer_url, company, filing_type, processing_status, file_extension, file_size}`. Note `processing_status` is on THIS list response only — it is absent from `filings_retrieve`.
 
-Pitfall: `filing_type` is jurisdiction-specific (e.g. "10-K" for US issuers vs. "Annual Report" generically). Use `filing_categories_list` for cross-jurisdiction queries — categories normalise across markets.
+Pitfall: the param is `type`, not `filing_type`, and the code is jurisdiction-specific (e.g. "10-K" for US issuers vs. a local annual type). Use `filing_categories_list` to find a numeric category id, then pass `category`/`categories` for cross-jurisdiction queries — categories normalise across markets.
 
 ### `filings_retrieve`
 Single filing detail. **outputSchema-advertised**.
 
 Key params: `id`.
 
-Returns: `filings_list` row + `summary`, `language`, `regulator`, `pdf_url`, `markdown_available`.
+Returns (Filing): `id`, `company`, `filing_type`, `language`, `filing_date`, `title`, `added_to_platform`, `updated_date`, `dissemination_datetime`, `release_datetime`, `source`, `document`, `proxy_url`, `viewer_url`, `file_extension`, `file_size`, `markdown_url`, `filing_type_confidence`, `filing_type_reasoning`, `fiscal_year`, `fiscal_period`, `period_ending_date`. It is NOT a superset of the list row — notably `processing_status` is on the `filings_list` (FilingSummary) shape only. There is no `summary`, `regulator`, `pdf_url` or `markdown_available`.
 
 ### `filings_history_retrieve`
 Audit trail — every revision of a filing (originals, amendments, restatements).
@@ -86,32 +90,41 @@ Filing content as markdown (capped at **150K characters**).
 
 Key params: `id`.
 
-Pitfall: long 10-Ks (300+ pages) get truncated. For full text, use the `pdf_url` from `filings_retrieve`.
+Pitfall: long 10-Ks (300+ pages) get truncated. For the raw file, use `document` from `filings_retrieve` (there is no pdf_url field).
 
 ## ISIC Classifications (8)
 
 ISIC = International Standard Industrial Classification (UN). Hierarchy: section (letter) → division (2-digit) → group (3-digit) → class (4-digit).
 
-| Tool | Purpose |
-|---|---|
-| `isic_sections_list` / `isic_sections_retrieve` | Top level (A–U) |
-| `isic_divisions_list` / `isic_divisions_retrieve` | 2-digit (e.g., 35 = Electricity, gas) |
-| `isic_groups_list` / `isic_groups_retrieve` | 3-digit |
-| `isic_classes_list` / `isic_classes_retrieve` | 4-digit (most specific; what `companies_list?isic_class=…` filters on) |
+> **None of the ISIC hierarchy endpoints below are exposed as tools on this MCP
+> server** — they are all in the generator's prune list, so calling them returns
+> "unknown tool". They are listed for reference only. To obtain a code, resolve a
+> company you know sits in the target industry and read its `sub_industry_code`.
+
+| API endpoint (NOT an MCP tool here) | Level | `companies_list` param |
+|---|---|---|
+| `isic_sections_list` / `isic_sections_retrieve` | Top level (A–U) | `sector` |
+| `isic_divisions_list` / `isic_divisions_retrieve` | 2-digit (e.g., 35 = Electricity, gas) | `industry_group` |
+| `isic_groups_list` / `isic_groups_retrieve` | 3-digit | `industry` |
+| `isic_classes_list` / `isic_classes_retrieve` | 4-digit (most specific) | `sub_industry` |
 
 ## ISINs (2)
 
 ### `isins_list`
 **outputSchema-advertised.** All ISINs for a company (handles dual-listings).
 
-Key params: `company`, `country`.
+Key params: `company`, `code`, `codes`, `is_primary`, `search`, `page`, `page_size`.
+
+Not a parameter: country.
 
 ### `isins_retrieve`
 ISIN → company lookup.
 
-Key params: `isin` (12-char alphanumeric).
+Key params: `code` (12-char ISIN, path).
 
-Returns: `{isin, company, exchange, country, currency, primary}`.
+Not a parameter: isin — the path parameter is `code`.
+
+Returns (ISIN): `code`, `is_primary`, `company`, `figi`, `composite_figi`, `share_class_figi`, `security_type`, `security_type2`, `market_sector`, `exch_code`, `figi_last_updated`.
 
 Pitfall: not every ISIN is in our index. If `isins_retrieve` 404s, fall back to `companies_list?search=`.
 
@@ -147,7 +160,7 @@ Lookups for filtering and labeling. All have `_list` and `_retrieve` variants.
 | `languages_list` / `languages_retrieve` | ISO-639 language codes for filings |
 | `sources_list` / `sources_retrieve` | Source regulators (the canonical list is returned by the API; treat the response as authoritative rather than hardcoding regulator names) |
 
-Use these for **labeling**, not lookup. Don't call `countries_list` to find country IDs — `companies_list?country=US` accepts ISO codes directly.
+Use these for **labeling**, not lookup. Don't call `countries_list` to find country IDs — `companies_list?countries=US` accepts ISO codes directly (note the plural; there is no `country` param).
 
 ## Line Item Definitions (2)
 
