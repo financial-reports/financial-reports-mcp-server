@@ -41,7 +41,7 @@ Rows marked **†** need `MCP_FULL_SURFACE=1`. If the user asks for one of those
 | Predict next report | `companies_next_annual_report_retrieve` |
 | Understand filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` |
 | Track filing revisions **†** | `filings_history_retrieve` (audit trail of amendments) |
-| Industry screening **†** | resolve a known peer → read its `sub_industry_code` → `companies_list?sub_industry=…` |
+| Industry screening | resolve a known peer → read its `sub_industry_code` → `companies_list?sub_industry=…` |
 | Watchlist **†** | `watchlist_retrieve`, `watchlist_companies_create`, `watchlist_companies_bulk_add_create` |
 | Alerts setup **†** | `webhooks_create` → `webhooks_test_create` → `webhooks_deliveries_retrieve` |
 | Reference data | `filing_categories_list`, `filing_types_list`; **†** `countries_list`, `languages_list`, `sources_list` |

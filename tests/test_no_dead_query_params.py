@@ -114,8 +114,14 @@ def test_denylisted_names_are_genuinely_absent_from_the_schema() -> None:
         f"from DEAD_PARAMS — this guard is currently rejecting valid usage."
     )
     # And the replacements this test steers people toward must actually exist.
+    # Every parameter named in DEAD_PARAMS' replacement guidance, plus the ones
+    # the docstrings steer toward. If any disappears, the guard starts pointing
+    # people at a parameter that no longer exists.
     for expected in ("type", "types", "category", "categories",
-                     "release_datetime_from", "sub_industry", "fiscal_year"):
+                     "release_datetime_from", "release_datetime_to",
+                     "sub_industry", "fiscal_period", "fiscal_year",
+                     "fiscal_year_from", "fiscal_year_to", "countries",
+                     "page_size", "ordering"):
         assert expected in real_params, (
             f"{expected!r} is recommended by this test but is not a real "
             f"parameter — the guidance itself has drifted."
