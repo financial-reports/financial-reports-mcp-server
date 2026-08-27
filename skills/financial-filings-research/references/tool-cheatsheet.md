@@ -40,7 +40,7 @@ Predicted publication date of the next annual report. Useful for monitoring setu
 
 Key params: `id`.
 
-Returns: `{predicted_date, confidence, basis}`.
+Returns (NextAnnualReport): `start_date`, `end_date`, `confidence`, `is_overdue`. There is no predicted_date or basis field.
 
 ### `companies_resolve_create`
 Resolve many identifiers to company IDs in **one** call. Prefer this over a loop of `companies_list` calls whenever the user hands you a list — a portfolio, a screen, a spreadsheet column.
@@ -90,7 +90,7 @@ Filing content as markdown (capped at **150K characters**).
 
 Key params: `id`.
 
-Pitfall: long 10-Ks (300+ pages) get truncated. For full text, use the `pdf_url` from `filings_retrieve`.
+Pitfall: long 10-Ks (300+ pages) get truncated. For the raw file, use `document` from `filings_retrieve` (there is no pdf_url field).
 
 ## ISIC Classifications (8)
 
@@ -125,8 +125,6 @@ Key params: `code` (12-char ISIN, path).
 Not a parameter: isin — the path parameter is `code`.
 
 Returns (ISIN): `code`, `is_primary`, `company`, `figi`, `composite_figi`, `share_class_figi`, `security_type`, `security_type2`, `market_sector`, `exch_code`, `figi_last_updated`.
-
-Returns: `{isin, company, exchange, country, currency, primary}`.
 
 Pitfall: not every ISIN is in our index. If `isins_retrieve` 404s, fall back to `companies_list?search=`.
 

@@ -60,7 +60,7 @@ companies_resolve_create:
 
 companies_retrieve:
   when_to_use: >
-    Use to get full company metadata (LEI, description, headquarters,
+    Use to get full company metadata (LEI, description, address and city,
     social links, stock exchanges, indices) after resolving the ID via
     `companies_list`.
   when_not_to_use: >
