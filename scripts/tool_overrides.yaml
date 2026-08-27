@@ -90,33 +90,31 @@ companies_financials_retrieve:
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
     PROVENANCE — CHECK THIS FIRST, NO EXTRA CALL NEEDED: a line item whose
-    `value` is present but whose `raw_value` AND `scale` are BOTH null is one
-    where the as-reported pair is unavailable — either the API withheld it
-    because the figure was computed to close a balance, or the row never carried
-    one. Either way you CANNOT assert it was read off the page: never present it
-    as sourced from the filing, and verify it against the document if the user
-    will act on it.
+    `value` is present but whose `raw_value` AND `scale` are BOTH null has no
+    as-reported pair — either the API withheld it because the figure was
+    computed to close a balance, or the row never carried one. Either way you
+    CANNOT assert it was read off the page, so never present it as sourced from
+    the filing.
     AN ARITHMETIC TIE PROVES INTERNAL CONSISTENCY, NOT PROVENANCE: a computed
     figure is chosen to make total assets == total liabilities + total equity
-    hold, so a clean tie is not evidence a number came from the filing — the
-    withheld pair above is the signal that it did not. Skip that check when
-    `filters.line_items` is non-null, or the three totals are not all present for
-    one period and currency (the response is filtered; a mismatch is an
-    artifact). Children under a `parent_code` are not guaranteed to sum to their
-    parent — `depth`/`parent_code` are rendering hierarchy, not an additive
-    contract.
-    VERIFY AGAINST THE SOURCE when, and only when, the pair is withheld or the
-    figure is decision-critical: pass `source_filing.id` (or the `sources` entry
-    with `is_selected: true`, field `filing_id`) straight to
-    `filings_markdown_retrieve` and read the figure from the statement body —
-    do NOT call `filings_list` first, the id is already in this response. Only
-    fall back to `filings_list` if no filing id is present. Do NOT verify every
-    figure — it is
-    slow and burns the request budget. WHEN COMPARING TO THE DOCUMENT, compare
-    `raw_value` with `scale`, never the normalized `value`: the document prints
-    the raw figure in its own units, so a normalized value looks mismatched when
-    it is in fact correct. If they genuinely disagree, report BOTH, say which
-    came from which, and prefer the figure you read in the filing.
+    hold, so a clean tie is not evidence a number came from the filing — only
+    the document is. Skip that check when `filters.line_items` is non-null, or
+    the three totals are not all present for one period and currency (the
+    response is filtered; a mismatch is an artifact). Children under a
+    `parent_code` are not guaranteed to sum to their parent — `depth` and
+    `parent_code` are rendering hierarchy, not an additive contract.
+    VERIFY AGAINST THE SOURCE when, and only when, a figure the user will act on
+    has no as-reported pair, or they asked you to check it. Pass
+    `source_filing.id` (or the `sources` entry with `is_selected: true`, field
+    `filing_id`) straight to `filings_markdown_retrieve` — the id is already in
+    this response, so do NOT call `filings_list` first. Group the figures you
+    need to check by filing id and retrieve each filing AT MOST ONCE. Do NOT
+    verify every figure: it is slow and burns the request budget. WHEN COMPARING
+    TO THE DOCUMENT, compare `raw_value` with `scale`, never the normalized
+    `value`: the document prints the raw figure in its own units, so a
+    normalized value looks mismatched when it is in fact correct. If they
+    genuinely disagree, report BOTH, say which came from which, and prefer the
+    figure you read in the filing.
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without
