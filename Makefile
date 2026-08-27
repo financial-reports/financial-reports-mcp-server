@@ -95,7 +95,7 @@ audit:
 
 # Fast, deterministic prompt-registration tests. Run on every PR.
 eval-fast:
-	$(PY) -m pytest tests/eval/ -v
+	"$(PY)" -m pytest tests/eval/ -v
 
 # LLM-backed eval against the local MCP. Requires:
 #   - DEV_MODE_API_KEY set in .env and the local server running on :8000

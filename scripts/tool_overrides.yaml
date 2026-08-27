@@ -83,17 +83,19 @@ companies_financials_retrieve:
     empty, FinancialReports has no *structured* financials for this company yet
     (common for US/SEC issuers — structured data is currently ESEF/EU-derived and
     being expanded). Do NOT stop and do NOT estimate — FALL BACK to the filing:
-    call `filings_list` for this `id` filtered to an annual-report
-    `filing_type_code` (e.g. 10-K, 20-F, or the local annual type), take the most
+    call `filings_list` for this `id` filtered with `type` (or `types`) to an
+    annual report (e.g. 10-K, 20-F, or the local annual type), take the most
     recently released one, retrieve it with `filings_markdown_retrieve`, and read
     the figures directly from the filing body — citing the filing type, date, and
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
     PROVENANCE — CHECK THIS FIRST, NO EXTRA CALL NEEDED: a line item whose
     `value` is present but whose `raw_value` AND `scale` are BOTH null is one
-    where the API withheld the as-reported pair — the figure was computed to
-    close a balance, or its printed pair could not be asserted. It was NOT read
-    off the page. Never present it as sourced from the filing.
+    where the as-reported pair is unavailable — either the API withheld it
+    because the figure was computed to close a balance, or the row never carried
+    one. Either way you CANNOT assert it was read off the page: never present it
+    as sourced from the filing, and verify it against the document if the user
+    will act on it.
     AN ARITHMETIC TIE PROVES INTERNAL CONSISTENCY, NOT PROVENANCE: a computed
     figure is chosen to make total assets == total liabilities + total equity
     hold, so a clean tie is not evidence a number came from the filing — the
@@ -104,9 +106,12 @@ companies_financials_retrieve:
     parent — `depth`/`parent_code` are rendering hierarchy, not an additive
     contract.
     VERIFY AGAINST THE SOURCE when, and only when, the pair is withheld or the
-    figure is decision-critical: `filings_list` for this company, then
-    `filings_markdown_retrieve` on the filing in `source_filing`/`sources`, and
-    read the figure from the statement body. Do NOT verify every figure — it is
+    figure is decision-critical: pass `source_filing.id` (or the `sources` entry
+    with `is_selected: true`, field `filing_id`) straight to
+    `filings_markdown_retrieve` and read the figure from the statement body —
+    do NOT call `filings_list` first, the id is already in this response. Only
+    fall back to `filings_list` if no filing id is present. Do NOT verify every
+    figure — it is
     slow and burns the request budget. WHEN COMPARING TO THE DOCUMENT, compare
     `raw_value` with `scale`, never the normalized `value`: the document prints
     the raw figure in its own units, so a normalized value looks mismatched when
