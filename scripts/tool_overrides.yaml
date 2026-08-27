@@ -142,10 +142,10 @@ filings_list:
     `companies_financials_retrieve`.
   examples:
     - user_says: "Apple's most recent 10-K"
-      parameters: "company=<id>, filing_type='10-K', ordering='-release_datetime', page_size=1"
-      notes: "filing_type is jurisdiction-specific. Use filing_category for cross-jurisdiction queries."
+      parameters: "company=<id>, type='10-K', ordering='-release_datetime', page_size=1"
+      notes: "`type` takes ONE filing-type code and is jurisdiction-specific; `types` takes a comma-separated list. For cross-jurisdiction queries filter by `category` / `categories` (numeric FilingCategory ids) instead."
     - user_says: "All insider transactions at Tesla in the last 30 days"
-      parameters: "company=<id>, filing_category='insider_transaction', from_date='2026-04-16'"
+      parameters: "company=<id>, type='DIRS', release_datetime_from='2026-04-16'"
 
 filings_retrieve:
   when_to_use: >
