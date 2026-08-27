@@ -5,7 +5,7 @@ Total tools registered: **16**
 | Tool | Description chars | Schema chars | Approx tokens |
 |---|---:|---:|---:|
 | `companies_financials_retrieve` | 4456 | 682 | 1284 |
-| `filings_list` | 1067 | 2646 | 927 |
+| `filings_list` | 1067 | 2535 | 899 |
 | `companies_resolve_create` | 2770 | 87 | 713 |
 | `companies_list` | 1035 | 1263 | 573 |
 | `filings_markdown_retrieve` | 1146 | 171 | 328 |
@@ -21,7 +21,7 @@ Total tools registered: **16**
 | `get_fr_markdown_fetch_strategy` | 165 | 33 | 49 |
 | `companies_next_annual_report_retrieve` | 102 | 74 | 43 |
 
-**Total approx tokens for `tools/list`: 5053**
+**Total approx tokens for `tools/list`: 5025**
 
 > **Methodology**: token count is approximated as `len(chars) // 4`
 > (per-tool description + JSON-serialized parameter schema). The actual
@@ -34,3 +34,11 @@ Reference budgets (anecdotal, 2026):
 - < 5k tokens: lean
 - 5k-15k tokens: acceptable for a focused server
 - > 15k tokens: trim descriptions or split the server
+
+> **Regenerate on Python 3.11** — the version CI uses. `Schema chars` is
+> the JSON-serialized parameter schema, and its serialization differs
+> between Python versions even with an identical pydantic (measured: 3.11
+> vs 3.14 differ by 111 chars on `filings_list` alone, both on pydantic
+> 2.13.4). Regenerating off-version yields a file the `eval-fast`
+> freshness gate rejects for reasons unrelated to your change. If you are
+> not on 3.11, run the generator + this script inside `python:3.11-slim`.

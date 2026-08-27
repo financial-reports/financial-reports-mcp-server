@@ -116,6 +116,14 @@ async def main() -> None:
     print("- < 5k tokens: lean")
     print("- 5k-15k tokens: acceptable for a focused server")
     print("- > 15k tokens: trim descriptions or split the server")
+    print()
+    print("> **Regenerate on Python 3.11** — the version CI uses. `Schema chars` is")
+    print("> the JSON-serialized parameter schema, and its serialization differs")
+    print("> between Python versions even with an identical pydantic (measured: 3.11")
+    print("> vs 3.14 differ by 111 chars on `filings_list` alone, both on pydantic")
+    print("> 2.13.4). Regenerating off-version yields a file the `eval-fast`")
+    print("> freshness gate rejects for reasons unrelated to your change. If you are")
+    print("> not on 3.11, run the generator + this script inside `python:3.11-slim`.")
 
 
 if __name__ == "__main__":
