@@ -145,7 +145,8 @@ filings_list:
       parameters: "company=<id>, type='10-K', ordering='-release_datetime', page_size=1"
       notes: "`type` takes ONE filing-type code and is jurisdiction-specific; `types` takes a comma-separated list. For cross-jurisdiction queries filter by `category` / `categories` (numeric FilingCategory ids) instead."
     - user_says: "All insider transactions at Tesla in the last 30 days"
-      parameters: "company=<id>, type='DIRS', release_datetime_from='2026-04-16'"
+      parameters: "company=<id>, type='DIRS', release_datetime_from='<today-minus-30d>T00:00:00Z'"
+      notes: "release_datetime_from is a date-TIME (YYYY-MM-DDTHH:MM:SSZ). Compute the cutoff from the current date given in this tool's description — never hardcode one."
 
 filings_retrieve:
   when_to_use: >
@@ -180,7 +181,8 @@ filings_markdown_retrieve:
     Don't use to search for filings — use `filings_list` first. Not
     every filing has Markdown content; only filings whose
     `processing_status == "COMPLETED"` do — check that field (returned by
-    `filings_list` / `filings_retrieve`) before calling this tool.
+    `filings_list`; it is NOT on the `filings_retrieve` response) before
+    calling this tool.
   examples:
     - user_says: "Show me Apple's 10-K risk factors"
       parameters: "filing_id=<id>, offset=0, limit=50000"
@@ -204,7 +206,7 @@ isins_retrieve:
     the `search` parameter instead.
   examples:
     - user_says: "Look up US0378331005"
-      parameters: "id='US0378331005'"
+      parameters: "code='US0378331005'"
       notes: "Returns the company associated with this ISIN"
 
 webhooks_create:

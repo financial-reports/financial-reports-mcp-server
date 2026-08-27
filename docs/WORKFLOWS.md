@@ -34,13 +34,13 @@ Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default sur
 | Predict next report | `companies_next_annual_report_retrieve` |
 | Understand filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` |
 | Track filing revisions **†** | `filings_history_retrieve` (audit trail of amendments) |
-| Industry screening **†** | `isic_sections_list` → `isic_classes_list` → `companies_list?isic_class=…` |
+| Industry screening **†** | resolve a known peer → read its `sub_industry_code` → `companies_list?sub_industry=…` |
 | Watchlist **†** | `watchlist_retrieve`, `watchlist_companies_create`, `watchlist_companies_bulk_add_create` |
 | Alerts setup **†** | `webhooks_create` → `webhooks_test_create` → `webhooks_deliveries_retrieve` |
 | Reference data | `filing_categories_list`, `filing_types_list`; **†** `countries_list`, `languages_list`, `sources_list` |
 | Line item glossary **†** | `line_item_definitions_list`, `line_item_definitions_retrieve` |
 
-Note on `isic_class`: the ISIC *hierarchy* tools are gated, but `companies_list?isic_class=…` is not — and `get_fr_industry_classification_isic` is on the default surface, so you can still resolve a class code without the hierarchy tools.
+Note on ISIC: the hierarchy tools are NOT exposed on this surface, and there is no `isic_class` param or field — filter with `companies_list?sub_industry=<4-digit class code>` — and `get_fr_industry_classification_isic` is on the default surface, so you can still resolve a class code without the hierarchy tools.
 
 ## Workflows
 
@@ -57,23 +57,23 @@ Don't paginate `companies_list` past page 2 to find a match — refine the searc
 ### 2. Retrieve and summarize a filing
 
 1. Resolve company → `companies_list?search=Apple` → pick the correct entity (parent vs subsidiary).
-2. List filings → `filings_list?company=<id>&filing_type=10-K&ordering=-publication_date&limit=5`.
+2. List filings → `filings_list?company=<id>&type=10-K&ordering=-release_datetime&page_size=5`.
 3. Get content → `filings_markdown_retrieve?id=<filing_id>`.
 4. Summarize per the user's actual question (risk factors, MD&A, segment results) — don't dump the whole document.
 
-Always cite the filing's `publication_date` and `period_end_date` so the user knows the vintage.
+Always cite the filing's `release_datetime` and `period_ending_date` so the user knows the vintage.
 
 ### 3. Compare financials across companies
 
 1. Resolve each company in parallel.
-2. Call `companies_financials_retrieve` for each in parallel, with the same `period_type` and same line items.
+2. Call `companies_financials_retrieve` for each in parallel, with the same `fiscal_period` (and `fiscal_year`) and same `line_items`.
 3. Render a table: company, currency, period_end_date, value. Always show the period explicitly — silently mixing FY2024 and FY2023 is a real risk.
 4. Flag missing data as "n/a", never zero. Always show currency next to the value.
 
 ### 4. Industry screening
 
-1. Get the ISIC class → `isic_sections_list` → drill down via `isic_classes_list?division=…`.
-2. `companies_list?isic_class=<id>&country=<list>`.
+1. Get the 4-digit ISIC class code — the hierarchy tools are not exposed on this server, so resolve a company you know is in the industry and read its `sub_industry_code`.
+2. `companies_list?sub_industry=<4-digit class code>&countries=<comma-separated ISO2>`.
 3. For each result, `companies_financials_retrieve` to filter by the metric, then sort and present.
 
 ISIC ≠ NAICS ≠ GICS. This MCP exposes ISIC; if the user asks for GICS sectors, explain the mapping is approximate.
@@ -90,7 +90,7 @@ ISIC ≠ NAICS ≠ GICS. This MCP exposes ISIC; if the user asks for GICS sector
 
 - **ISIN ≠ ticker.** AAPL is the ticker; US0378331005 is the ISIN. Don't conflate them in tool calls.
 - **Dual listings.** Some companies have multiple ISINs; `companies_retrieve` returns the canonical entity.
-- **Period types.** `companies_financials_retrieve` takes `period_type=annual` or `quarterly` — if the user asked for "Q3", don't return the annual figure.
+- **Period types.** `companies_financials_retrieve` takes `fiscal_period` (`FY`, `H1`, `H2`, `Q1`–`Q4`, `9M`) plus `fiscal_year` / `fiscal_year_from` / `fiscal_year_to`. There is no period-type parameter — annual is `fiscal_period='FY'`, quarterly is `Q1`-`Q4`. If the user asked for "Q3", pass `fiscal_period='Q3'`; don't return the annual figure.
 - **Pagination.** List endpoints cap at 100/page. For screening, tell the user the total (`count`) and that you took the top N.
 - **Auth-scoped tools.** `watchlist_*` and `webhooks_*` operate on the authenticated user; anonymous calls fail.
 - **Markdown size.** `filings_markdown_retrieve` caps at 150K chars; long 10-Ks may truncate — `filings_retrieve` returns the original PDF URL for full fidelity.
@@ -99,7 +99,7 @@ ISIC ≠ NAICS ≠ GICS. This MCP exposes ISIC; if the user asks for GICS sector
 ## Output formatting
 
 - Tables for comparisons, with units in headers not cells.
-- Cite the source filing for every factual claim (`filing_type`, `publication_date`, and the direct URL from `filings_retrieve`).
+- Cite the source filing for every factual claim (`filing_type`, `release_datetime`, and the direct URL from `filings_retrieve`).
 - Quote currency and period explicitly — never a number stripped of context.
 - Don't paste full filing text; summarize and offer to fetch specific sections.
 
