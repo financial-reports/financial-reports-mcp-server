@@ -3517,6 +3517,15 @@ async def {{ func_name }}(
             "{{ param.original_name }}": {{ param.name }},
             {%- endfor %}
         }
+        # DRF paginates from 1. A zero/negative page_size took an unhandled
+        # path and surfaced a FastMCP-internal serialization message
+        # ("structured_content must be a dict or None. Got list: []") to the
+        # client, while page_size=100000 correctly returned a clean 400.
+        # Validate here so both ends of the range fail the same, legible way.
+        for _pg_key in ("page_size", "page"):
+            _pg_val = query_params.get(_pg_key)
+            if _pg_val is not None and int(_pg_val) < 1:
+                raise ToolInputError(f"{_pg_key} must be >= 1")
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:
@@ -3558,6 +3567,15 @@ async def {{ func_name }}(
     """{{ description }}"""
     try:
         _require_auth_context()
+        # DRF paginates from 1. A zero/negative page_size took an unhandled
+        # path and surfaced a FastMCP-internal serialization message
+        # ("structured_content must be a dict or None. Got list: []") to the
+        # client, while page_size=100000 correctly returned a clean 400.
+        # Validate here so both ends of the range fail the same, legible way.
+        for _pg_key in ("page_size", "page"):
+            _pg_val = query_params.get(_pg_key)
+            if _pg_val is not None and int(_pg_val) < 1:
+                raise ToolInputError(f"{_pg_key} must be >= 1")
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:
@@ -3732,6 +3750,15 @@ async def {{ func_name }}(
             "{{ param.original_name }}": {{ param.name }},
             {%- endfor %}
         }
+        # DRF paginates from 1. A zero/negative page_size took an unhandled
+        # path and surfaced a FastMCP-internal serialization message
+        # ("structured_content must be a dict or None. Got list: []") to the
+        # client, while page_size=100000 correctly returned a clean 400.
+        # Validate here so both ends of the range fail the same, legible way.
+        for _pg_key in ("page_size", "page"):
+            _pg_val = query_params.get(_pg_key)
+            if _pg_val is not None and int(_pg_val) < 1:
+                raise ToolInputError(f"{_pg_key} must be >= 1")
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:

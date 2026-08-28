@@ -91,6 +91,16 @@ companies_financials_retrieve:
     the figures directly from the filing body — citing the filing type, date, and
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
+    WRONG-ENTITY / WRONG-DOCUMENT CHECK (both occur in production). "Most
+    recently published wins" means a later-published subsidiary report, or a
+    one-page filing notice, can displace the real annual report for a period.
+    `source_filing` is usually null (`sources_masked`), so these two value-only
+    checks are the only provenance you have. (a) CURRENCY: a period whose
+    statement currency differs from the company's other periods is a DIFFERENT
+    LEGAL ENTITY — never compare across it or compute growth through it.
+    (b) MAGNITUDE: a year orders of magnitude away from its neighbouring years
+    is the wrong document, not a real collapse. If either trips, report the
+    anomaly instead of the figure and read the number from the filing body.
     PROVENANCE — CHECK THIS FIRST, NO EXTRA CALL NEEDED: a line item whose
     `value` is present but whose `raw_value` AND `scale` are BOTH null has no
     as-reported pair — either the API withheld it because the figure was
