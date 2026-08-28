@@ -2174,6 +2174,10 @@ def _raise_upstream_text_error(response: httpx.Response, body_text: str) -> None
         message,
         upstream_status=response.status_code,
         request_id=_upstream_request_id(response),
+        # Without this the middleware reads the constructor default "unknown"
+        # once the call raises, silently degrading quota / spend-cap / burst /
+        # credential classification in analytics.
+        error_kind=_classify_upstream_error(response.status_code, body_text),
     )
 
 
@@ -3595,15 +3599,6 @@ async def {{ func_name }}(
     """{{ description }}"""
     try:
         _require_auth_context()
-        # DRF paginates from 1. A zero/negative page_size took an unhandled
-        # path and surfaced a FastMCP-internal serialization message
-        # ("structured_content must be a dict or None. Got list: []") to the
-        # client, while page_size=100000 correctly returned a clean 400.
-        # Validate here so both ends of the range fail the same, legible way.
-        for _pg_key in ("page_size", "page"):
-            _pg_val = query_params.get(_pg_key)
-            if _pg_val is not None and int(_pg_val) < 1:
-                raise ToolInputError(f"{_pg_key} must be >= 1")
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:
@@ -3686,7 +3681,7 @@ async def {{ func_name }}(
         # Stream so we never buffer more than _MAX_FILING_BYTES into memory,
         # even when the upstream body is much larger than the user's slice.
         async with _api_stream_get(url) as response:
-            if response.status_code != 200:
+            if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
                 _raise_upstream_text_error(
                     response, body[:1000].decode("utf-8", errors="replace")
@@ -4149,7 +4144,7 @@ async def filings_markdown_search(
             raise ToolInputError("query must be a non-empty string")
         url = f"/filings/{filing_id}/markdown/"
         async with _api_stream_get(url) as response:
-            if response.status_code != 200:
+            if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
                 _raise_upstream_text_error(
                     response, body[:1000].decode("utf-8", errors="replace")

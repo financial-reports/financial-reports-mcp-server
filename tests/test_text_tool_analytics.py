@@ -145,8 +145,12 @@ async def test_text_tool_error_visible_to_analytics_through_real_middleware(
 
     async with Client(mcp_module.mcp) as client:
         # Raises now (#104); the point of the test is the analytics event that
-        # the middleware emits either way.
-        with pytest.raises(Exception):
+        # the middleware emits either way. Assert the CLIENT-VISIBLE tool error
+        # specifically — a bare Exception would be satisfied by an unrelated
+        # failure and the test would pass for the wrong reason.
+        from fastmcp.exceptions import ToolError
+
+        with pytest.raises(ToolError):
             await client.call_tool("filing_types_list", {})
 
     events = [e for e in captured if e["name"] == "filing_types_list" and e["kind"] == "tool"]
@@ -154,3 +158,10 @@ async def test_text_tool_error_visible_to_analytics_through_real_middleware(
     ev = events[-1]
     assert ev["status"] == "error", f"text-tool 500 still recorded as {ev['status']!r}"
     assert ev["upstream_status"] == 500
+    # Guards the raise path specifically: UpstreamHTTPError defaults error_kind
+    # to "unknown", so a helper that forgets to pass the classification
+    # silently degrades quota/credential analytics while every other
+    # assertion here still passes.
+    assert ev.get("error_kind") not in (None, "unknown"), (
+        f"error_kind degraded to {ev.get('error_kind')!r} on the raise path"
+    )
