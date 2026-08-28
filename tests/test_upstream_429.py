@@ -335,7 +335,11 @@ async def test_text_tool_quota_429_gets_upsell_not_raw_body(
         return_value=httpx.Response(429, json=FREE_QUOTA_BODY)
     )
 
-    out = await _text_tool(mcp_module)()
+    with pytest.raises(mcp_module.UpstreamHTTPError) as excinfo:
+
+        await _text_tool(mcp_module)()
+
+    out = str(excinfo.value)  # #104: raised, not returned; message unchanged
 
     assert isinstance(out, str)
     assert PAYG_URL in out
@@ -355,7 +359,10 @@ async def test_text_tool_429_records_error_kind_for_analytics(
         return_value=httpx.Response(429, json=FREE_QUOTA_BODY)
     )
 
-    await _text_tool(mcp_module)()
+    # #104: raises now instead of returning the error as a normal result. The
+    # analytics recording this test guards must still happen on the raise path.
+    with pytest.raises(mcp_module.UpstreamHTTPError):
+        await _text_tool(mcp_module)()
 
     recorded = usage_analytics._tool_error.get()
     assert recorded is not None

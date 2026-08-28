@@ -67,10 +67,14 @@ async def test_text_tool_upstream_500_records_into_contextvar(
         return_value=httpx.Response(500, text="upstream boom")
     )
 
-    out = await _text_tool(mcp_module)()
-    # The tool returns an error STRING (it does not raise) ...
-    assert isinstance(out, str) and "500" in out
-    # ... and it recorded structured context for the middleware to fold.
+    # Since #104 a text tool RAISES on an upstream failure instead of handing
+    # the error back as a normal string result — a client branching on isError
+    # was previously told the call succeeded. The analytics contract that this
+    # test exists to protect is unchanged: the structured context is still
+    # recorded for the middleware to fold.
+    with pytest.raises(mcp_module.UpstreamHTTPError) as excinfo:
+        await _text_tool(mcp_module)()
+    assert "500" in str(excinfo.value)
     recorded = usage_analytics._tool_error.get()
     assert recorded is not None
     assert recorded["upstream_status"] == 500
@@ -140,7 +144,10 @@ async def test_text_tool_error_visible_to_analytics_through_real_middleware(
     monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
 
     async with Client(mcp_module.mcp) as client:
-        await client.call_tool("filing_types_list", {})
+        # Raises now (#104); the point of the test is the analytics event that
+        # the middleware emits either way.
+        with pytest.raises(Exception):
+            await client.call_tool("filing_types_list", {})
 
     events = [e for e in captured if e["name"] == "filing_types_list" and e["kind"] == "tool"]
     assert events, "no analytics event captured for the tool call"

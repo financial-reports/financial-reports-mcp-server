@@ -2157,6 +2157,26 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
     )
 
 
+def _raise_upstream_text_error(response: httpx.Response, body_text: str) -> None:
+    """Raise, rather than return, an upstream failure for a text tool (#104).
+
+    Text tools used to hand their failures back as a NORMAL string result, so
+    the MCP layer reported `isError: false` and a client branching on that
+    treated the error sentence as DATA. Measured consequence: an unknown ISIN
+    and a missing filing id both came back "successful", which makes
+    "filing not found" indistinguishable from "filing has no text".
+
+    The message and the analytics side-effect are unchanged — only the
+    delivery is, so callers can tell success from failure.
+    """
+    message = _upstream_error_text(response, body_text)
+    raise UpstreamHTTPError(
+        message,
+        upstream_status=response.status_code,
+        request_id=_upstream_request_id(response),
+    )
+
+
 def _upstream_error_text(response: httpx.Response, body_text: str) -> str:
     """Client-facing error string for a text tool, plus the analytics side-effect.
 
@@ -2312,7 +2332,8 @@ def _format_response(response: httpx.Response) -> str:
         # unsanitized — both a leak risk and the reason they never got the
         # quota upsell. Same classifier as the structured path now (#73); the
         # unredacted-but-sanitized body still reaches analytics for triage.
-        return _upstream_error_text(exc.response, exc.response.text[:1000])
+        _raise_upstream_text_error(exc.response, exc.response.text[:1000])
+        raise AssertionError("unreachable")  # pragma: no cover
     except Exception as exc:
         record_tool_error("ResponseFormatError", str(exc))
         return f"Error formatting response: {exc}"
@@ -3542,8 +3563,15 @@ async def {{ func_name }}(
             params={k: v for k, v in query_params.items() if v is not None},
         )
         return _format_response(response)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
     except ToolInputError as exc:
         return _safe_error("{{ func_name }}", exc)
+    except UpstreamHTTPError:
+        # Deliberately NOT downgraded to a string: the client must be able to
+        # distinguish an upstream failure from a successful result (#104).
+        raise
     except Exception as exc:
         logger.exception("{{ func_name }} failed")
         return _safe_error("{{ func_name }}", exc)
@@ -3601,8 +3629,15 @@ async def {{ func_name }}(
             json={k: v for k, v in body.items() if v is not None},
         )
         return _format_response(response)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
     except ToolInputError as exc:
         return _safe_error("{{ func_name }}", exc)
+    except UpstreamHTTPError:
+        # Deliberately NOT downgraded to a string: the client must be able to
+        # distinguish an upstream failure from a successful result (#104).
+        raise
     except Exception as exc:
         logger.exception("{{ func_name }} failed")
         return _safe_error("{{ func_name }}", exc)
@@ -3653,7 +3688,7 @@ async def {{ func_name }}(
         async with _api_stream_get(url) as response:
             if response.status_code != 200:
                 body = await response.aread()
-                return _upstream_error_text(
+                _raise_upstream_text_error(
                     response, body[:1000].decode("utf-8", errors="replace")
                 )
 
@@ -3704,6 +3739,9 @@ async def {{ func_name }}(
             )
 
         return _nav_hint + header + "\\n" + chunk
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
     except ToolInputError as exc:
         return _safe_error("filings_markdown_retrieve", exc)
     except Exception as exc:
@@ -4113,7 +4151,7 @@ async def filings_markdown_search(
         async with _api_stream_get(url) as response:
             if response.status_code != 200:
                 body = await response.aread()
-                return _upstream_error_text(
+                _raise_upstream_text_error(
                     response, body[:1000].decode("utf-8", errors="replace")
                 )
             buf = bytearray()
@@ -4160,6 +4198,9 @@ async def filings_markdown_search(
         for off, span in hits:
             parts.append(f"\\n--- match near offset {off} ---\\n...{span}...")
         return "\\n".join(parts)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
     except ToolInputError as exc:
         return _safe_error("filings_markdown_search", exc)
     except Exception as exc:

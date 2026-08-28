@@ -91,45 +91,14 @@ companies_financials_retrieve:
     the figures directly from the filing body — citing the filing type, date, and
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
-    WRONG-ENTITY / WRONG-DOCUMENT CHECK (both occur in production). "Most
-    recently published wins" means a later-published subsidiary report, or a
-    one-page filing notice, can displace the real annual report for a period.
-    `source_filing` is usually null (`sources_masked`), so these two value-only
-    checks are the only provenance you have. (a) CURRENCY: a period whose
-    statement currency differs from the company's other periods is a DIFFERENT
-    LEGAL ENTITY — never compare across it or compute growth through it.
-    (b) MAGNITUDE: a year orders of magnitude away from its neighbouring years
-    is the wrong document, not a real collapse. If either trips, report the
-    anomaly instead of the figure and read the number from the filing body.
-    PROVENANCE — CHECK THIS FIRST, NO EXTRA CALL NEEDED: a line item whose
-    `value` is present but whose `raw_value` AND `scale` are BOTH null has no
-    as-reported pair — either the API withheld it because the figure was
-    computed to close a balance, or the row never carried one. Either way you
-    CANNOT assert it was read off the page, so never present it as sourced from
-    the filing.
-    AN ARITHMETIC TIE PROVES INTERNAL CONSISTENCY, NOT PROVENANCE: a computed
-    figure is chosen to make total assets == total liabilities + total equity
-    hold, so a clean tie is not evidence a number came from the filing — only
-    the document is. Skip that check when `filters.line_items` is non-null, or
-    the three totals are not all present for one period and currency (the
-    response is filtered; a mismatch is an artifact). Children under a
-    `parent_code` are not guaranteed to sum to their parent — `depth` and
-    `parent_code` are rendering hierarchy, not an additive contract.
-    VERIFY AGAINST THE SOURCE when, and only when, a figure the user will act on
-    has no as-reported pair, or they asked you to check it. Pass
+    PROVENANCE: a line item whose `value` is present but whose `raw_value` AND
+    `scale` are BOTH null has no as-reported pair — you cannot assert it was
+    read off the page, so do not present it as sourced from the filing. An
+    arithmetic tie between totals does NOT establish provenance: a computed
+    figure is chosen to make the totals tie. To verify a figure, pass
     `source_filing.id` (or the `sources` entry with `is_selected: true`, field
     `filing_id`) straight to `filings_markdown_retrieve` — the id is already in
-    this response, so do NOT call `filings_list` first. Group the figures you
-    need to check by filing id and retrieve each filing AT MOST ONCE. Do NOT
-    verify every figure: it is slow and burns the request budget. WHEN COMPARING
-    TO THE DOCUMENT: if the row HAS an as-reported pair, compare `raw_value`
-    with `scale` and never the normalized `value` — the document prints the raw
-    figure in its own units, so a normalized value looks mismatched when it is
-    in fact correct. If the pair is null there is nothing as-reported to compare,
-    so convert the document's figure to the same units as `value` before
-    comparing, and say the row carries no as-reported pair. If they genuinely
-    disagree, report BOTH, say which came from which, and prefer the figure you
-    read in the filing.
+    this response.
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without

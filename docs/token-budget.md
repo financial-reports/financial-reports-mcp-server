@@ -4,7 +4,7 @@ Total tools registered: **16**
 
 | Tool | Description chars | Schema chars | Approx tokens |
 |---|---:|---:|---:|
-| `companies_financials_retrieve` | 5253 | 682 | 1483 |
+| `companies_financials_retrieve` | 3051 | 682 | 932 |
 | `filings_list` | 1067 | 2535 | 899 |
 | `companies_resolve_create` | 2770 | 87 | 713 |
 | `companies_list` | 1035 | 1263 | 573 |
@@ -21,7 +21,7 @@ Total tools registered: **16**
 | `get_fr_markdown_fetch_strategy` | 165 | 33 | 49 |
 | `companies_next_annual_report_retrieve` | 102 | 74 | 43 |
 
-**Total approx tokens for `tools/list`: 5280**
+**Total approx tokens for `tools/list`: 4729**
 
 > **Methodology**: token count is approximated as `len(chars) // 4`
 > (per-tool description + JSON-serialized parameter schema). The actual
