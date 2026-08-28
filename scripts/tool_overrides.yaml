@@ -85,9 +85,9 @@ companies_financials_retrieve:
     being expanded). Do NOT stop and do NOT estimate — FALL BACK to the filing:
     call `filings_list` for this `id` filtered with `type` (or `types`) to an
     annual report (e.g. 10-K, 20-F, or the local annual type) with
-    `ordering='-release_datetime'` and `page_size=10`, then take the newest row
-    whose `processing_status` is 'COMPLETED' (the very newest may still be
-    processing), retrieve it with `filings_markdown_retrieve`, and read
+    `ordering='-release_datetime'` and `page_size=10`, take the NEWEST row (do
+    not gate on `processing_status` — it is null whenever `view='full'` is
+    used), retrieve it with `filings_markdown_retrieve`, and read
     the figures directly from the filing body — citing the filing type, date, and
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
