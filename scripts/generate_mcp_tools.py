@@ -2157,6 +2157,30 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
     )
 
 
+def _raise_upstream_text_error(response: httpx.Response, body_text: str) -> None:
+    """Raise, rather than return, an upstream failure for a text tool (#104).
+
+    Text tools used to hand their failures back as a NORMAL string result, so
+    the MCP layer reported `isError: false` and a client branching on that
+    treated the error sentence as DATA. Measured consequence: an unknown ISIN
+    and a missing filing id both came back "successful", which makes
+    "filing not found" indistinguishable from "filing has no text".
+
+    The message and the analytics side-effect are unchanged — only the
+    delivery is, so callers can tell success from failure.
+    """
+    message = _upstream_error_text(response, body_text)
+    raise UpstreamHTTPError(
+        message,
+        upstream_status=response.status_code,
+        request_id=_upstream_request_id(response),
+        # Without this the middleware reads the constructor default "unknown"
+        # once the call raises, silently degrading quota / spend-cap / burst /
+        # credential classification in analytics.
+        error_kind=_classify_upstream_error(response.status_code, body_text),
+    )
+
+
 def _upstream_error_text(response: httpx.Response, body_text: str) -> str:
     """Client-facing error string for a text tool, plus the analytics side-effect.
 
@@ -2312,7 +2336,8 @@ def _format_response(response: httpx.Response) -> str:
         # unsanitized — both a leak risk and the reason they never got the
         # quota upsell. Same classifier as the structured path now (#73); the
         # unredacted-but-sanitized body still reaches analytics for triage.
-        return _upstream_error_text(exc.response, exc.response.text[:1000])
+        _raise_upstream_text_error(exc.response, exc.response.text[:1000])
+        raise AssertionError("unreachable")  # pragma: no cover
     except Exception as exc:
         record_tool_error("ResponseFormatError", str(exc))
         return f"Error formatting response: {exc}"
@@ -3517,6 +3542,15 @@ async def {{ func_name }}(
             "{{ param.original_name }}": {{ param.name }},
             {%- endfor %}
         }
+        # DRF paginates from 1. A zero/negative page_size took an unhandled
+        # path and surfaced a FastMCP-internal serialization message
+        # ("structured_content must be a dict or None. Got list: []") to the
+        # client, while page_size=100000 correctly returned a clean 400.
+        # Validate here so both ends of the range fail the same, legible way.
+        for _pg_key in ("page_size", "page"):
+            _pg_val = query_params.get(_pg_key)
+            if _pg_val is not None and int(_pg_val) < 1:
+                raise ToolInputError(f"{_pg_key} must be >= 1")
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:
@@ -3533,8 +3567,15 @@ async def {{ func_name }}(
             params={k: v for k, v in query_params.items() if v is not None},
         )
         return _format_response(response)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
     except ToolInputError as exc:
         return _safe_error("{{ func_name }}", exc)
+    except UpstreamHTTPError:
+        # Deliberately NOT downgraded to a string: the client must be able to
+        # distinguish an upstream failure from a successful result (#104).
+        raise
     except Exception as exc:
         logger.exception("{{ func_name }} failed")
         return _safe_error("{{ func_name }}", exc)
@@ -3583,8 +3624,15 @@ async def {{ func_name }}(
             json={k: v for k, v in body.items() if v is not None},
         )
         return _format_response(response)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
     except ToolInputError as exc:
         return _safe_error("{{ func_name }}", exc)
+    except UpstreamHTTPError:
+        # Deliberately NOT downgraded to a string: the client must be able to
+        # distinguish an upstream failure from a successful result (#104).
+        raise
     except Exception as exc:
         logger.exception("{{ func_name }} failed")
         return _safe_error("{{ func_name }}", exc)
@@ -3633,9 +3681,9 @@ async def {{ func_name }}(
         # Stream so we never buffer more than _MAX_FILING_BYTES into memory,
         # even when the upstream body is much larger than the user's slice.
         async with _api_stream_get(url) as response:
-            if response.status_code != 200:
+            if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
-                return _upstream_error_text(
+                _raise_upstream_text_error(
                     response, body[:1000].decode("utf-8", errors="replace")
                 )
 
@@ -3686,6 +3734,9 @@ async def {{ func_name }}(
             )
 
         return _nav_hint + header + "\\n" + chunk
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
     except ToolInputError as exc:
         return _safe_error("filings_markdown_retrieve", exc)
     except Exception as exc:
@@ -3732,6 +3783,15 @@ async def {{ func_name }}(
             "{{ param.original_name }}": {{ param.name }},
             {%- endfor %}
         }
+        # DRF paginates from 1. A zero/negative page_size took an unhandled
+        # path and surfaced a FastMCP-internal serialization message
+        # ("structured_content must be a dict or None. Got list: []") to the
+        # client, while page_size=100000 correctly returned a clean 400.
+        # Validate here so both ends of the range fail the same, legible way.
+        for _pg_key in ("page_size", "page"):
+            _pg_val = query_params.get(_pg_key)
+            if _pg_val is not None and int(_pg_val) < 1:
+                raise ToolInputError(f"{_pg_key} must be >= 1")
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:
@@ -3997,17 +4057,18 @@ def _resource_markdown() -> str:
         "require credentials and return 403 for an unauthenticated "
         "person.\\n\\n"
         "## processing_status gate\\n\\n"
-        "Each row returned by `filings_list` carries `processing_status`. "
+        "Rows returned by `filings_list` carry `processing_status` on the "
+        "DEFAULT view only (it is null under `view='full'`). "
         "Markdown is only available when it is `'COMPLETED'`. Other values "
         "you may see: `PROCESSING`, `PENDING`, `FAILED`. Note the field is "
         "on the LIST row only — the `filings_retrieve` response does not "
         "include it.\\n\\n"
         "Two ways to avoid wasted calls:\\n\\n"
-        "1. `processing_status` is NOT a filings_list filter — read it off each "
-        "returned filing instead. Narrow the call with `type`/`types` and "
-        "`ordering=-release_datetime`, then skip rows whose "
-        "processing_status is not 'COMPLETED'. Recommended for any list "
-        "query that precedes a markdown fetch.\\n"
+        "1. `processing_status` is NOT a filings_list filter, and it is NULL on "
+        "every row when you pass `view='full'` — it is only populated on the "
+        "DEFAULT view. Never gate filing selection on it: pick the newest row "
+        "that matches the type you want. Use it, when present, only to explain "
+        "an empty markdown result.\\n"
         "2. Read the `processing_status` field on each filing returned "
         "by filings_list before calling markdown.\\n\\n"
         "Calling markdown on a non-COMPLETED filing wastes one tool call "
@@ -4083,9 +4144,9 @@ async def filings_markdown_search(
             raise ToolInputError("query must be a non-empty string")
         url = f"/filings/{filing_id}/markdown/"
         async with _api_stream_get(url) as response:
-            if response.status_code != 200:
+            if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
-                return _upstream_error_text(
+                _raise_upstream_text_error(
                     response, body[:1000].decode("utf-8", errors="replace")
                 )
             buf = bytearray()
@@ -4132,6 +4193,9 @@ async def filings_markdown_search(
         for off, span in hits:
             parts.append(f"\\n--- match near offset {off} ---\\n...{span}...")
         return "\\n".join(parts)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
     except ToolInputError as exc:
         return _safe_error("filings_markdown_search", exc)
     except Exception as exc:
@@ -4286,12 +4350,11 @@ async def find_filing_section(
         "   insider transactions          →  'DIRS'\\n"
         "   For anything else, call `filing_types_list` first.\\n"
         f"3. `filings_list` with company=<id>, type=<mapped>, "
-        "ordering=-release_datetime, page_size=10. Walk the page newest-first "
-        "and take the first row whose processing_status is 'COMPLETED' — the "
-        "newest filing is often still processing, and processing_status is a "
-        "response field, NOT a filter. If no row on the page qualifies, fetch "
-        "at most 2 further pages; if still none, say no completed filing was "
-        "found and stop rather than paginating indefinitely.\\n"
+        "ordering=-release_datetime, page_size=10. Take the NEWEST row — that "
+        "is the answer. `processing_status` is a response field, NOT a filter, "
+        "and it is OMITTED (null) when you pass `view='full'`, so do NOT make "
+        "it a selection gate: if it is absent, just proceed. Treat it only as "
+        "an explanation if a markdown fetch then comes back empty.\\n"
         "4. `filings_markdown_retrieve` for that filing_id. The response "
         "is paginated — call with increasing offset until you locate the "
         "section, the truncation marker is gone, or you have made 10 calls. "

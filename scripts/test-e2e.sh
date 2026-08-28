@@ -68,4 +68,14 @@ TARGETS=()
 [[ "$PROFILE" == "default" || "$PROFILE" == "both" ]] && TARGETS+=("default")
 [[ "$PROFILE" == "redis" || "$PROFILE" == "both" ]] && TARGETS+=("redis")
 
-MCP_E2E_TARGETS="${TARGETS[*]}" python -m pytest tests/e2e -v --tb=short
+# `python` is not on PATH on macOS (only python3) and is absent inside a bare
+# venv-less shell, so the runner is overridable and falls back sensibly.
+PYTHON="${PYTHON:-}"
+if [ -z "$PYTHON" ]; then
+    if [ -x "$REPO_ROOT/.venv/bin/python" ]; then PYTHON="$REPO_ROOT/.venv/bin/python"
+    elif command -v python3 >/dev/null 2>&1; then PYTHON=python3
+    else PYTHON=python
+    fi
+fi
+command -v "$PYTHON" >/dev/null 2>&1 || { echo "ERROR: no usable python ($PYTHON)"; exit 1; }
+MCP_E2E_TARGETS="${TARGETS[*]}" "$PYTHON" -m pytest tests/e2e -v --tb=short
