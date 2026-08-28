@@ -48,10 +48,16 @@ def _filters_by_type(txt, st):
     if not isinstance(st, dict):
         return None
     rows = st.get("results") or []
-    bad = [r.get("filing_type") for r in rows
-           if isinstance(r, dict) and r.get("filing_type")
-           and str(r.get("filing_type")).upper() not in ("10-K",)]
-    return f"type='10-K' returned other types: {sorted(set(bad))[:5]}" if bad else None
+    # filing_type is an OBJECT ({id, code, name, ...}), not a string. Treating it
+    # as a string made this invariant crash and report a server failure that did
+    # not exist — a detector lying in the direction of alarm.
+    def code(r):
+        ft = r.get("filing_type")
+        return (ft or {}).get("code") if isinstance(ft, dict) else ft
+    bad = sorted({code(r) for r in rows if isinstance(r, dict) and code(r) != "10-K"})
+    if not rows:
+        return "no rows returned, so filtering is unproven"
+    return f"type='10-K' returned other types: {bad[:5]}" if bad else None
 
 
 CALLS = [
