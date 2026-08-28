@@ -65,7 +65,7 @@ async def series(c,cid):
             for li in s.get("line_items",[]):
                 if li.get("code")=="revenue" and li.get("value") is not None:
                     try:
-                        out.append((p.get("fiscal_year"),float(li["value"]),(s.get("currency") or {}).get("code")))
+                        out.append((int(p.get("fiscal_year")),float(li["value"]),(s.get("currency") or {}).get("code")))
                     except Exception:
                         pass
     return sorted(x for x in out if x[0])

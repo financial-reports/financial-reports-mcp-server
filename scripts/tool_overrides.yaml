@@ -91,14 +91,16 @@ companies_financials_retrieve:
     the figures directly from the filing body — citing the filing type, date, and
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
-    PROVENANCE: a line item whose `value` is present but whose `raw_value` AND
-    `scale` are BOTH null has no as-reported pair — you cannot assert it was
-    read off the page, so do not present it as sourced from the filing. An
-    arithmetic tie between totals does NOT establish provenance: a computed
-    figure is chosen to make the totals tie. To verify a figure, pass
-    `source_filing.id` (or the `sources` entry with `is_selected: true`, field
-    `filing_id`) straight to `filings_markdown_retrieve` — the id is already in
-    this response.
+    PROVENANCE: treat a figure as as-reported ONLY when `raw_value` AND `scale`
+    are BOTH non-null. If either is missing there is no as-reported pair, so you
+    cannot assert the figure was read off the page — do not present it as
+    sourced from the filing. An arithmetic tie between totals does NOT establish
+    provenance: a computed figure is chosen to make the totals tie. To verify a
+    figure, take `source_filing.id` (or the `sources` entry with
+    `is_selected: true`, field `filing_id`) — it is already in this response, so
+    no `filings_list` call is needed — confirm that filing's
+    `processing_status` is `COMPLETED`, then read it with
+    `filings_markdown_retrieve`.
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without
