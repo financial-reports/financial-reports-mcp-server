@@ -1,6 +1,6 @@
 ---
 name: financial-filings-research
-description: Research public companies' regulatory filings, financial data, and industry context using the FinancialReports MCP server. Use when the user mentions a listed company by name, ticker, or ISIN, asks about 10-Ks, 10-Qs, annual or quarterly reports, financial statements (revenue, EBITDA, debt, cash flow), insider transactions, ESG disclosures, or wants to compare companies, screen by industry (ISIC), or set up filings alerts. The hosted connector exposes 16 tools by default (46 exist in the full schema but are not enabled) sourced from official regulators worldwide.
+description: Use for questions about a public company's regulatory filings or financials — revenue, EBITDA, net income, debt, cash flow, 10-K/20-F/annual reports, insider transactions, peer or industry screening, or resolving a company by name, ticker, ISIN or LEI via the FinancialReports MCP connector. Carries the workflows plus the data-quality checks that the tool schemas do not express: masked provenance, as-reported vs computed figures, and the currency and magnitude checks that catch a wrong source document.
 ---
 
 # Financial Filings Research
