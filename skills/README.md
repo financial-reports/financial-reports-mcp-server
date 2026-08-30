@@ -1,6 +1,6 @@
 # Skills for the FinancialReports MCP
 
-Agent Skills that pair with the [FinancialReports MCP server](https://github.com/financial-reports/financial-reports-mcp-server). The MCP exposes 46 tools for regulatory-filings research (16 on the curated default surface; the rest behind `MCP_FULL_SURFACE=1`); these skills teach Claude how to compose those tools into the workflows analysts actually run.
+Agent Skills that pair with the [FinancialReports MCP server](https://github.com/financial-reports/financial-reports-mcp-server). The hosted connector exposes **16** tools for regulatory-filings research (46 exist in the full schema; the rest are behind `MCP_FULL_SURFACE=1` and are not enabled on the hosted server); these skills teach Claude how to compose those tools into the workflows analysts actually run.
 
 ## Available skills
 
@@ -20,15 +20,45 @@ skills/
       tool-cheatsheet.md
 ```
 
-The frontmatter `description` is what Claude scans to decide whether to activate the skill — it's deliberately specific about triggering keywords ("10-K", "ISIN", "compare companies", etc.).
+The frontmatter `description` is what Claude scans to decide whether to activate the skill. Note the measured caveat in "How invocation actually works" below: scanning it is not the same as acting on it.
+
+## Installing a skill
+
+You need two things:
+
+1. **The FinancialReports MCP connector enabled** — `https://mcp.financialfilings.com/mcp`
+2. **The skill registered:**
+   - **Claude Code** — copy the skill folder into `~/.claude/skills/` (all projects) or `<project>/.claude/skills/` (one project):
+     ```bash
+     git clone https://github.com/financial-reports/financial-reports-mcp-server
+     cp -R financial-reports-mcp-server/skills/financial-filings-research ~/.claude/skills/
+     ```
+   - **Claude.ai / Claude Desktop** — Settings → Capabilities → Skills → Upload skill, and select the folder zipped.
+
+Confirm it registered by asking Claude `what skills do you have?`.
 
 ## Using a skill
 
-These skills are designed to activate automatically once Claude has both:
-1. The FinancialReports MCP connector enabled, and
-2. The skill registered (Claude.ai users: via the Anthropic Skills Directory; Claude Code users: copy the skill folder into `~/.claude/skills/` or your project's `.claude/skills/`).
+Skills use progressive disclosure: the frontmatter `description` stays in
+context, and the body loads when the skill is invoked.
 
-No manual invocation needed — Claude picks the skill up when the user's prompt matches the description's trigger keywords.
+In Claude Code, invoke it with the slash command:
+
+```
+/financial-filings-research
+```
+
+Or name it in the request — *"Using the financial-filings-research skill, compare
+net debt for Iberdrola and Engie for the latest fiscal year."*
+
+To apply it to every FinancialReports question in a project, add a line to that
+project's `CLAUDE.md`:
+
+```
+For any FinancialReports question, load the financial-filings-research skill first.
+```
+
+That last form is the one to give a team: set once, and every session picks it up.
 
 ## Using the workflows on other harnesses
 
