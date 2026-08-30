@@ -112,64 +112,52 @@ When the user wants "alert me when any S&P 100 company files an 8-K":
 - **Use markdown bold for the user's actual answer**, not the supporting context.
 - **Don't paste full filing text.** Summarize. Offer to fetch specific sections on request.
 
-## Data-quality checks you cannot skip
+## Data-quality checks
 
-These are properties of the live data that the tool schemas do not express. A
-model reasoning only from the schema will not know any of them, and every one
-has produced a wrong answer in production.
+Financial statement data is assembled from filed documents, and a few properties
+of that process are not visible in the tool schemas. Check these before reporting
+a figure.
 
-### Provenance is masked — you usually cannot see the source document
+### Provenance may not be exposed
 
-`companies_financials_retrieve` returns `sources_masked: true` for most
-accounts, and then `source_filing` is **null on every statement**. You cannot
-tell which document a figure came from. Say so when it matters; do not imply a
-figure is traceable when it is not.
+`companies_financials_retrieve` returns `sources_masked: true` on many accounts,
+and `source_filing` is then null. When that happens you cannot identify the
+document behind a figure — say so rather than implying the number is traceable.
 
-### A figure is "as-reported" only when `raw_value` AND `scale` are both present
+### "As-reported" requires both `raw_value` and `scale`
 
-If either is null there is no as-reported pair, and you cannot assert the number
-was read off the page. An arithmetic tie between totals does **not** establish
-provenance — a computed figure is *chosen* to make the totals tie, so it always
-ties. Treat a tie as internal consistency only.
+If either is null there is no as-reported pair, so the figure cannot be
+attributed to a printed line in the document. Note that an arithmetic tie
+between totals does not establish provenance either: a derived figure is
+computed so the totals balance, so it will always tie.
 
-### The wrong source document is sometimes attached to a period
+### Confirm the reporting entity and the period
 
-Selection has historically favoured the most recently published filing, so a
-later subsidiary report or a one-page filing notice can displace the real annual
-report. Two checks, both free — you already have the data:
+Two quick checks against the data you already have:
 
-- **Currency.** A period whose statement currency differs from the company's
-  other periods is a **different legal entity**. Never compute growth across it.
-  Rolls-Royce Holdings (a GBP parent) has returned EUR figures from its German
-  subsidiary for 7 of 11 years; FY2019→FY2020 "growth" of +203% is entirely a
-  currency-and-entity switch.
-- **Magnitude.** A year far out of line with **both** neighbouring years is the
-  wrong document, not a real collapse. Volkswagen FY2024 has returned
-  EUR 35,523,197 against an actual EUR 324.7bn — wrong by ~9,140x.
+- **Currency.** If one period's statement currency differs from the company's
+  other periods, it is likely a different reporting entity (a subsidiary rather
+  than the listed parent). Do not compute growth across such a break.
+- **Magnitude.** If one year is far out of line with **both** neighbouring
+  years, confirm it before using it — that pattern usually means a different
+  document, not a real collapse.
 
-These are **validation signals, not proof** — confirm against the filing before
-you replace a value or compute growth across it. When either check trips: **say so
-explicitly, confirm the entity and period in the filing, and report the figure you
-read there.** Reporting the corrected number silently is not enough —
-the user needs to know the structured figure was wrong, and so does whoever
-maintains the data. Quietly routing around a bad number is how this class of
-defect stayed invisible.
+These are validation signals rather than proof. When one trips, confirm the
+entity and period against the filing, report the figure you read there, and tell
+the user what you found. Genuine volatility exists; an order-of-magnitude gap or
+a currency change is what warrants a second look.
 
-Genuine volatility exists, so a moderate move is not automatically a defect.
-Order-of-magnitude gaps, and any currency change, are.
+### `processing_status` is absent under `view='full'`
 
-### `processing_status` disappears under `view='full'`
+`view='full'` returns more fields but omits `processing_status`. Don't gate
+filing selection on it there — read it from the default view, or proceed
+without it.
 
-`view='full'` returns MORE fields but sets `processing_status` to null. Do not
-gate filing selection on it — if you passed `view='full'` it will be absent for
-every row and nothing will ever qualify. Read it from the default view, or
-proceed without it.
+### An unknown filing-type code returns zero rows
 
-### An unknown filing-type code returns zero rows, not an error
-
-`filings_list?type=NOT-A-TYPE` returns `count=0`, identical to a genuine empty
-result. If a type filter returns nothing, verify the code with
-`filing_types_list` before telling the user the company has no such filings.
+`filings_list` with an unrecognised `type` returns `count=0`, which looks
+identical to a genuine empty result. Verify the code with `filing_types_list`
+before telling the user a company has no such filings.
 
 ## Common pitfalls
 

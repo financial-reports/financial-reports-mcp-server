@@ -33,34 +33,32 @@ You need two things:
      git clone https://github.com/financial-reports/financial-reports-mcp-server
      cp -R financial-reports-mcp-server/skills/financial-filings-research ~/.claude/skills/
      ```
-   - **Claude.ai** — upload the folder as a zip, or install from the Anthropic Skills Directory.
+   - **Claude.ai / Claude Desktop** — Settings → Capabilities → Skills → Upload skill, and select the folder zipped.
 
-Verify it registered by asking Claude `what skills do you have?` — `financial-filings-research` should be listed.
+Confirm it registered by asking Claude `what skills do you have?`.
 
-## How invocation actually works — read this before you judge the skill
+## Using a skill
 
-Skills use **progressive disclosure**: the frontmatter `description` sits in the
-model's context, but the SKILL.md **body loads only when the model invokes the
-skill**. It is not injected into every conversation.
+Skills use progressive disclosure: the frontmatter `description` stays in
+context, and the body loads when the skill is invoked.
 
-**Measured behaviour** (18 Claude Code runs, sonnet-4-6, tasks squarely inside
-this skill's stated scope, with the MCP connector enabled):
+In Claude Code, invoke it with the slash command:
 
-| condition | skill invoked |
-|---|---|
-| ordinary phrasing, e.g. *"what was VW's FY2024 revenue?"* | **0/12** |
-| description rewritten as an explicit trigger | **0/6** |
-| user names it — *"use the financial-filings-research skill"* | **1/1** |
+```
+/financial-filings-research
+```
 
-A model that already has the connector's 16 tools in context simply uses them;
-it does not reach for the skill on its own. Rewording the description did not
-change this.
+Or name it in the request — *"Using the financial-filings-research skill, compare
+net debt for Iberdrola and Engie for the latest fiscal year."*
 
-**So, practically:**
+To apply it to every FinancialReports question in a project, add a line to that
+project's `CLAUDE.md`:
 
-- **To guarantee the skill is used, name it**: *"Using the financial-filings-research skill, compare net debt for Iberdrola and Engie."* Or add a line to your project's `CLAUDE.md`: `For any FinancialReports question, first load the financial-filings-research skill.`
-- **Do not expect it to fire on its own.** If you install it and see no change, that is the documented behaviour, not a broken install.
-- Guidance that must apply to *every* answer belongs in your `CLAUDE.md` or in the tool descriptions — not in a skill body.
+```
+For any FinancialReports question, load the financial-filings-research skill first.
+```
+
+That last form is the one to give a team: set once, and every session picks it up.
 
 ## Using the workflows on other harnesses
 
