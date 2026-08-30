@@ -43,7 +43,7 @@ Confirm it registered: ask Claude `what skills do you have?`
 
 In Claude Code, type the slash command:
 
-```
+```text
 /financial-filings-research
 ```
 
@@ -53,7 +53,7 @@ You can also just name it — *"Using the financial-filings-research skill,
 compare …"* — or, to apply it to every question in a project, add one line to
 that project's `CLAUDE.md`:
 
-```
+```text
 For any FinancialReports question, load the financial-filings-research skill first.
 ```
 
@@ -65,15 +65,13 @@ Real prompts and real (abridged) answers.
 
 ### Find a company's latest annual report
 
-> **Which annual report did Roche most recently file, and when?**
+> **Which annual report did Apple most recently file, and when?**
 
 | Field | Value |
 |---|---|
-| Filing type | Annual Report (`10-K`) |
-| Release date | 2026-02-02 |
-| Filing ID | 32916850 |
-
-Title: *Jahresabschluss zum Geschäftsjahr vom 01.01.2024 bis zum 31.12.2024*
+| Filing type | 10-K (Annual Report) |
+| Release date | 2025-10-31 |
+| Filing ID | 9293573 |
 
 Claude resolves the company, filters filings by type, and sorts newest-first —
 three tool calls, no guesswork about parameter names.
@@ -107,18 +105,17 @@ lining up numbers that look comparable and are not.
 
 ### Read a section out of a filing
 
-> **Find the section of Roche's most recent annual report that discusses risk
-> management, and quote a short excerpt.**
+> **Find the part of Apple's most recent 10-K that discusses supply-chain or
+> manufacturing risk, and quote a short excerpt.**
 
-> *Zur sorgfältigen Prüfung des Geschäftsumfeldes hinsichtlich möglicher
-> Risikoszenarien … hält Roche konzernweit ein Risikomanagement-System vor.*
->
-> **Translation:** To carefully examine the business environment for possible
-> risk scenarios, Roche maintains a group-wide risk management system.
+> *"The Company's global supply chain is large and complex and a majority of the
+> Company's supplier facilities, including manufacturing and assembly sites, are
+> located outside the U.S. As a result, the Company's operations and performance
+> depend significantly on global and regional conditions."*
 
-Claude searched inside the filing rather than downloading all of it, found the
-German-language section (there is no literal "Risk Factors" heading in a German
-annual report), and flagged the language.
+Claude searched *inside* the filing rather than downloading all 500,000-plus
+characters of it, and returned the passage with the filing and release date
+attached.
 
 ---
 
