@@ -1,11 +1,11 @@
 ---
 name: financial-filings-research
-description: Research public companies' regulatory filings, financial data, and industry context using the FinancialReports MCP server. Use when the user mentions a listed company by name, ticker, or ISIN, asks about 10-Ks, 10-Qs, annual or quarterly reports, financial statements (revenue, EBITDA, debt, cash flow), insider transactions, ESG disclosures, or wants to compare companies, screen by industry (ISIC), or set up filings alerts. The connector exposes 46 tools sourced from official regulators worldwide.
+description: Use for questions about a public company's regulatory filings or financials — revenue, EBITDA, net income, debt, cash flow, 10-K/20-F/annual reports, insider transactions, peer or industry screening, or resolving a company by name, ticker, ISIN or LEI via the FinancialReports MCP connector. Carries the workflows plus the data-quality checks that the tool schemas do not express: masked provenance, as-reported vs computed figures, and the currency and magnitude checks that catch a wrong source document.
 ---
 
 # Financial Filings Research
 
-This skill teaches Claude how to combine the 46 tools exposed by the FinancialReports MCP server into the workflows analysts actually run — company lookup, filings retrieval, multi-company comparison, industry screening, and ongoing monitoring.
+This skill teaches Claude how to combine the 16 tools the hosted FinancialReports MCP connector exposes (46 exist in the full schema; the rest are not enabled) into the workflows analysts actually run — company lookup, filings retrieval, multi-company comparison, industry screening, and ongoing monitoring.
 
 The MCP server is the data layer. This skill is the workflow layer.
 
@@ -107,10 +107,69 @@ When the user wants "alert me when any S&P 100 company files an 8-K":
 ## Output formatting
 
 - **Tables for comparisons.** Markdown tables with units in headers, not in cells.
-- **Cite the source filing** for every factual claim — include `filing_type`, `release_datetime`, and a short URL fragment (filings_retrieve returns a direct URL).
+- **Cite the source filing** for every factual claim — include `filing_type`, `release_datetime`, and a short URL fragment (filings_retrieve returns a direct URL). **Exception:** when `sources_masked` is true, `source_filing` is null and there is nothing to cite. Say the source is not exposed. Never synthesise a citation to satisfy this rule — a fabricated citation is worse than an acknowledged gap.
 - **Quote currency and period explicitly** — never present a number stripped of context.
 - **Use markdown bold for the user's actual answer**, not the supporting context.
 - **Don't paste full filing text.** Summarize. Offer to fetch specific sections on request.
+
+## Data-quality checks you cannot skip
+
+These are properties of the live data that the tool schemas do not express. A
+model reasoning only from the schema will not know any of them, and every one
+has produced a wrong answer in production.
+
+### Provenance is masked — you usually cannot see the source document
+
+`companies_financials_retrieve` returns `sources_masked: true` for most
+accounts, and then `source_filing` is **null on every statement**. You cannot
+tell which document a figure came from. Say so when it matters; do not imply a
+figure is traceable when it is not.
+
+### A figure is "as-reported" only when `raw_value` AND `scale` are both present
+
+If either is null there is no as-reported pair, and you cannot assert the number
+was read off the page. An arithmetic tie between totals does **not** establish
+provenance — a computed figure is *chosen* to make the totals tie, so it always
+ties. Treat a tie as internal consistency only.
+
+### The wrong source document is sometimes attached to a period
+
+Selection has historically favoured the most recently published filing, so a
+later subsidiary report or a one-page filing notice can displace the real annual
+report. Two checks, both free — you already have the data:
+
+- **Currency.** A period whose statement currency differs from the company's
+  other periods is a **different legal entity**. Never compute growth across it.
+  Rolls-Royce Holdings (a GBP parent) has returned EUR figures from its German
+  subsidiary for 7 of 11 years; FY2019→FY2020 "growth" of +203% is entirely a
+  currency-and-entity switch.
+- **Magnitude.** A year far out of line with **both** neighbouring years is the
+  wrong document, not a real collapse. Volkswagen FY2024 has returned
+  EUR 35,523,197 against an actual EUR 324.7bn — wrong by ~9,140x.
+
+These are **validation signals, not proof** — confirm against the filing before
+you replace a value or compute growth across it. When either check trips: **say so
+explicitly, confirm the entity and period in the filing, and report the figure you
+read there.** Reporting the corrected number silently is not enough —
+the user needs to know the structured figure was wrong, and so does whoever
+maintains the data. Quietly routing around a bad number is how this class of
+defect stayed invisible.
+
+Genuine volatility exists, so a moderate move is not automatically a defect.
+Order-of-magnitude gaps, and any currency change, are.
+
+### `processing_status` disappears under `view='full'`
+
+`view='full'` returns MORE fields but sets `processing_status` to null. Do not
+gate filing selection on it — if you passed `view='full'` it will be absent for
+every row and nothing will ever qualify. Read it from the default view, or
+proceed without it.
+
+### An unknown filing-type code returns zero rows, not an error
+
+`filings_list?type=NOT-A-TYPE` returns `count=0`, identical to a genuine empty
+result. If a type filter returns nothing, verify the code with
+`filing_types_list` before telling the user the company has no such filings.
 
 ## Common pitfalls
 
