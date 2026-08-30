@@ -5,7 +5,7 @@ description: Research public companies' regulatory filings, financial data, and 
 
 # Financial Filings Research
 
-This skill teaches Claude how to combine the 46 tools exposed by the FinancialReports MCP server into the workflows analysts actually run — company lookup, filings retrieval, multi-company comparison, industry screening, and ongoing monitoring.
+This skill teaches Claude how to combine the 16 tools the hosted FinancialReports MCP connector exposes (46 exist in the full schema; the rest are not enabled) into the workflows analysts actually run — company lookup, filings retrieval, multi-company comparison, industry screening, and ongoing monitoring.
 
 The MCP server is the data layer. This skill is the workflow layer.
 
@@ -107,7 +107,7 @@ When the user wants "alert me when any S&P 100 company files an 8-K":
 ## Output formatting
 
 - **Tables for comparisons.** Markdown tables with units in headers, not in cells.
-- **Cite the source filing** for every factual claim — include `filing_type`, `release_datetime`, and a short URL fragment (filings_retrieve returns a direct URL).
+- **Cite the source filing** for every factual claim — include `filing_type`, `release_datetime`, and a short URL fragment (filings_retrieve returns a direct URL). **Exception:** when `sources_masked` is true, `source_filing` is null and there is nothing to cite. Say the source is not exposed. Never synthesise a citation to satisfy this rule — a fabricated citation is worse than an acknowledged gap.
 - **Quote currency and period explicitly** — never present a number stripped of context.
 - **Use markdown bold for the user's actual answer**, not the supporting context.
 - **Don't paste full filing text.** Summarize. Offer to fetch specific sections on request.
@@ -147,8 +147,10 @@ report. Two checks, both free — you already have the data:
   wrong document, not a real collapse. Volkswagen FY2024 has returned
   EUR 35,523,197 against an actual EUR 324.7bn — wrong by ~9,140x.
 
-When either check trips: **say so explicitly, then read the figure from the
-filing body instead.** Reporting the corrected number silently is not enough —
+These are **validation signals, not proof** — confirm against the filing before
+you replace a value or compute growth across it. When either check trips: **say so
+explicitly, confirm the entity and period in the filing, and report the figure you
+read there.** Reporting the corrected number silently is not enough —
 the user needs to know the structured figure was wrong, and so does whoever
 maintains the data. Quietly routing around a bad number is how this class of
 defect stayed invisible.
