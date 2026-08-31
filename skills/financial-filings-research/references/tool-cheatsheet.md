@@ -204,7 +204,7 @@ For programmatic alerts. Per-user, requires authenticated session.
 2. Immediately `webhooks_test_create` to verify the user's endpoint accepts and signs requests.
 3. Tell the user the secret value once — we don't store it cleartext server-side.
 
-Pitfall: `event_types` is restrictive (e.g., `filing.published`, `watchlist.changed`). Don't invent event names — call `webhooks_list` on an existing webhook to see valid values, or check the docs at https://financialreports.eu/integrations/claude/.
+Pitfall: `event_types` is restrictive (e.g., `filing.published`, `watchlist.changed`). Don't invent event names — call `webhooks_list` on an existing webhook to see valid values, or check the docs at https://financialfilings.com/integrations/claude/.
 
 ## Tool annotation summary
 
@@ -215,4 +215,4 @@ Pitfall: `event_types` is restrictive (e.g., `filing.published`, `watchlist.chan
 
 ## Authentication
 
-All tools require an authenticated session via Cognito OAuth (handled by the MCP server). Anonymous calls fail with 401. **The connector is free** — any FinancialReports account (paid or free) has access. Tools may soft-gate on rare account-status conditions (banned, deactivated); when that happens the response is a markdown link pointing the user back to their dashboard.
+All tools require an authenticated session via Cognito OAuth (handled by the MCP server). Anonymous calls fail with 401. **Tools may soft-gate on rare account-status conditions (banned, deactivated); when that happens the response is a markdown link pointing the user back to their dashboard.
