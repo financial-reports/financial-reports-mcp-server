@@ -328,6 +328,26 @@ def test_advertised_scopes_match_the_registration_default(reload_with_oauth_env)
     assert mod.auth_provider.client_registration_options.valid_scopes == advertised
     assert mod._OAUTH_SCOPE_STR == " ".join(advertised)
 
+    # Assert what the surfaces actually EMIT, not merely that they reference the
+    # same constant. Shared-constant reference is not enforcement: a future edit
+    # could reintroduce a literal on one surface and nothing above would notice.
+    from starlette.testclient import TestClient
+
+    with TestClient(mod.app) as client:
+        for path in (
+            "/.well-known/oauth-authorization-server",
+            "/.well-known/oauth-protected-resource",
+        ):
+            resp = client.get(path)
+            assert resp.status_code == 200, path
+            assert resp.json()["scopes_supported"] == advertised, path
+
+        # The WWW-Authenticate challenge is where Claude reads its scope from —
+        # if it drifts, Claude registers with the wrong set and we are back to
+        # a client-specific outage.
+        challenge = client.post("/mcp", json={}).headers.get("www-authenticate", "")
+        assert f'scope="{mod._OAUTH_SCOPE_STR}"' in challenge, challenge
+
 
 # Blank `scope` at DCR must behave exactly like an absent one. The SDK's
 # `default_scopes` hook only fires on `scope is None`, so an explicit "" or a
@@ -411,3 +431,32 @@ def test_explicit_valid_scope_at_registration_is_preserved(reload_with_oauth_env
 
     stored = anyio.run(mod.auth_provider.get_client, resp.json()["client_id"])
     assert stored.scope == "openid"
+
+
+def test_dev_mode_tolerates_the_registration_default_statement(
+    monkeypatch, respx_router
+) -> None:
+    """DEV_MODE sets `auth_provider = None`; the module must still import.
+
+    The `if auth_provider is not None` guard exists solely for this path, and
+    nothing else exercises it — an unguarded attribute write would turn every
+    local-dev boot into an AttributeError at import time.
+
+    Depends on ``respx_router`` so the teardown reload — which rebuilds the
+    baseline AWSCognitoProvider and performs OIDC discovery — stays offline.
+    """
+    import importlib
+
+    import src.financial_reports_mcp as m
+
+    monkeypatch.setenv("DEV_MODE_API_KEY", "fr_test_devkey_abc123")
+    monkeypatch.setenv("MCP_BASE_URL", "http://localhost:8000")
+    for k in ("MCP_UPSTREAM_AUTH_BASE", "MCP_UPSTREAM_TOKEN_BASE"):
+        monkeypatch.delenv(k, raising=False)
+    try:
+        importlib.reload(m)
+        assert m.auth_provider is None
+        assert m._OAUTH_SCOPES == ["openid", "email", "profile"]
+    finally:
+        monkeypatch.undo()
+        importlib.reload(m)

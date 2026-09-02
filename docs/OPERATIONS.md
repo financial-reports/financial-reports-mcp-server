@@ -44,8 +44,9 @@ recount Azure-era incidents, the history is accurate and kept — those notes ar
 
 ## ⚠️ Merging to `main` does not ship
 
-`.github/workflows/` **in this repo contains exactly one workflow: `ci.yml`.** It lints,
-regenerates, and tests. It does not build an image and it does not deploy anything. A
+`.github/workflows/` **in this repo contains no workflow that deploys.** `ci.yml` lints,
+regenerates, and tests; `fastmcp-3x-probe.yml`, `prod-probe.yml` and `snapshot-drift.yml`
+probe and report. None of them builds an image and none of them deploys anything. A
 reader who stops there reasonably concludes there is no deploy automation at all. That is
 almost right, and the gap is the important part.
 
