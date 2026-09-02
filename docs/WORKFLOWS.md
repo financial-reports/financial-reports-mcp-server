@@ -35,8 +35,7 @@ Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default sur
 | Understand filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` |
 | Track filing revisions **†** | `filings_history_retrieve` (audit trail of amendments) |
 | Industry screening | resolve a known peer → read its `sub_industry_code` → `companies_list?sub_industry=…` |
-| Watchlist **†** | `watchlist_retrieve`, `watchlist_companies_create`, `watchlist_companies_bulk_add_create` |
-| Alerts setup **†** | `webhooks_create` → `webhooks_test_create` → `webhooks_deliveries_retrieve` |
+| Monitoring | not on this connector — poll `filings_list` newest-first |
 | Reference data | `filing_categories_list`, `filing_types_list`; **†** `countries_list`, `languages_list`, `sources_list` |
 | Line item glossary **†** | `line_item_definitions_list`, `line_item_definitions_retrieve` |
 
@@ -73,18 +72,20 @@ Always cite the filing's `release_datetime` and `period_ending_date` so the user
 ### 4. Industry screening
 
 1. Get the 4-digit ISIC class code — the hierarchy tools are not exposed on this server, so resolve a company you know is in the industry and read its `sub_industry_code`.
-2. `companies_list?sub_industry=<4-digit class code>&countries=<comma-separated ISO2>`.
+2. `companies_list?sub_industry=<4-digit class code>&countries=<comma-separated ISO2>&listing_status=LISTED`
+   (`listing_status=LISTED` is required — US ISIC 2619 returns 392 without it, 81 with it, and the unfiltered list is dominated by companies delisted decades ago.).
 3. For each result, `companies_financials_retrieve` to filter by the metric, then sort and present.
 
 ISIC ≠ NAICS ≠ GICS. This MCP exposes ISIC; if the user asks for GICS sectors, explain the mapping is approximate.
 
 ### 5. Filings monitoring (multi-step setup)
 
-1. Build the watchlist via `watchlist_companies_bulk_add_create` (one call, list of IDs).
-2. `webhooks_create` with the user's endpoint + filter (`event_types=["filing.published"]`, `filing_types=["8-K"]`).
-3. `webhooks_test_create` to verify the endpoint accepts deliveries.
-4. Save the secret (`webhooks_regenerate_secret_create` if rotation needed).
-5. Deliveries inspected via `webhooks_deliveries_retrieve`, replayed via `webhooks_deliveries_replay_create`.
+**Not available on this connector.** Watchlist and webhook tools are not part of
+the research surface, so "alert me when X files" cannot be set up here. Say so
+rather than attempting it.
+
+The workable alternative is polling: `filings_list?company=<id>&ordering=-release_datetime`
+on a schedule the user runs, comparing against the last `release_datetime` seen.
 
 ## Common pitfalls
 
@@ -92,9 +93,8 @@ ISIC ≠ NAICS ≠ GICS. This MCP exposes ISIC; if the user asks for GICS sector
 - **Dual listings.** Some companies have multiple ISINs; `companies_retrieve` returns the canonical entity.
 - **Period types.** `companies_financials_retrieve` takes `fiscal_period` (`FY`, `H1`, `H2`, `Q1`–`Q4`, `9M`) plus `fiscal_year` / `fiscal_year_from` / `fiscal_year_to`. There is no period-type parameter — annual is `fiscal_period='FY'`, quarterly is `Q1`-`Q4`. If the user asked for "Q3", pass `fiscal_period='Q3'`; don't return the annual figure.
 - **Pagination.** List endpoints cap at 100/page. For screening, tell the user the total (`count`) and that you took the top N.
-- **Auth-scoped tools.** `watchlist_*` and `webhooks_*` operate on the authenticated user; anonymous calls fail.
 - **Markdown size.** `filings_markdown_retrieve` caps at 150K chars; long 10-Ks may truncate — `filings_retrieve` returns the original PDF URL for full fidelity.
-- **Account soft-gate.** All tools are free for any authenticated FinancialReports account. If a tool returns a markdown gate response pointing at `financialreports.eu`, surface the link to the user and stop — don't retry-loop.
+- **Account soft-gate.** If a tool returns a markdown gate response pointing at the FinancialReports site, the account needs attention — surface the link to the user and stop, don't retry-loop.
 
 ## Output formatting
 

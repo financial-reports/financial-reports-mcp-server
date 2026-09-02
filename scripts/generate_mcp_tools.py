@@ -1418,13 +1418,13 @@ mcp = FastMCP(
         "     MDA        Management Discussion & Analysis\\n"
         "     DIRS       Director's Dealing (insider transactions)\\n"
         "   For ESG/governance/M&A/etc, fetch the resource "
-        "`fr://guide/filing-types` for the full 31-code table.\\n"
+        "`fr://guide/filing-types` for the full 30-code table.\\n"
         "5. Ambiguity / scope: ask the user to disambiguate when a search "
         "returns multiple plausible matches. Refuse out-of-scope queries "
         "(stock prices, analyst consensus, sentiment) plainly — do not "
         "burn tool calls hunting.\\n\\n"
         "READ THESE RESOURCES BEFORE COMPLEX QUERIES:\\n"
-        "  fr://guide/filing-types            — full 31-code filing-type "
+        "  fr://guide/filing-types            — full 30-code filing-type "
         "table (read for ESG, governance, M&A, dividends, transcripts).\\n"
         "  fr://guide/industry-classification — ISIC 4-level hierarchy "
         "+ all 22 sections + peer-query recipe (read for sector / "
@@ -3120,7 +3120,7 @@ _LANDING_HTML = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FinancialReports MCP — Public-company filings, available to Claude</title>
-    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 15 tools across 5 domains. Free for any FinancialReports account.">
+    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 16 tools across 5 domains. Free for any FinancialReports account.">
     <meta name="robots" content="index, follow">
     __GOOGLE_SITE_VERIFICATION_META__
     <link rel="canonical" href="__MCP_BASE_URL__/">
@@ -3437,7 +3437,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                     <code id="mcp-url">__MCP_BASE_URL__/mcp</code>
                     <button class="btn btn--secondary" type="button" onclick="copyUrl()" id="copy-btn">Copy</button>
                 </div>
-                <p class="meta">Streamable HTTP · OAuth 2.0 · 15 tools · Free</p>
+                <p class="meta">Streamable HTTP · OAuth 2.0 · 16 tools</p>
             </div>
         </section>
 
@@ -3448,7 +3448,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                 <ol class="steps">
                     <li>Create a free account at <a href="https://financialreports.eu">financialreports.eu</a> if you don't have one yet — no paid plan required for MCP access.</li>
                     <li>In your MCP client (Claude.ai, Claude Code, Cursor, etc.), add a custom connector with the URL <code>__MCP_BASE_URL__/mcp</code>.</li>
-                    <li>Sign in via OAuth when prompted. The 15 tools become available immediately — no reconnection needed.</li>
+                    <li>Sign in via OAuth when prompted. The 16 tools become available immediately — no reconnection needed.</li>
                 </ol>
                 <a href="__LANDING_URL__" class="btn btn--secondary">Full setup guide →</a>
             </div>
@@ -3457,7 +3457,7 @@ _LANDING_HTML = """<!DOCTYPE html>
         <section class="section">
             <div class="container">
                 <p class="eyebrow">04 / Tools</p>
-                <h2>15 tools across 5 domains</h2>
+                <h2>16 tools across 5 domains</h2>
                 <p>A curated, read-only slice of the FinancialReports REST API — the most useful endpoints exposed as LLM-callable tools, regenerated automatically from the OpenAPI schema.</p>
                 <div class="tools">
                     <div class="tool">
@@ -3936,7 +3936,7 @@ RESOURCES_BLOCK = '''
     uri="fr://guide/filing-types",
     name="FR filing-type taxonomy",
     description=(
-        "All 31 filing-type codes the FinancialReports backend uses, with "
+        "All 30 filing-type codes the FinancialReports backend uses, with "
         "categories and one-line descriptions. Read this whenever a user "
         "asks about a filing type that isn't in the top-6 inline list "
         "(10-K, 10-K-ESEF, IR, ER, MDA, DIRS) — e.g. ESG, governance, "
@@ -3946,7 +3946,7 @@ RESOURCES_BLOCK = '''
 )
 def _resource_filing_types() -> str:
     return (
-        "# FR filing-type codes (31 total)\\n\\n"
+        "# FR filing-type codes (30 total)\\n\\n"
         "Pass these via the `type` query param (or `types` for several) on "
         "`filings_list`. The first column is the code; the third is the "
         "FR taxonomy category.\\n\\n"
@@ -3971,7 +3971,6 @@ def _resource_filing_types() -> str:
         "| IP | Investor Presentation | Investor Communication |\\n"
         "| RPA | Report Publication Announcement | Investor Communication |\\n"
         "| TAR | M&A Activity | M&A, Partnerships & Legal |\\n"
-        "| MA | Merger & Acquisition | M&A, Partnerships & Legal |\\n"
         "| LTR | Legal Proceedings Report | M&A, Partnerships & Legal |\\n"
         "| AGM-R | AGM Information | Annual General Meeting |\\n"
         "| DVA | Voting Results & Voting Rights | Annual General Meeting |\\n"
@@ -4287,7 +4286,7 @@ GUIDE_TOOLS_BLOCK = '''
     ),
 )
 async def get_fr_filing_type_taxonomy() -> str:
-    """The full 31-code filing-type taxonomy (codes + categories). Read before
+    """The full 30-code filing-type taxonomy (codes + categories). Read before
     filtering filings by type — especially for ESG, governance, M&A, dividends,
     transcripts, or any type beyond 10-K / IR / ER / MDA / DIRS."""
     return _resource_filing_types.fn()
@@ -4410,7 +4409,7 @@ async def find_filing_section(
         "   governance                    →  'CGR'\\n"
         "   call transcript               →  'CT'\\n"
         "   investor presentation         →  'IP'\\n"
-        "   M&A                           →  'TAR' or 'MA'\\n"
+        "   M&A                           →  'TAR'\\n"
         "   insider transactions          →  'DIRS'\\n"
         "   For anything else, call `filing_types_list` first.\\n"
         f"3. `filings_list` with company=<id>, type=<mapped>, "

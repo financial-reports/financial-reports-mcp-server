@@ -1,6 +1,6 @@
 # Skills for the FinancialReports MCP
 
-Agent Skills that pair with the [FinancialReports MCP server](https://github.com/financial-reports/financial-reports-mcp-server). The hosted connector exposes **16** tools for regulatory-filings research (46 exist in the full schema; the rest are behind `MCP_FULL_SURFACE=1` and are not enabled on the hosted server); these skills teach Claude how to compose those tools into the workflows analysts actually run.
+Agent Skills that pair with the [FinancialReports MCP server](https://github.com/financial-reports/financial-reports-mcp-server). The hosted connector exposes **16** tools for regulatory-filings research — administrative, reference and webhook-management endpoints are not part of the research surface; these skills teach Claude how to compose those tools into the workflows analysts actually run.
 
 **New here? Start with [GETTING-STARTED.md](./GETTING-STARTED.md)** — connector setup, install, and four worked examples with real output.
 
@@ -69,5 +69,5 @@ The skill's *content* — tool-sequencing, comparison/screening workflows, and p
 ## Connector
 
 - **MCP server URL**: `https://mcp.financialfilings.com/mcp`
-- **Documentation**: https://financialreports.eu/integrations/claude/
+- **Documentation**: https://financialfilings.com/integrations/claude/
 - **Source**: this repository (server code lives in `src/`, tool generation in `scripts/`)
