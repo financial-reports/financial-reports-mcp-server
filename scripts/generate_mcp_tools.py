@@ -911,6 +911,15 @@ ALLOWED_CLIENT_REDIRECT_URI_PATTERNS = [
     "http://[::1]:*",
 ]
 
+# The connector's OAuth scope set, in ONE place. Every surface that names scopes
+# derives from this: the /.well-known documents, the WWW-Authenticate challenge,
+# the proxy's valid_scopes, and — critically — the default assigned to clients
+# that register without asking for a scope. Those four drifting apart is not a
+# hypothetical: they did, and it took out every non-Claude client (see the
+# default_scopes assignment below).
+_OAUTH_SCOPES = ["openid", "email", "profile"]
+_OAUTH_SCOPE_STR = " ".join(_OAUTH_SCOPES)
+
 # OAuth upstream bases must be https:// — a typo'd http:// to a real host would
 # send the proxy's client_secret + authorization code over plaintext. http:// is
 # tolerated ONLY for local-dev hosts (mirrors the DEV_MODE host guard above), so
@@ -1031,7 +1040,7 @@ class _JitReregistrationMixin:
         # _default_scope_str; reconstructing with that would make the SDK reject the
         # connector's own openid/email/profile request as invalid_scope. Fall back to
         # the connector scope so a healed client can request what it always requests.
-        scope = getattr(self, "_default_scope_str", "") or "openid email profile"
+        scope = getattr(self, "_default_scope_str", "") or _OAUTH_SCOPE_STR
         return ProxyDCRClient(
             client_id=client_id,
             client_secret=None,
@@ -1253,7 +1262,7 @@ elif MCP_UPSTREAM_AUTH_BASE:
         ),
         base_url=MCP_BASE_URL,
         redirect_path=MCP_OAUTH_REDIRECT_PATH,
-        valid_scopes=["openid", "email", "profile"],
+        valid_scopes=_OAUTH_SCOPES,
         allowed_client_redirect_uris=ALLOWED_CLIENT_REDIRECT_URI_PATTERNS,
         client_storage=_oauth_storage,
         # First-party, fixed-scope connector: Claude/OpenAI already collect their own
@@ -1271,7 +1280,7 @@ else:
         client_secret=COGNITO_CLIENT_SECRET,
         base_url=MCP_BASE_URL,
         redirect_path="/auth/callback",
-        required_scopes=["openid", "email", "profile"],
+        required_scopes=_OAUTH_SCOPES,
         allowed_client_redirect_uris=ALLOWED_CLIENT_REDIRECT_URI_PATTERNS,
         client_storage=_oauth_storage,
         # First-party, fixed-scope connector: Claude/OpenAI already collect their own
@@ -1282,6 +1291,26 @@ else:
         # the OAuthProxy path above so a fallback deploy doesn't resurrect the screen.
         require_authorization_consent=False,
     )
+
+# THE registration default. RFC 7591 §2 makes `scope` OPTIONAL in a registration
+# request, so a client that omits it is entitled to have the server assign one.
+# FastMCP derives that default from the token verifier's `required_scopes`, which is
+# deliberately EMPTY on the OAuthProxy path and must stay that way: Cognito access
+# tokens carry `aws.cognito.signin.user.admin`, not openid/email/profile, so requiring
+# these at token-validation time would 403 every tool call for every client.
+#
+# The consequence, until this line existed: every client that omitted scope at DCR
+# (Cursor, Perplexity, Google Antigravity, Lovable, LiteLLM bridges) was registered
+# with scope="" and then failed EVERY /authorize with
+#   invalid_scope: Client was not registered with scope openid
+# permanently — JIT re-registration heals a MISSING record, never an empty one. Claude
+# was unaffected only because it echoes the scope out of our WWW-Authenticate challenge.
+#
+# `default_scopes` is the SDK's designed hook and is registration-time only:
+# RegistrationHandler applies it before register_client, so the stored record carries
+# the real scope set. Token validation is untouched.
+if auth_provider is not None:
+    auth_provider.client_registration_options.default_scopes = _OAUTH_SCOPES
 
 import datetime as _dt
 
@@ -2734,7 +2763,7 @@ class _OriginAndProtocolMiddleware(BaseHTTPMiddleware):
             existing = response.headers.get("www-authenticate", "")
             if existing.lower().startswith("bearer") and "scope=" not in existing.lower():
                 response.headers["WWW-Authenticate"] = (
-                    existing + ', scope="openid email profile"'
+                    existing + f', scope="{_OAUTH_SCOPE_STR}"'
                 )
 
         return response
@@ -2992,7 +3021,7 @@ async def oauth_protected_resource_root() -> JSONResponse:
         {
             "resource": f"{MCP_BASE_URL.rstrip('/')}/mcp",
             "authorization_servers": [MCP_BASE_URL.rstrip("/") + "/"],
-            "scopes_supported": ["openid", "email", "profile"],
+            "scopes_supported": _OAUTH_SCOPES,
             "bearer_methods_supported": ["header"],
         }
     )
@@ -3030,7 +3059,7 @@ async def oauth_authorization_server_metadata() -> JSONResponse:
             "authorization_endpoint": f"{base}/authorize",
             "token_endpoint": f"{base}/token",
             "registration_endpoint": f"{base}/register",
-            "scopes_supported": ["openid", "email", "profile"],
+            "scopes_supported": _OAUTH_SCOPES,
             "response_types_supported": ["code"],
             "response_modes_supported": ["query"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
