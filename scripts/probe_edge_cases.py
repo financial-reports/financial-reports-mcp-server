@@ -58,6 +58,43 @@ CASES = [
  ("ambiguous-search",  "companies_list", {"search":"Apple","page_size":5}, "ambiguity surfaced?"),
 ]
 
+async def taxonomy_drift(c):
+    """The built-in taxonomy reference vs what filing_types_list actually serves.
+
+    These drift silently: the reference is a hand-maintained table inside the
+    generator, the live list comes from the API. A code advertised but not
+    served is a wrong answer waiting to happen — a client engineer comparing
+    the two spots it immediately. Not CI-able (needs a key), so it lives here.
+    """
+    import re
+    r = await c.call_tool("get_fr_filing_type_taxonomy", {})
+    ref = "".join(getattr(b, "text", "") or "" for b in (r.content or []))
+    ref_codes = []
+    for line in ref.splitlines():
+        if line.startswith("|") and not line.startswith("|---") and "| Code |" not in line:
+            cells = [x.strip() for x in line.strip("|").split("|")]
+            if cells and cells[0]:
+                ref_codes.append(cells[0])
+    live = set()
+    for page in (1, 2, 3):
+        try:
+            rr = await c.call_tool("filing_types_list", {"page": page})
+        except Exception:
+            break
+        txt = "".join(getattr(b, "text", "") or "" for b in (rr.content or []))
+        found = re.findall(r'"code"\s*:\s*"([^"]+)"', txt)
+        if not found:
+            break
+        live |= set(found)
+    advertised_only = [x for x in ref_codes if x not in live]
+    served_only = sorted(live - set(ref_codes))
+    print("\n=== taxonomy drift ===")
+    print(f"  reference table: {len(ref_codes)} codes   live list: {len(live)} codes")
+    print(f"  advertised but NOT served: {advertised_only or 'none'}")
+    print(f"  served but NOT advertised: {served_only or 'none'}")
+    return advertised_only, served_only
+
+
 async def main():
     async with Client(URL) as c:
         print(f"{'CASE':<20} {'OUTCOME':<16} {'DETAIL'}")
@@ -82,6 +119,7 @@ async def main():
                 out = "TOOLERROR"
                 det = msg.split("\n")[0][:74]
             print(f"{cid:<20} {out:<16} {det}")
+        await taxonomy_drift(c)
         if findings:
             print("\nFLAGGED:")
             for f in findings:

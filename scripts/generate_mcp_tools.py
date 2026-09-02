@@ -3882,7 +3882,7 @@ RESOURCES_BLOCK = '''
 )
 def _resource_filing_types() -> str:
     return (
-        "# FR filing-type codes (31 total)\\n\\n"
+        "# FR filing-type codes (30 total)\\n\\n"
         "Pass these via the `type` query param (or `types` for several) on "
         "`filings_list`. The first column is the code; the third is the "
         "FR taxonomy category.\\n\\n"
@@ -3907,7 +3907,6 @@ def _resource_filing_types() -> str:
         "| IP | Investor Presentation | Investor Communication |\\n"
         "| RPA | Report Publication Announcement | Investor Communication |\\n"
         "| TAR | M&A Activity | M&A, Partnerships & Legal |\\n"
-        "| MA | Merger & Acquisition | M&A, Partnerships & Legal |\\n"
         "| LTR | Legal Proceedings Report | M&A, Partnerships & Legal |\\n"
         "| AGM-R | AGM Information | Annual General Meeting |\\n"
         "| DVA | Voting Results & Voting Rights | Annual General Meeting |\\n"
