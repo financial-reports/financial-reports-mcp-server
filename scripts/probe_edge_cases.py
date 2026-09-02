@@ -75,17 +75,34 @@ async def taxonomy_drift(c):
             cells = [x.strip() for x in line.strip("|").split("|")]
             if cells and cells[0]:
                 ref_codes.append(cells[0])
+    # A partial scan must NOT be compared as if complete: a tool error or an
+    # error-as-text page would otherwise make valid codes look "not served".
     live = set()
-    for page in (1, 2, 3):
+    complete = False
+    expected = None
+    for page in (1, 2, 3, 4):
         try:
             rr = await c.call_tool("filing_types_list", {"page": page})
         except Exception:
             break
         txt = "".join(getattr(b, "text", "") or "" for b in (rr.content or []))
+        if txt.lstrip().startswith("Error "):
+            break
+        if expected is None:
+            m = re.search(r'"count"\s*:\s*(\d+)', txt)
+            expected = int(m.group(1)) if m else None
         found = re.findall(r'"code"\s*:\s*"([^"]+)"', txt)
         if not found:
+            complete = True
             break
         live |= set(found)
+        if expected is not None and len(live) >= expected:
+            complete = True
+            break
+    if not complete or expected is None or len(live) < expected:
+        print("\n=== taxonomy drift ===")
+        print(f"  SCAN INCOMPLETE ({len(live)} of {expected} codes) — comparison skipped")
+        return [], []
     advertised_only = [x for x in ref_codes if x not in live]
     served_only = sorted(live - set(ref_codes))
     print("\n=== taxonomy drift ===")
