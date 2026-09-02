@@ -217,3 +217,113 @@ def test_http_upstream_to_localhost_is_allowed(reload_with_oauth_env) -> None:
         mod.auth_provider._upstream_authorization_endpoint
         == "http://localhost:8080/oauth/authorize"
     )
+
+
+def test_dcr_without_scope_gets_the_connector_scope_set(reload_with_oauth_env) -> None:
+    """A client that omits `scope` at registration must still be able to authorize.
+
+    RFC 7591 §2 makes `scope` optional. Cursor, Perplexity, Google Antigravity,
+    Lovable and LiteLLM bridges all omit it. Before the `default_scopes` wiring the
+    proxy stored scope="" for them and every /authorize died with
+    `invalid_scope: Client was not registered with scope openid` — forever, because
+    JIT re-registration only heals a MISSING record, not an empty one.
+    """
+    mod = reload_with_oauth_env(
+        MCP_UPSTREAM_AUTH_BASE="https://financialfilings.com",
+        MCP_UPSTREAM_TOKEN_BASE="https://api.financialreports.eu",
+        MCP_OAUTH_CLIENT_ID="fr-mcp-connector",
+        MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
+    )
+    opts = mod.auth_provider.client_registration_options
+
+    # The registration default must be non-empty and must match what the server
+    # advertises. `required_scopes` staying empty is load-bearing, not an oversight:
+    # Cognito access tokens carry aws.cognito.signin.user.admin, so requiring
+    # openid/email/profile at validation time would 403 every tool call.
+    assert opts.default_scopes == ["openid", "email", "profile"]
+    assert opts.valid_scopes == ["openid", "email", "profile"]
+    assert mod.auth_provider.required_scopes == []
+
+
+async def test_cursor_shaped_dcr_survives_the_authorize_scope_check(
+    reload_with_oauth_env,
+) -> None:
+    """Drive the REAL SDK registration handler with a real Cursor DCR body.
+
+    Deliberately does not re-implement the default_scopes lookup: the handler is
+    invoked as an HTTP endpoint, and the assertion is made against the record the
+    proxy actually stored plus the exact `validate_scope` call that raised
+    InvalidScopeError in production.
+    """
+    import json
+
+    from mcp.server.auth.handlers.register import RegistrationHandler
+    from starlette.requests import Request
+
+    mod = reload_with_oauth_env(
+        MCP_UPSTREAM_AUTH_BASE="https://financialfilings.com",
+        MCP_UPSTREAM_TOKEN_BASE="https://api.financialreports.eu",
+        MCP_OAUTH_CLIENT_ID="fr-mcp-connector",
+        MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
+    )
+    handler = RegistrationHandler(
+        provider=mod.auth_provider,
+        options=mod.auth_provider.client_registration_options,
+    )
+
+    # Copied from a real stranded registration in prod: note the absent `scope`.
+    body = json.dumps(
+        {
+            "client_name": "Cursor",
+            "redirect_uris": ["cursor://anysphere.cursor-mcp/oauth/callback"],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+        }
+    ).encode()
+
+    async def receive():
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/register",
+            "headers": [(b"content-type", b"application/json")],
+            "query_string": b"",
+        },
+        receive,
+    )
+    response = await handler.handle(request)
+    assert response.status_code == 201, response.body
+
+    registered = json.loads(response.body)
+    assert registered["scope"] == "openid email profile"
+
+    # And the record the proxy persisted — the one /authorize reads — must pass the
+    # check that produced `invalid_scope: Client was not registered with scope openid`.
+    stored = await mod.auth_provider.get_client(registered["client_id"])
+    assert stored is not None
+    assert stored.validate_scope("openid email profile") == [
+        "openid",
+        "email",
+        "profile",
+    ]
+
+
+def test_advertised_scopes_match_the_registration_default(reload_with_oauth_env) -> None:
+    """The outage was a DIVERGENCE: we advertised three scopes and registered zero.
+
+    Pin the invariant rather than the values, so a future edit to one surface that
+    misses another fails here instead of in production.
+    """
+    mod = reload_with_oauth_env(
+        MCP_UPSTREAM_AUTH_BASE="https://financialfilings.com",
+        MCP_OAUTH_CLIENT_ID="cid",
+        MCP_OAUTH_CLIENT_SECRET=_FAKE_VALUE,
+    )
+    advertised = mod._OAUTH_SCOPES
+    assert mod.auth_provider.client_registration_options.default_scopes == advertised
+    assert mod.auth_provider.client_registration_options.valid_scopes == advertised
+    assert mod._OAUTH_SCOPE_STR == " ".join(advertised)
