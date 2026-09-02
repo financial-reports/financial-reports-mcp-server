@@ -1053,13 +1053,48 @@ class _JitReregistrationMixin:
         )
 
 
-class _LoggingOAuthProxy(_JitReregistrationMixin, _ClientLookupLoggingMixin, OAuthProxy):
+class _BlankScopeNormalisingMixin:
+    """Treat a blank DCR `scope` exactly like an absent one.
+
+    RFC 7591 §2 makes `scope` OPTIONAL, and the SDK's `default_scopes` hook only
+    fires on `scope is None`. A client that sends `"scope": ""` (or whitespace)
+    instead of omitting the key slips past that gate: `set("".split())` is a
+    subset of anything, so registration validation passes, the record is stored
+    with a blank scope, and then EVERY /authorize dies on
+    `invalid_scope: Client was not registered with scope openid` — permanently,
+    because JIT re-registration heals a MISSING record, never an empty one.
+
+    This normalises at the proxy, so the stored record — which is what
+    /authorize validates against — is correct regardless of which of the three
+    shapes (absent, empty, whitespace) the client sent. It matters that this is
+    belt-and-braces with `default_scopes` rather than a replacement for it:
+    `OAuthProxy.register_client` persists `client_info.scope or
+    self._default_scope_str`, so `""` and `None` are indistinguishable ONCE
+    STORED. That is precisely why we cannot tell, after the fact, which shape a
+    stranded client actually sent — and why both must be handled here.
+    """
+
+    async def register_client(self, client_info):
+        if not (getattr(client_info, "scope", None) or "").strip():
+            client_info.scope = _OAUTH_SCOPE_STR
+        return await super().register_client(client_info)
+
+
+class _LoggingOAuthProxy(
+    _JitReregistrationMixin,
+    _ClientLookupLoggingMixin,
+    _BlankScopeNormalisingMixin,
+    OAuthProxy,
+):
     """OAuthProxy with client-lookup HIT/MISS logging + JIT re-registration of
     orphaned hosted connectors. Behaviour-identical for known clients."""
 
 
 class _LoggingAWSCognitoProvider(
-    _JitReregistrationMixin, _ClientLookupLoggingMixin, AWSCognitoProvider
+    _JitReregistrationMixin,
+    _ClientLookupLoggingMixin,
+    _BlankScopeNormalisingMixin,
+    AWSCognitoProvider
 ):
     """AWSCognitoProvider with client-lookup logging + JIT re-registration.
     Behaviour-identical for known clients."""
