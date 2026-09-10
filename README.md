@@ -5,7 +5,7 @@
 [![MCP Spec](https://img.shields.io/badge/MCP-2025--11--25-green)](https://modelcontextprotocol.io)
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
-> **Official Model Context Protocol (MCP) server for the [FinancialReports](https://financialreports.eu) API.**
+> **Official Model Context Protocol (MCP) server for the [FinancialFilings](https://financialfilings.com) API.**
 > Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **16 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 46-tool surface). **Free for any FinancialFilings account.** Sourced from official regulators.
 
 ---

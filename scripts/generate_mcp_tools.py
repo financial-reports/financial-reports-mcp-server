@@ -1411,7 +1411,7 @@ mcp = FastMCP(
         "or `types` for a comma-separated list, "
         "on filings_list):\\n"
         "     10-K       Annual Report (US, AND foreign-private-issuer "
-        "20-F filings — FR rolls them up under 10-K)\\n"
+        "20-F filings — FinancialFilings rolls them up under 10-K)\\n"
         "     10-K-ESEF  Annual Report (EU/ESEF issuers)\\n"
         "     IR         Interim / Quarterly Report (10-Q, half-year, Q1-Q4)\\n"
         "     ER         Earnings Release\\n"
@@ -1569,7 +1569,7 @@ async def _inject_correlation(request: httpx.Request) -> None:
 
 async def _inject_auth(request: httpx.Request) -> None:
     """Add upstream auth header from `_current_token`. Format depends on whether
-    the dev API-key bypass is active. Scoped to the FR API host so a caller
+    the dev API-key bypass is active. Scoped to the FinancialFilings API host so a caller
     credential is never forwarded to the CDN or any other host the client touches."""
     token = _current_token.get()
     if not token:
@@ -2359,7 +2359,7 @@ def _scrub_response(obj):
 
     Two concerns handled in one recursive pass:
 
-    1. Internal LLM provenance. The FR API emits
+    1. Internal LLM provenance. The FinancialFilings API emits
        {"extraction": {"model", "prompt_version", "extracted_at", "notes"}} per
        financial statement; model + prompt_version leak the internal extraction
        model name and prompt scheme to end users (and competitors). extracted_at
@@ -2936,7 +2936,7 @@ async def health() -> dict[str, str]:
 
 @app.api_route("/favicon.ico", methods=["GET", "HEAD"])
 async def favicon() -> Response:
-    """Serve the FR favicon. CDN-backed, in-process cached, public 24h."""
+    """Serve the FinancialFilings favicon. CDN-backed, in-process cached, public 24h."""
     asset = await _fetch_asset(FAVICON_URL, "image/x-icon")
     if asset is None:
         return Response(status_code=204)
@@ -3423,7 +3423,7 @@ _LANDING_HTML = """<!DOCTYPE html>
             <div class="container stats__inner">
                 <div class="stat"><span class="stat__num">15</span><span class="stat__label">MCP tools</span></div>
                 <div class="stat"><span class="stat__num">5</span><span class="stat__label">Tool domains</span></div>
-                <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FR account</span></div>
+                <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FinancialFilings account</span></div>
                 <div class="stat"><span class="stat__num">OAuth&nbsp;2.0</span><span class="stat__label">PKCE · DCR</span></div>
             </div>
         </section>
@@ -3934,7 +3934,7 @@ RESOURCES_BLOCK = '''
 
 @mcp.resource(
     uri="fr://guide/filing-types",
-    name="FR filing-type taxonomy",
+    name="FinancialFilings filing-type taxonomy",
     description=(
         "All 30 filing-type codes the FinancialFilings backend uses, with "
         "categories and one-line descriptions. Read this whenever a user "
@@ -3946,10 +3946,10 @@ RESOURCES_BLOCK = '''
 )
 def _resource_filing_types() -> str:
     return (
-        "# FR filing-type codes (30 total)\\n\\n"
+        "# FinancialFilings filing-type codes (30 total)\\n\\n"
         "Pass these via the `type` query param (or `types` for several) on "
         "`filings_list`. The first column is the code; the third is the "
-        "FR taxonomy category.\\n\\n"
+        "FinancialFilings taxonomy category.\\n\\n"
         "**20-F note:** foreign private issuers filing 20-F with the SEC "
         "are rolled up under `10-K` in this dataset. Don't search for "
         "`20-F` as a code — it doesn't exist.\\n\\n"
@@ -3994,7 +3994,7 @@ def _resource_filing_types() -> str:
 
 @mcp.resource(
     uri="fr://guide/industry-classification",
-    name="FR industry classification (ISIC)",
+    name="FinancialFilings industry classification (ISIC)",
     description=(
         "ISIC 4-level industry hierarchy used by the FinancialFilings "
         "backend, with all 22 sections and a peer-query recipe. Read "
@@ -4082,7 +4082,7 @@ def _resource_industry() -> str:
 
 @mcp.resource(
     uri="fr://guide/markdown-strategy",
-    name="FR markdown-fetch strategy",
+    name="FinancialFilings markdown-fetch strategy",
     description=(
         "When and how to use filings_markdown_retrieve effectively. "
         "Covers (1) processing_status gating (only COMPLETED filings "
@@ -4280,7 +4280,7 @@ GUIDE_TOOLS_BLOCK = '''
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        title="FR filing-type taxonomy",
+        title="FinancialFilings filing-type taxonomy",
         readOnlyHint=True, destructiveHint=False,
         idempotentHint=True, openWorldHint=False,
     ),
@@ -4294,7 +4294,7 @@ async def get_fr_filing_type_taxonomy() -> str:
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        title="FR industry classification (ISIC)",
+        title="FinancialFilings industry classification (ISIC)",
         readOnlyHint=True, destructiveHint=False,
         idempotentHint=True, openWorldHint=False,
     ),
@@ -4308,7 +4308,7 @@ async def get_fr_industry_classification_isic() -> str:
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        title="FR markdown-fetch strategy",
+        title="FinancialFilings markdown-fetch strategy",
         readOnlyHint=True, destructiveHint=False,
         idempotentHint=True, openWorldHint=False,
     ),
@@ -4940,7 +4940,7 @@ def compute_post_annotations(func_name: str, path: str) -> str:
     server state as destructiveHint=True — including creates, since the
     reviewer cares about "can this change my data" not the spec-strict
     "is this delete-shaped". webhooks_test_create is the one exception:
-    it's a probe (open world) but doesn't mutate FR state.
+    it's a probe (open world) but doesn't mutate FinancialFilings state.
     """
     parts: list[str] = []
 
