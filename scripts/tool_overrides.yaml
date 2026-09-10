@@ -1,4 +1,4 @@
-# Tool description overrides for the FinancialReports MCP server.
+# Tool description overrides for the FinancialFilings MCP server.
 #
 # The code generator (generate_mcp_tools.py) merges these into tool
 # docstrings at build time. Each key is the snake_case function name
@@ -14,7 +14,7 @@
 companies_list:
   when_to_use: >
     Use as the **first step** to resolve a company name, ticker, or
-    partial match to a FinancialReports internal ID. Required before
+    partial match to a FinancialFilings internal ID. Required before
     calling any per-company tool (financials, filings, watchlist).
     CONFIRM the match — state the resolved company's full name and country
     before reporting data ("Apple" can surface "Apple Hospitality REIT").
@@ -38,7 +38,7 @@ companies_resolve_create:
   # this override only adds what the schema can't: which tool to reach for.
   when_to_use: >
     Use when the user hands you a **list** of identifiers — a spreadsheet
-    column, a portfolio, a peer set — and you need FinancialReports IDs for all
+    column, a portfolio, a peer set — and you need FinancialFilings IDs for all
     of them. One request covers up to 500 rows and costs one call against quota
     regardless of row count, so it is far cheaper than a `companies_list` search
     per name. Pass an opaque `ref` per row to join the results back to the
@@ -80,7 +80,7 @@ companies_financials_retrieve:
     SOURCING: attribute every figure to its fiscal period + period_end_date and
     reporting currency. GROUNDEDNESS (critical): report ONLY values present in
     the `periods` this call returns. If `period_count` is 0 or `periods` is
-    empty, FinancialReports has no *structured* financials for this company yet
+    empty, FinancialFilings has no *structured* financials for this company yet
     (common for US/SEC issuers — structured data is currently ESEF/EU-derived and
     being expanded). Do NOT stop and do NOT estimate — FALL BACK to the filing:
     call `filings_list` for this `id` filtered with `type` (or `types`) to an

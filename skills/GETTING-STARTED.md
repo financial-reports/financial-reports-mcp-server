@@ -1,6 +1,6 @@
 # Getting started
 
-A ten-minute path from nothing to your first answer, using the FinancialReports
+A ten-minute path from nothing to your first answer, using the FinancialFilings
 MCP connector plus the `financial-filings-research` skill.
 
 The connector gives Claude the data. The skill gives it the analyst workflows —
@@ -19,7 +19,7 @@ before reporting a figure.
   { "mcpServers": { "fr": { "type": "http", "url": "https://mcp.financialfilings.com/mcp" } } }
   ```
 
-You'll be asked to sign in to FinancialReports the first time. The connector
+You'll be asked to sign in to FinancialFilings the first time. The connector
 exposes 16 tools covering companies, filings, filing content and normalised
 financial statements.
 
@@ -54,7 +54,7 @@ compare …"* — or, to apply it to every question in a project, add one line t
 that project's `CLAUDE.md`:
 
 ```text
-For any FinancialReports question, load the financial-filings-research skill first.
+For any FinancialFilings question, load the financial-filings-research skill first.
 ```
 
 ---

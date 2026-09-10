@@ -3,7 +3,7 @@
     "financialreports": {
       "type": "http",
       "url": "https://mcp.financialfilings.com/mcp",
-      "note": "Official FinancialReports MCP server. Uses OAuth — on first connection you will be prompted to sign in with your FinancialReports account. Free for any authenticated user."
+      "note": "Official FinancialFilings MCP server. Uses OAuth — on first connection you will be prompted to sign in with your FinancialFilings account. Free for any authenticated user."
     },
     "financialreports-local": {
       "type": "http",

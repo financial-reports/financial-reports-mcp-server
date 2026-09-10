@@ -33,7 +33,7 @@ def test_reconnect_message_is_accepted() -> None:
     # The post-#32 fail-closed message is an EXPECTED outcome, not a regression.
     msg = (
         "Your session could not be linked to upstream credentials. Please "
-        "disconnect and reconnect the FinancialReports connector, then retry."
+        "disconnect and reconnect the FinancialFilings connector, then retry."
     )
     assert classify(msg, True) == "reconnect"
 

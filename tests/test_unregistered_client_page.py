@@ -36,7 +36,7 @@ def render(mcp_module):
             discovery_endpoint=(
                 "https://mcp.test.invalid/.well-known/oauth-authorization-server"
             ),
-            server_name="FinancialReports",
+            server_name="FinancialFilings",
             server_icon_url=None,
         )
 

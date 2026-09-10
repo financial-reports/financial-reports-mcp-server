@@ -1,4 +1,4 @@
-# FinancialReports MCP Server
+# FinancialFilings MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
@@ -6,7 +6,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialReports](https://financialreports.eu) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **16 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 46-tool surface). **Free for any FinancialReports account.** Sourced from official regulators.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **16 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 46-tool surface). **Free for any FinancialFilings account.** Sourced from official regulators.
 
 ---
 
@@ -18,7 +18,7 @@ If you're an analyst, researcher, or anyone who wants to ask Claude about public
 2. **Add the connector** in your MCP client — pick yours under [Connect your client](#connect-your-client) below. The two most common:
    - **Claude.ai / Claude Desktop**: Settings → Connectors → Add custom connector → URL: `https://mcp.financialfilings.com/mcp`
    - **Claude Code**: `claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp`
-3. **Sign in** with your FinancialReports account when prompted. That's it.
+3. **Sign in** with your FinancialFilings account when prompted. That's it.
 
 Full setup walkthrough with screenshots: [financialreports.eu/integrations/claude/](https://financialreports.eu/integrations/claude/).
 
@@ -26,7 +26,7 @@ Full setup walkthrough with screenshots: [financialreports.eu/integrations/claud
 
 ## Connect your client
 
-This is a **remote** MCP server — Streamable HTTP with OAuth (PKCE + Dynamic Client Registration). There is **no API key to copy and no secret to store**: connecting opens a browser sign-in with your FinancialReports account.
+This is a **remote** MCP server — Streamable HTTP with OAuth (PKCE + Dynamic Client Registration). There is **no API key to copy and no secret to store**: connecting opens a browser sign-in with your FinancialFilings account.
 
 **Endpoint:** `https://mcp.financialfilings.com/mcp`
 
@@ -153,8 +153,8 @@ If signing in sends you to a page titled **Client Not Registered** — "The clie
 
 | Client | What to do |
 |---|---|
-| **ChatGPT / OpenAI** | Settings → Connectors → remove **FinancialReports** → add it back with `https://mcp.financialfilings.com/mcp` and sign in again. |
-| **Claude.ai / Claude Desktop** | Settings → Connectors → remove **FinancialReports** → re-add and sign in again. |
+| **ChatGPT / OpenAI** | Settings → Connectors → remove **FinancialFilings** (listed as **FinancialReports** if you connected before the rename) → add it back with `https://mcp.financialfilings.com/mcp` and sign in again. |
+| **Claude.ai / Claude Desktop** | Settings → Connectors → remove **FinancialFilings** (listed as **FinancialReports** if you connected before the rename) → re-add and sign in again. |
 | **Claude Code / Codex / Cursor / opencode** | Remove and re-add the server (e.g. `claude mcp remove financialreports`, then re-add), or run the client's login command again (`codex mcp login financialreports`). |
 
 Two things the error page itself doesn't tell you:
@@ -283,7 +283,7 @@ Once connected, try:
 
 ## Self-hosting
 
-Self-hosting requires standing up your own AWS Cognito user pool and is primarily useful for forking + adapting to a different upstream API. For the FinancialReports API specifically, the hosted server at `mcp.financialfilings.com` is the supported path.
+Self-hosting requires standing up your own AWS Cognito user pool and is primarily useful for forking + adapting to a different upstream API. For the FinancialFilings API specifically, the hosted server at `mcp.financialfilings.com` is the supported path.
 
 Detailed self-hosting docs (Docker, Cognito setup, env vars, CDN/icon configuration): **[docs/SELF-HOSTING.md](docs/SELF-HOSTING.md)**.
 
@@ -329,7 +329,7 @@ For iterating on the generator, tools, or prompts against a real backend **witho
 
 **This is a maintainer convenience, not a production auth path.** The module refuses to import if `MCP_BASE_URL` contains a production hostname (`mcp.financialfilings.com`).
 
-1. Add your personal FinancialReports API key to `.env`:
+1. Add your personal FinancialFilings API key to `.env`:
    ```
    DEV_MODE_API_KEY=fr_pat_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
    MCP_BASE_URL=http://localhost:8000
