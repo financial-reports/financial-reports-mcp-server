@@ -119,6 +119,28 @@ def test_landing_head_has_seo_and_og_tags(mcp_module) -> None:
     )
 
 
+def test_landing_signup_link_and_clients(mcp_module) -> None:
+    """REGRESSION: the setup step linked account creation to the bare
+    marketing homepage, and the missing-profile hint linked /signup, which
+    404s on the live site. Both must point at the web app's register route.
+    The page also named only Claude clients while the connector is listed in
+    ChatGPT and the Microsoft 365 Copilot connectors gallery.
+    """
+    import re
+
+    with TestClient(mcp_module.app) as client:
+        resp = client.get("/")
+    assert resp.status_code == 200
+    html = resp.text
+
+    assert f'href="{mcp_module.SIGNUP_URL}"' in html
+    assert "/signup" not in html
+    assert "ChatGPT" in html
+    assert "Microsoft 365 Copilot" in html
+    leaked = sorted(set(re.findall(r"__[A-Z][A-Z_]*__", html)))
+    assert not leaked, f"Unsubstituted placeholders in rendered HTML: {leaked}"
+
+
 def test_landing_omits_gsv_tag_when_env_unset(mcp_module) -> None:
     """Default test env has no GOOGLE_SITE_VERIFICATION — landing must NOT
     emit the tag (would force-leak an empty content="" attribute, which

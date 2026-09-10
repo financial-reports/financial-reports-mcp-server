@@ -311,7 +311,9 @@ async def test_403_missing_profile_body_gives_signup_hint(
     assert exc.upstream_status == 403
     assert exc.error_kind == "missing_profile"
     msg = str(exc)
-    assert "financialreports.eu/signup" in msg
+    assert "financialfilings.com/accounts/register/" in msg
+    # /signup 404s on the live site; a user following it dead-ends.
+    assert "/signup" not in msg
     assert "support@financialreports.eu" in msg
     # The old hint must not appear — it would loop the user.
     assert "disconnect and reconnect" not in msg.lower()
