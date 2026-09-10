@@ -2,7 +2,7 @@
 generate_mcp_tools.py
 =====================
 
-Code generator for the FinancialReports remote MCP server.
+Code generator for the FinancialFilings remote MCP server.
 
 What it does:
   1. Pulls the live OpenAPI schema from financialreports.eu
@@ -12,7 +12,7 @@ What it does:
      OAuth AS — flag-gated WAF-fix repoint).
   3. Every tool is wrapped in `@subscription_required`, which validates
      the Cognito JWT and sets the per-request auth context. Any
-     authenticated FinancialReports account has full access.
+     authenticated FinancialFilings account has full access.
 
 Run:
     python scripts/generate_mcp_tools.py
@@ -114,7 +114,7 @@ Architecture:
     /.well-known/oauth-authorization-server, plus JWKS-based JWT validation.
   - Every tool is decorated with @subscription_required, which validates
     the Cognito JWT (client_id + audience binding) and sets the per-request
-    auth context. Any authenticated FinancialReports account has full
+    auth context. Any authenticated FinancialFilings account has full
     access — no subscription verification or backend check.
 """
 import asyncio
@@ -1374,14 +1374,14 @@ def _recency_date_note() -> str:
 
 
 mcp = FastMCP(
-    name="FinancialReports",
+    name="FinancialFilings",
     version=MCP_VERSION,
     website_url=WEBSITE_URL,
     instructions=(
         # _RECENCY_RULE is date-FREE (safe to bake at boot); the LIVE date rides
         # the per-session tools/list channel via _RecencyMiddleware (see below).
         _RECENCY_RULE +
-        "FinancialReports = official regulatory filings (annual reports, "
+        "FinancialFilings = official regulatory filings (annual reports, "
         "interim reports, 10-K/Q, 20-F, ESEF, ad-hoc disclosures, insider "
         "transactions, ESG/climate reports, prospectuses) and normalized "
         "financials for tens of thousands of listed companies in the US, "
@@ -1411,7 +1411,7 @@ mcp = FastMCP(
         "or `types` for a comma-separated list, "
         "on filings_list):\\n"
         "     10-K       Annual Report (US, AND foreign-private-issuer "
-        "20-F filings — FR rolls them up under 10-K)\\n"
+        "20-F filings — FinancialFilings rolls them up under 10-K)\\n"
         "     10-K-ESEF  Annual Report (EU/ESEF issuers)\\n"
         "     IR         Interim / Quarterly Report (10-Q, half-year, Q1-Q4)\\n"
         "     ER         Earnings Release\\n"
@@ -1569,7 +1569,7 @@ async def _inject_correlation(request: httpx.Request) -> None:
 
 async def _inject_auth(request: httpx.Request) -> None:
     """Add upstream auth header from `_current_token`. Format depends on whether
-    the dev API-key bypass is active. Scoped to the FR API host so a caller
+    the dev API-key bypass is active. Scoped to the FinancialFilings API host so a caller
     credential is never forwarded to the CDN or any other host the client touches."""
     token = _current_token.get()
     if not token:
@@ -1590,8 +1590,8 @@ async def _inject_auth(request: httpx.Request) -> None:
         )
         raise AuthenticationError(
             "Your session credentials could not be forwarded to the "
-            "FinancialReports API. Please disconnect and reconnect the "
-            "FinancialReports connector, then retry."
+            "FinancialFilings API. Please disconnect and reconnect the "
+            "FinancialFilings connector, then retry."
         )
     if "Authorization" not in request.headers:
         request.headers["Authorization"] = f"Bearer {token}"
@@ -1779,7 +1779,7 @@ def _auth_error(msg: str) -> str:
 
 _RECONNECT_MSG = (
     "Your session could not be linked to upstream credentials. Please "
-    "disconnect and reconnect the FinancialReports connector, then retry."
+    "disconnect and reconnect the FinancialFilings connector, then retry."
 )
 
 
@@ -1838,7 +1838,7 @@ def subscription_required(
     func: Callable[..., Awaitable[str]],
 ) -> Callable[..., Awaitable[str]]:
     """Auth decorator: validates the Cognito JWT and sets the per-request
-    token contextvar. Any authenticated FinancialReports account has full
+    token contextvar. Any authenticated FinancialFilings account has full
     access — no subscription check.
     """
 
@@ -1943,7 +1943,7 @@ class AuthenticationError(RuntimeError):
 
 
 class UpstreamHTTPError(RuntimeError):
-    """Raised when the upstream FinancialReports API rejects a tool call.
+    """Raised when the upstream FinancialFilings API rejects a tool call.
 
     Carries machine-readable context for the analytics middleware
     (`upstream_status`, `request_id`) and an actionable message for the
@@ -2146,7 +2146,7 @@ def _upstream_hint(
             # Reconnecting won't help — the Cognito identity has no matching
             # FR UserProfile. Tell the LLM to surface the actual remediation.
             return (
-                "Your FinancialReports account isn't linked to the identity "
+                "Your FinancialFilings account isn't linked to the identity "
                 "you signed in with. Create a free account at "
                 "https://financialreports.eu/signup using the same email you "
                 "used to sign in, or contact support@financialreports.eu if "
@@ -2155,11 +2155,11 @@ def _upstream_hint(
         if error_kind == "expired_token":
             return (
                 "Your session has expired. Please disconnect and reconnect "
-                "the FinancialReports connector."
+                "the FinancialFilings connector."
             )
         return (
-            "The FinancialReports API rejected the forwarded credentials. "
-            "Ask the user to disconnect and reconnect the FinancialReports "
+            "The FinancialFilings API rejected the forwarded credentials. "
+            "Ask the user to disconnect and reconnect the FinancialFilings "
             "connector, then retry."
         )
     if status == 404:
@@ -2173,7 +2173,7 @@ def _upstream_hint(
         if error_kind in _NON_RETRYABLE_429 and upstream_copy:
             return upstream_copy
         wait = f" Retry after {retry_after}s." if retry_after else ""
-        return "Rate limited by the FinancialReports API — wait a moment and retry." + wait
+        return "Rate limited by the FinancialFilings API — wait a moment and retry." + wait
     if status >= 500:
         # The server already retried once before surfacing this (see _api_get),
         # so do not tell the caller to retry immediately — that would be a third
@@ -2359,7 +2359,7 @@ def _scrub_response(obj):
 
     Two concerns handled in one recursive pass:
 
-    1. Internal LLM provenance. The FR API emits
+    1. Internal LLM provenance. The FinancialFilings API emits
        {"extraction": {"model", "prompt_version", "extracted_at", "notes"}} per
        financial statement; model + prompt_version leak the internal extraction
        model name and prompt scheme to end users (and competitors). extracted_at
@@ -2701,7 +2701,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="FinancialReports MCP Connector",
+    title="FinancialFilings MCP Connector",
     version=MCP_VERSION,
     lifespan=_lifespan,
     docs_url=None,
@@ -2936,7 +2936,7 @@ async def health() -> dict[str, str]:
 
 @app.api_route("/favicon.ico", methods=["GET", "HEAD"])
 async def favicon() -> Response:
-    """Serve the FR favicon. CDN-backed, in-process cached, public 24h."""
+    """Serve the FinancialFilings favicon. CDN-backed, in-process cached, public 24h."""
     asset = await _fetch_asset(FAVICON_URL, "image/x-icon")
     if asset is None:
         return Response(status_code=204)
@@ -3119,8 +3119,8 @@ _LANDING_HTML = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FinancialReports MCP — Public-company filings, available to Claude</title>
-    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 16 tools across 5 domains. Free for any FinancialReports account.">
+    <title>FinancialFilings MCP — Public-company filings, available to Claude</title>
+    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 16 tools across 5 domains. Free for any FinancialFilings account.">
     <meta name="robots" content="index, follow">
     __GOOGLE_SITE_VERIFICATION_META__
     <link rel="canonical" href="__MCP_BASE_URL__/">
@@ -3131,18 +3131,18 @@ _LANDING_HTML = """<!DOCTYPE html>
     <link rel="apple-touch-icon" sizes="180x180" href="__MCP_BASE_URL__/apple-touch-icon.png">
 
     <meta property="og:type" content="website">
-    <meta property="og:title" content="FinancialReports MCP — Public-company filings, available to Claude">
-    <meta property="og:description" content="The official MCP connector for FinancialReports. Free for any FinancialReports account.">
+    <meta property="og:title" content="FinancialFilings MCP — Public-company filings, available to Claude">
+    <meta property="og:description" content="The official MCP connector for FinancialFilings. Free for any FinancialFilings account.">
     <meta property="og:image" content="__MCP_BASE_URL__/icon-512.png">
     <meta property="og:url" content="__MCP_BASE_URL__/">
-    <meta property="og:site_name" content="FinancialReports">
+    <meta property="og:site_name" content="FinancialFilings">
 
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="FinancialReports MCP — Public-company filings, available to Claude">
+    <meta name="twitter:title" content="FinancialFilings MCP — Public-company filings, available to Claude">
     <meta name="twitter:description" content="MCP connector for Claude — public-company filings, free.">
     <meta name="twitter:image" content="__MCP_BASE_URL__/icon-512.png">
     <style>
-        /* —— FinancialReports tokens (subset, inlined for the standalone landing) —— */
+        /* —— FinancialFilings tokens (subset, inlined for the standalone landing) —— */
         :root {
             --fr-brand-500: #0066FF;
             --fr-brand-600: #0052CC;
@@ -3398,7 +3398,7 @@ _LANDING_HTML = """<!DOCTYPE html>
         <div class="container nav__inner">
             <a href="https://financialreports.eu" class="nav__brand">
                 <img src="/icon.png" alt="">
-                FinancialReports<span class="tag">MCP</span>
+                FinancialFilings<span class="tag">MCP</span>
             </a>
             <nav class="nav__links" aria-label="Primary">
                 <a href="__LANDING_URL__">Docs</a>
@@ -3414,7 +3414,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                 <p class="eyebrow">01 / Connector</p>
                 <h1>Public-company <em>filings</em>, available to Claude.</h1>
                 <p>
-                    The official MCP (Model Context Protocol) connector for FinancialReports. Direct access from Claude.ai, Claude Code, Cursor, and any MCP-compatible client to regulatory filings sourced from official regulators worldwide. <strong>Free for any FinancialReports account.</strong>
+                    The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude.ai, Claude Code, Cursor, and any MCP-compatible client to regulatory filings sourced from official regulators worldwide. <strong>Free for any FinancialFilings account.</strong>
                 </p>
             </div>
         </section>
@@ -3423,7 +3423,7 @@ _LANDING_HTML = """<!DOCTYPE html>
             <div class="container stats__inner">
                 <div class="stat"><span class="stat__num">15</span><span class="stat__label">MCP tools</span></div>
                 <div class="stat"><span class="stat__num">5</span><span class="stat__label">Tool domains</span></div>
-                <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FR account</span></div>
+                <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FinancialFilings account</span></div>
                 <div class="stat"><span class="stat__num">OAuth&nbsp;2.0</span><span class="stat__label">PKCE · DCR</span></div>
             </div>
         </section>
@@ -3458,7 +3458,7 @@ _LANDING_HTML = """<!DOCTYPE html>
             <div class="container">
                 <p class="eyebrow">04 / Tools</p>
                 <h2>16 tools across 5 domains</h2>
-                <p>A curated, read-only slice of the FinancialReports REST API — the most useful endpoints exposed as LLM-callable tools, regenerated automatically from the OpenAPI schema.</p>
+                <p>A curated, read-only slice of the FinancialFilings REST API — the most useful endpoints exposed as LLM-callable tools, regenerated automatically from the OpenAPI schema.</p>
                 <div class="tools">
                     <div class="tool">
                         <p class="tool__count">04 tools</p>
@@ -3495,7 +3495,7 @@ _LANDING_HTML = """<!DOCTYPE html>
             <h2>Free for the web. Free for <em>Claude</em>. Paid for the API.</h2>
             <p>The MCP connector is part of the public utility — no paywall, no caveats. Programmatic API access (REST + GraphQL, redistribution rights, bulk pulls) lives behind a paid plan.</p>
             <div class="cta__row">
-                <a href="https://financialreports.eu" class="btn btn--primary">Open FinancialReports</a>
+                <a href="https://financialreports.eu" class="btn btn--primary">Open FinancialFilings</a>
                 <a href="https://financialreports.eu/api/" class="btn btn--secondary">View API plans</a>
             </div>
         </div>
@@ -3511,7 +3511,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                 <a href="__SUPPORT_URL__">Support</a>
             </div>
             <div class="footer__legal">
-                FinancialReports · Public-company filings · Sourced from our internal sourcing system.
+                FinancialFilings · Public-company filings · Sourced from our internal sourcing system.
             </div>
         </div>
     </footer>
@@ -3890,7 +3890,7 @@ async def {{ func_name }}(
             )
             raise UpstreamHTTPError(
                 f"upstream {{ func_name }} request failed ({exc.__class__.__name__}). "
-                "The FinancialReports API was unreachable or timed out "
+                "The FinancialFilings API was unreachable or timed out "
                 "(already retried once)."
             ) from exc
         if response.status_code != 200:
@@ -3934,9 +3934,9 @@ RESOURCES_BLOCK = '''
 
 @mcp.resource(
     uri="fr://guide/filing-types",
-    name="FR filing-type taxonomy",
+    name="FinancialFilings filing-type taxonomy",
     description=(
-        "All 30 filing-type codes the FinancialReports backend uses, with "
+        "All 30 filing-type codes the FinancialFilings backend uses, with "
         "categories and one-line descriptions. Read this whenever a user "
         "asks about a filing type that isn't in the top-6 inline list "
         "(10-K, 10-K-ESEF, IR, ER, MDA, DIRS) — e.g. ESG, governance, "
@@ -3946,10 +3946,10 @@ RESOURCES_BLOCK = '''
 )
 def _resource_filing_types() -> str:
     return (
-        "# FR filing-type codes (30 total)\\n\\n"
+        "# FinancialFilings filing-type codes (30 total)\\n\\n"
         "Pass these via the `type` query param (or `types` for several) on "
         "`filings_list`. The first column is the code; the third is the "
-        "FR taxonomy category.\\n\\n"
+        "FinancialFilings taxonomy category.\\n\\n"
         "**20-F note:** foreign private issuers filing 20-F with the SEC "
         "are rolled up under `10-K` in this dataset. Don't search for "
         "`20-F` as a code — it doesn't exist.\\n\\n"
@@ -3994,9 +3994,9 @@ def _resource_filing_types() -> str:
 
 @mcp.resource(
     uri="fr://guide/industry-classification",
-    name="FR industry classification (ISIC)",
+    name="FinancialFilings industry classification (ISIC)",
     description=(
-        "ISIC 4-level industry hierarchy used by the FinancialReports "
+        "ISIC 4-level industry hierarchy used by the FinancialFilings "
         "backend, with all 22 sections and a peer-query recipe. Read "
         "this whenever a user asks about a sector, industry, peer "
         "comparison, peer median, or wants to screen companies by "
@@ -4082,7 +4082,7 @@ def _resource_industry() -> str:
 
 @mcp.resource(
     uri="fr://guide/markdown-strategy",
-    name="FR markdown-fetch strategy",
+    name="FinancialFilings markdown-fetch strategy",
     description=(
         "When and how to use filings_markdown_retrieve effectively. "
         "Covers (1) processing_status gating (only COMPLETED filings "
@@ -4280,7 +4280,7 @@ GUIDE_TOOLS_BLOCK = '''
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        title="FR filing-type taxonomy",
+        title="FinancialFilings filing-type taxonomy",
         readOnlyHint=True, destructiveHint=False,
         idempotentHint=True, openWorldHint=False,
     ),
@@ -4294,7 +4294,7 @@ async def get_fr_filing_type_taxonomy() -> str:
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        title="FR industry classification (ISIC)",
+        title="FinancialFilings industry classification (ISIC)",
         readOnlyHint=True, destructiveHint=False,
         idempotentHint=True, openWorldHint=False,
     ),
@@ -4308,7 +4308,7 @@ async def get_fr_industry_classification_isic() -> str:
 
 @mcp.tool(
     annotations=ToolAnnotations(
-        title="FR markdown-fetch strategy",
+        title="FinancialFilings markdown-fetch strategy",
         readOnlyHint=True, destructiveHint=False,
         idempotentHint=True, openWorldHint=False,
     ),
@@ -4354,7 +4354,7 @@ async def compare_financials_yoy(
     instructions = (
         f"You will compare {ticker_or_name}'s financials for FY"
         f"{current_fiscal_year} vs FY{prior_fiscal_year} using ONLY the "
-        "FinancialReports MCP server.\\n\\n"
+        "FinancialFilings MCP server.\\n\\n"
         "Steps:\\n"
         f"1. Call `companies_list` with search=\\"{ticker_or_name}\\" to "
         "resolve the company. If multiple results, pick the one whose "
@@ -4940,7 +4940,7 @@ def compute_post_annotations(func_name: str, path: str) -> str:
     server state as destructiveHint=True — including creates, since the
     reviewer cares about "can this change my data" not the spec-strict
     "is this delete-shaped". webhooks_test_create is the one exception:
-    it's a probe (open world) but doesn't mutate FR state.
+    it's a probe (open world) but doesn't mutate FinancialFilings state.
     """
     parts: list[str] = []
 
