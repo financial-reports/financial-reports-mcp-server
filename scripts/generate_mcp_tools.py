@@ -155,6 +155,7 @@ from src.usage_analytics import (
     UsageAnalyticsMiddleware,
     build_emitter_from_env,
     current_call_id,
+    record_result_count,
     record_tool_error,
     sanitize_error_detail,
 )
@@ -4254,6 +4255,7 @@ async def filings_markdown_search(
                 start = i + len(cand)
             if hits:
                 break
+        record_result_count(len(hits))
         if not hits:
             return (
                 f"No match for {query!r} in filing {filing_id} ({len(full_text)} chars). "

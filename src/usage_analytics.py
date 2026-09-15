@@ -58,6 +58,21 @@ ALLOWED_ARG_KEYS = frozenset({
     "ordering", "view", "on_watchlist",
     "id", "company_id", "filing_id", "ticker_or_name",
     "page", "page_size",
+    # Keys the RECEIVER already allowlists that this sender was still redacting
+    # first — so they reached the table as <redacted> regardless. Public lookup
+    # identifiers and free-text query intent (platform, 2026-07-01) and the real
+    # filing-list type filters (platform, 2026-09-08). Measured cost of the drift:
+    # `query` was <redacted> on 16,998 of 16,998 filings_markdown_search events,
+    # and `type`/`types` on every filings_list call, so in-text search demand and
+    # type-filter failures could not be read from analytics at all.
+    "query", "q", "code", "cik", "figi", "symbol", "exchange", "mic", "name",
+    "type", "types",
+    # New on both ends (the platform allowlist must add these too, or the
+    # stricter receiver keeps redacting them). Enums, integers, dates and public
+    # identifiers — none names a person or carries a credential.
+    "statement_type", "fiscal_year_from", "fiscal_year_to", "as_of",
+    "company", "company_isin",
+    "max_hits", "context_chars", "offset", "limit",
 })
 
 DENY_ARG_SUBSTRINGS = (
@@ -310,6 +325,31 @@ def record_tool_error(
         )
     except Exception:  # pragma: no cover — contextvar.set effectively never fails
         logger.debug("record_tool_error skipped", exc_info=True)
+
+
+# --- text-tool result cardinality --------------------------------------------
+#
+# `_result_metrics` can only count a STRUCTURED result. A text tool's payload is
+# prose, so it logged result_count=NULL and has_data=bool(text) — and a "No match"
+# message is non-empty text, so every filings_markdown_search miss was recorded as
+# has_data=True. Measured: result_count NULL on 100% of ok search events, has_data
+# true on 100%, and misses recoverable only by guessing from response_bytes. A text
+# tool that knows its own count stashes it here; the middleware prefers it.
+_tool_result_count: ContextVar[Optional[int]] = ContextVar("_tool_result_count", default=None)
+
+
+def record_result_count(count: int) -> None:
+    """Record how many results the current text-tool call produced (0 = empty).
+
+    The middleware folds it into the event as result_count, with has_data derived
+    from it. Never raises; a non-int or negative value is ignored rather than
+    logged, so a caller bug cannot fabricate a count.
+    """
+    try:
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            _tool_result_count.set(count)
+    except Exception:  # pragma: no cover — contextvar.set effectively never fails
+        logger.debug("record_result_count skipped", exc_info=True)
 
 
 # --- middleware: capture tool + prompt calls ---
@@ -722,6 +762,7 @@ class UsageAnalyticsMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
         _tool_error.set(None)  # clear any value carried over within this context
+        _tool_result_count.set(None)  # same: a stale count must not leak into this event
         call_id_token = _call_id.set(uuid.uuid4().hex)
         await self._resolve_client_info(context)
         status, err, result = "ok", _ErrorInfo(), None
@@ -770,6 +811,11 @@ class UsageAnalyticsMiddleware(Middleware):
         arguments = getattr(message, "arguments", None) or {}
         sub, client_id, host_name, host_version = self._identity(context)
         metrics = _result_metrics(result)
+        recorded_count = _tool_result_count.get()
+        if kind == "tool" and status == "ok" and recorded_count is not None:
+            # The tool's own count beats inference from the payload shape.
+            metrics["result_count"] = recorded_count
+            metrics["has_data"] = recorded_count > 0
         session_id = ""
         try:
             fc = getattr(context, "fastmcp_context", None)

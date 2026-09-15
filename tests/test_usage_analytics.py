@@ -737,3 +737,55 @@ async def test_meta_survives_real_fastmcp_dispatch(monkeypatch):
     assert "openai/userLocation" not in ev["mcp_meta"]   # geo exclusion still holds
     assert ev["correlation_id"] == "conv_real"
     assert ev["correlation_source"] == "meta:openai/session"
+
+
+# --- sender/receiver allowlist sync -----------------------------------------
+
+# Snapshot of the platform receiver's ALLOWED_ARG_KEYS
+# (financial-reports/web users/mcp_analytics.py, read at origin/master 0635d830 +
+# 2026-09-15). Sanitisation runs on BOTH ends and the stricter side wins, so any
+# key here that this sender redacts is <redacted> in the table no matter what the
+# receiver allows. This test makes that drift a red build instead of a silent gap.
+_RECEIVER_ALLOWED_ARG_KEYS = frozenset({
+    "search", "ticker", "isin", "lei",
+    "code", "cik", "figi", "symbol", "exchange", "mic", "name", "query", "q",
+    "date", "date_from", "date_to", "year",
+    "release_datetime_from", "release_datetime_to",
+    "filing_type_code", "filing_category", "category",
+    "type", "types",
+    "line_items", "section_keyword",
+    "fiscal_year", "fiscal_period", "current_fiscal_year", "prior_fiscal_year",
+    "countries", "country", "sector", "industry", "industry_group", "sub_industry",
+    "ordering", "view", "on_watchlist",
+    "id", "company_id", "filing_id", "ticker_or_name",
+    "page", "page_size",
+})
+
+
+def test_sender_allowlist_covers_every_receiver_key():
+    missing = sorted(_RECEIVER_ALLOWED_ARG_KEYS - usage_analytics.ALLOWED_ARG_KEYS)
+    assert not missing, f"sender still redacts receiver-approved keys: {missing}"
+
+
+def test_search_and_financials_intent_args_are_kept():
+    """The arguments the telemetry analysis could not read: in-text search
+    queries and paging, filing-type filters, and the financials filters that
+    decide whether a call comes back empty."""
+    args = {
+        "query": "total revenue", "max_hits": 5, "filing_id": 123,
+        "offset": 150000, "limit": 150000, "context_chars": 440,
+        "type": "10-K", "types": "10-K,AR", "company": 42, "company_isin": "US0378331005",
+        "statement_type": "IS", "fiscal_year_from": 2021, "fiscal_year_to": 2024,
+        "as_of": "2025-01-01",
+    }
+    assert sanitize_mcp_arguments(args) == args
+
+
+def test_new_allowlist_entries_never_trip_the_deny_list():
+    # INVARIANT: a key that matched a deny substring would be redacted despite
+    # the allowlist, so an entry like that is dead weight at best.
+    tripping = sorted(
+        k for k in usage_analytics.ALLOWED_ARG_KEYS
+        if any(bad in k for bad in usage_analytics.DENY_ARG_SUBSTRINGS)
+    )
+    assert not tripping, tripping
