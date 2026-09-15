@@ -2188,9 +2188,10 @@ def _upstream_hint(
             # sentence to relay (which carries the pay-as-you-go / plans link).
             return (
                 "This is an account usage limit, not a temporary error: retrying, "
-                "or calling other FinancialFilings tools, will fail the same way "
-                "until it resets or the user changes their plan. Stop and tell the "
-                "user: " + upstream_copy
+                "or calling other tools that fetch FinancialFilings data, will fail "
+                "the same way until it resets or the user changes their plan (the "
+                "local get_fr_* guide tools still work). Stop and tell the user: "
+                + upstream_copy
             )
         wait = f" Retry after {retry_after}s." if retry_after else ""
         return "Rate limited by the FinancialFilings API — wait a moment and retry." + wait

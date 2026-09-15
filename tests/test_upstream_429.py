@@ -258,7 +258,8 @@ async def test_non_retryable_429_tells_the_agent_to_stop_and_relay(
     )
     msg = str(exc).lower()
     assert "not a temporary error" in msg
-    assert "other financialfilings tools" in msg
+    assert "other tools that fetch financialfilings data" in msg
+    assert "get_fr_* guide tools still work" in msg
     assert "stop and tell the user" in msg
 
 
