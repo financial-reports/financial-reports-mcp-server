@@ -742,10 +742,11 @@ async def test_meta_survives_real_fastmcp_dispatch(monkeypatch):
 # --- sender/receiver allowlist sync -----------------------------------------
 
 # Snapshot of the platform receiver's ALLOWED_ARG_KEYS
-# (financial-reports/web users/mcp_analytics.py, read at origin/master 0635d830 +
-# 2026-09-15). Sanitisation runs on BOTH ends and the stricter side wins, so any
-# key here that this sender redacts is <redacted> in the table no matter what the
-# receiver allows. This test makes that drift a red build instead of a silent gap.
+# (financial-reports/web users/mcp_analytics.py at origin/master, 2026-09-15,
+# after web#2875). Sanitisation runs on BOTH ends and the stricter side wins, so
+# a key on only ONE list is redacted in the table no matter what the other
+# allows. Equality, not containment: a sender-only key is just as dead as a
+# receiver-only one. Update this snapshot together with the platform list.
 _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
     "search", "ticker", "isin", "lei",
     "code", "cik", "figi", "symbol", "exchange", "mic", "name", "query", "q",
@@ -759,12 +760,16 @@ _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
     "ordering", "view", "on_watchlist",
     "id", "company_id", "filing_id", "ticker_or_name",
     "page", "page_size",
+    "statement_type", "fiscal_year_from", "fiscal_year_to", "as_of",
+    "company", "company_isin",
+    "max_hits", "context_chars", "offset", "limit",
 })
 
 
-def test_sender_allowlist_covers_every_receiver_key():
-    missing = sorted(_RECEIVER_ALLOWED_ARG_KEYS - usage_analytics.ALLOWED_ARG_KEYS)
-    assert not missing, f"sender still redacts receiver-approved keys: {missing}"
+def test_sender_allowlist_equals_receiver_allowlist():
+    sender = usage_analytics.ALLOWED_ARG_KEYS
+    assert sorted(_RECEIVER_ALLOWED_ARG_KEYS - sender) == [], "receiver-approved keys the sender still redacts"
+    assert sorted(sender - _RECEIVER_ALLOWED_ARG_KEYS) == [], "sender keys the receiver will redact anyway"
 
 
 def test_search_and_financials_intent_args_are_kept():
@@ -789,3 +794,28 @@ def test_new_allowlist_entries_never_trip_the_deny_list():
         if any(bad in k for bad in usage_analytics.DENY_ARG_SUBSTRINGS)
     )
     assert not tripping, tripping
+
+
+@pytest.mark.parametrize("key", ["query", "search", "q"])
+def test_free_text_values_have_token_shapes_redacted(key):
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJlXzEyMzQ"
+    out = sanitize_mcp_arguments({key: f"revenue Bearer abcdefghijklmnop and {jwt} guidance"})
+    assert "abcdefghijklmnop" not in out[key]
+    assert "eyJhbGciOiJIUzI1NiJ9" not in out[key]
+    assert out[key].startswith("revenue ") and out[key].endswith(" guidance")
+
+
+def test_token_scrub_runs_before_truncation():
+    # Truncating first can cut a JWT's signature segment; the pattern then fails
+    # to match and the header+payload would be stored.
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0." + "s" * 40
+    value = "x" * (usage_analytics.MAX_ARG_STRLEN - 30) + " " + jwt
+    out = sanitize_mcp_arguments({"query": value})["query"]
+    assert "eyJhbGciOiJIUzI1NiJ9" not in out
+    assert len(out) <= usage_analytics.MAX_ARG_STRLEN
+
+
+def test_token_scrub_leaves_ordinary_identifiers_alone():
+    args = {"query": "total revenue 2024", "isin": "US0378331005", "line_items": ["revenue", "net_income"]}
+    assert sanitize_mcp_arguments(args) == args
+

@@ -111,14 +111,27 @@ def sanitize_error_detail(detail: str, max_len: int = MAX_ERROR_DETAIL) -> str:
     return cleaned[:max_len]
 
 
+def _scrub_token_shapes(text: str) -> str:
+    """Redact JWT- and bearer-shaped substrings from a free-text VALUE.
+
+    The allowlist decides which KEYS keep their value; it cannot know what a
+    caller typed into one. `query` and `search` are free text, so a pasted
+    credential would otherwise be stored verbatim. Applied BEFORE truncation:
+    cutting first can drop a JWT's signature segment so the pattern no longer
+    matches and the header+payload leak. Same patterns as sanitize_error_detail.
+    """
+    cleaned = _JWT_SHAPED_RE.sub("<redacted-jwt>", text)
+    return _BEARER_RE.sub("<redacted-bearer>", cleaned)
+
+
 def _truncate(value: Any) -> Any:
     if isinstance(value, str):
-        return value[:MAX_ARG_STRLEN]
+        return _scrub_token_shapes(value)[:MAX_ARG_STRLEN]
     if isinstance(value, list):
         return [_truncate(v) for v in value[:25]]
     if isinstance(value, (int, float, bool)) or value is None:
         return value
-    return str(value)[:MAX_ARG_STRLEN]
+    return _scrub_token_shapes(str(value))[:MAX_ARG_STRLEN]
 
 
 def sanitize_mcp_arguments(arguments: Any) -> dict:
