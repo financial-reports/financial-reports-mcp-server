@@ -2189,9 +2189,8 @@ def _upstream_hint(
             return (
                 "This is an account usage limit, not a temporary error: retrying, "
                 "or calling other tools that fetch FinancialFilings data, will fail "
-                "the same way until it resets or the user changes their plan (the "
-                "local get_fr_* guide tools still work). Stop and tell the user: "
-                + upstream_copy
+                "the same way until it resets or the user changes their plan. Stop "
+                "and tell the user: " + upstream_copy
             )
         wait = f" Retry after {retry_after}s." if retry_after else ""
         return "Rate limited by the FinancialFilings API — wait a moment and retry." + wait
