@@ -2179,7 +2179,19 @@ def _upstream_hint(
         # which carries the absolute payg_url. Anything unclassified falls
         # through to retry advice on purpose. (#73)
         if error_kind in _NON_RETRYABLE_429 and upstream_copy:
-            return upstream_copy
+            # The copy is written for the USER. Agents read it as one more tool
+            # failure and keep going: in prod telemetry (2026-09-15; journeys
+            # stitched by a session proxy, so approximate) ~89% of the calls that
+            # followed a limit error went to the same tool, and ~87% got no
+            # successful call within 30 minutes. The limit is
+            # account-wide, so say so, tell the agent to stop, and hand it the
+            # sentence to relay (which carries the pay-as-you-go / plans link).
+            return (
+                "This is an account usage limit, not a temporary error: retrying, "
+                "or calling other tools that fetch FinancialFilings data, will fail "
+                "the same way until it resets or the user changes their plan. Stop "
+                "and tell the user: " + upstream_copy
+            )
         wait = f" Retry after {retry_after}s." if retry_after else ""
         return "Rate limited by the FinancialFilings API — wait a moment and retry." + wait
     if status >= 500:
