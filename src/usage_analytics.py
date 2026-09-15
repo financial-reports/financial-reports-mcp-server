@@ -59,10 +59,12 @@ ALLOWED_ARG_KEYS = frozenset({
     "id", "company_id", "filing_id", "ticker_or_name",
     "page", "page_size",
     # Keys the RECEIVER already allowlists that this sender was still redacting
-    # first — so they reached the table as <redacted> regardless. Public lookup
+    # first — so they reached the table as <redacted> regardless: lookup
     # identifiers (platform, 2026-07-01) and the real filing-list type filters
     # (platform, 2026-09-08); `type`/`types` were <redacted> on every filings_list
     # call, so type-filter failures could not be read from analytics at all.
+    # Several of these are unconstrained strings in the schema, so their values
+    # pass through _scrub_token_shapes like every other allowlisted string.
     "code", "cik", "figi", "symbol", "exchange", "mic", "name",
     "type", "types",
     # DELIBERATELY NOT HERE, although the receiver allowlists them: "query", "q".
@@ -114,17 +116,37 @@ def sanitize_error_detail(detail: str, max_len: int = MAX_ERROR_DETAIL) -> str:
     return cleaned[:max_len]
 
 
-def _scrub_token_shapes(text: str) -> str:
-    """Redact JWT- and bearer-shaped substrings from a free-text VALUE.
+# An unbroken run of 24+ URL-safe characters mixing letters AND digits: the shape
+# of an opaque API key or secret (`sk_live_…`, hex digests, UUIDs). The values
+# analytics exists to capture fall short of it: filing-type codes, tickers,
+# ISINs (12), LEIs (20), CIKs, ISO dates (broken up by `:`/`.`/`+`), and
+# snake_case line-item codes (letters only, however long).
+_OPAQUE_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{24,}")
 
-    The allowlist decides which KEYS keep their value; it cannot know what a
-    caller typed into one. `query` and `search` are free text, so a pasted
-    credential would otherwise be stored verbatim. Applied BEFORE truncation:
-    cutting first can drop a JWT's signature segment so the pattern no longer
-    matches and the header+payload leak. Same patterns as sanitize_error_detail.
+
+def _redact_if_opaque(match: "re.Match[str]") -> str:
+    run = match.group(0)
+    has_letter = any(c.isalpha() for c in run)
+    has_digit = any(c.isdigit() for c in run)
+    return "<redacted-token>" if has_letter and has_digit else run
+
+
+def _scrub_token_shapes(text: str) -> str:
+    """Redact credential-shaped substrings from an allowlisted string VALUE.
+
+    The allowlist decides which KEYS keep their value; it cannot constrain what a
+    caller puts in one. Several allowlisted keys are unconstrained strings in the
+    schema (`search`, `type`, `types`, `name`, `symbol`, ...), so a credential
+    placed in any of them would otherwise be stored verbatim. This is a
+    best-effort VALUE-SHAPE gate applied to every allowlisted string, not a
+    per-key list: JWT and Bearer shapes (sanitize_error_detail's patterns), then
+    any long letters-and-digits run. It does NOT catch a short or letters-only
+    secret. Applied BEFORE truncation: cutting first can split a token so no
+    pattern matches and a prefix leaks.
     """
     cleaned = _JWT_SHAPED_RE.sub("<redacted-jwt>", text)
-    return _BEARER_RE.sub("<redacted-bearer>", cleaned)
+    cleaned = _BEARER_RE.sub("<redacted-bearer>", cleaned)
+    return _OPAQUE_TOKEN_RE.sub(_redact_if_opaque, cleaned)
 
 
 def _truncate(value: Any) -> Any:

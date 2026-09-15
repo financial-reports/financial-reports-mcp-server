@@ -836,3 +836,26 @@ def test_token_scrub_leaves_ordinary_identifiers_alone():
     args = {"search": "total revenue 2024", "isin": "US0378331005", "line_items": ["revenue", "net_income"]}
     assert sanitize_mcp_arguments(args) == args
 
+
+def _opaque_key():
+    # Built at runtime: a long letters-and-digits run, the shape of an API key.
+    return "sk" + "_live_" + "4eC39HqLyjWDarjtT1zdp7dc"
+
+
+@pytest.mark.parametrize("key", ["type", "types", "search", "name", "symbol", "ticker_or_name"])
+def test_opaque_credential_in_any_free_string_key_is_redacted(key):
+    out = sanitize_mcp_arguments({key: f"10-K {_opaque_key()} AR"})
+    assert "4eC39HqLyjWDarjtT1zdp7dc" not in out[key]
+    assert out[key] == "10-K <redacted-token> AR"
+
+
+def test_value_shape_gate_keeps_the_values_analytics_is_for():
+    args = {
+        "types": "10-K,DEF 14A,10-K-ESEF,AGM-R",
+        "isin": "US0378331005",
+        "lei": "529900T8BM49AURSDO55",
+        "release_datetime_from": "2026-09-15T17:20:02.123456+00:00",
+        "line_items": ["cash_and_cash_equivalents_at_end_of_period", "net_income_loss"],
+        "search": "Apple Inc annual report 2024",
+    }
+    assert sanitize_mcp_arguments(args) == args
