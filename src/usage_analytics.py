@@ -60,13 +60,16 @@ ALLOWED_ARG_KEYS = frozenset({
     "page", "page_size",
     # Keys the RECEIVER already allowlists that this sender was still redacting
     # first — so they reached the table as <redacted> regardless. Public lookup
-    # identifiers and free-text query intent (platform, 2026-07-01) and the real
-    # filing-list type filters (platform, 2026-09-08). Measured cost of the drift:
-    # `query` was <redacted> on 16,998 of 16,998 filings_markdown_search events,
-    # and `type`/`types` on every filings_list call, so in-text search demand and
-    # type-filter failures could not be read from analytics at all.
-    "query", "q", "code", "cik", "figi", "symbol", "exchange", "mic", "name",
+    # identifiers (platform, 2026-07-01) and the real filing-list type filters
+    # (platform, 2026-09-08); `type`/`types` were <redacted> on every filings_list
+    # call, so type-filter failures could not be read from analytics at all.
+    "code", "cik", "figi", "symbol", "exchange", "mic", "name",
     "type", "types",
+    # DELIBERATELY NOT HERE, although the receiver allowlists them: "query", "q".
+    # They are free text, and value-level scrubbing cannot recognise an arbitrary
+    # opaque credential (only JWT / Bearer shapes), so a pasted key would be
+    # stored durably. Whether raw in-text search terms may be logged is an open
+    # product/privacy decision, not an allowlist tweak — see #119.
     # New on both ends (the platform allowlist must add these too, or the
     # stricter receiver keeps redacting them). Enums, integers, dates and public
     # identifiers — none names a person or carries a credential.

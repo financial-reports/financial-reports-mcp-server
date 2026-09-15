@@ -766,10 +766,22 @@ _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
 })
 
 
-def test_sender_allowlist_equals_receiver_allowlist():
+# Free-text keys the receiver allows but this sender deliberately keeps
+# redacting: scrubbing cannot recognise an arbitrary opaque credential typed
+# into them. Removing a key from this set is a privacy decision, not a sync fix.
+_DELIBERATELY_REDACTED_FREE_TEXT = frozenset({"query", "q"})
+
+
+def test_sender_allowlist_equals_receiver_allowlist_minus_free_text():
     sender = usage_analytics.ALLOWED_ARG_KEYS
-    assert sorted(_RECEIVER_ALLOWED_ARG_KEYS - sender) == [], "receiver-approved keys the sender still redacts"
-    assert sorted(sender - _RECEIVER_ALLOWED_ARG_KEYS) == [], "sender keys the receiver will redact anyway"
+    expected = _RECEIVER_ALLOWED_ARG_KEYS - _DELIBERATELY_REDACTED_FREE_TEXT
+    assert sorted(expected - sender) == [], "receiver-approved keys the sender still redacts"
+    assert sorted(sender - expected) == [], "sender keys the receiver redacts, or free text re-allowed"
+
+
+@pytest.mark.parametrize("key", sorted(_DELIBERATELY_REDACTED_FREE_TEXT))
+def test_free_text_query_values_stay_redacted(key):
+    assert sanitize_mcp_arguments({key: "sk-live-0123456789abcdefABCDEF"}) == {key: REDACTED}
 
 
 def test_search_and_financials_intent_args_are_kept():
@@ -777,7 +789,7 @@ def test_search_and_financials_intent_args_are_kept():
     queries and paging, filing-type filters, and the financials filters that
     decide whether a call comes back empty."""
     args = {
-        "query": "total revenue", "max_hits": 5, "filing_id": 123,
+        "max_hits": 5, "filing_id": 123,
         "offset": 150000, "limit": 150000, "context_chars": 440,
         "type": "10-K", "types": "10-K,AR", "company": 42, "company_isin": "US0378331005",
         "statement_type": "IS", "fiscal_year_from": 2021, "fiscal_year_to": 2024,
@@ -796,9 +808,14 @@ def test_new_allowlist_entries_never_trip_the_deny_list():
     assert not tripping, tripping
 
 
-@pytest.mark.parametrize("key", ["query", "search", "q"])
+def _jwt_shaped(sig="c2lnbmF0dXJlXzEyMzQ"):
+    # Built at runtime so no token-shaped literal sits in the source.
+    return ".".join(["eyJ" + "hbGciOiJIUzI1NiJ9", "eyJ" + "zdWIiOiJ4In0", sig])
+
+
+@pytest.mark.parametrize("key", ["search", "section_keyword"])
 def test_free_text_values_have_token_shapes_redacted(key):
-    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJlXzEyMzQ"
+    jwt = _jwt_shaped()
     out = sanitize_mcp_arguments({key: f"revenue Bearer abcdefghijklmnop and {jwt} guidance"})
     assert "abcdefghijklmnop" not in out[key]
     assert "eyJhbGciOiJIUzI1NiJ9" not in out[key]
@@ -808,14 +825,14 @@ def test_free_text_values_have_token_shapes_redacted(key):
 def test_token_scrub_runs_before_truncation():
     # Truncating first can cut a JWT's signature segment; the pattern then fails
     # to match and the header+payload would be stored.
-    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0." + "s" * 40
+    jwt = _jwt_shaped("s" * 40)
     value = "x" * (usage_analytics.MAX_ARG_STRLEN - 30) + " " + jwt
-    out = sanitize_mcp_arguments({"query": value})["query"]
+    out = sanitize_mcp_arguments({"search": value})["search"]
     assert "eyJhbGciOiJIUzI1NiJ9" not in out
     assert len(out) <= usage_analytics.MAX_ARG_STRLEN
 
 
 def test_token_scrub_leaves_ordinary_identifiers_alone():
-    args = {"query": "total revenue 2024", "isin": "US0378331005", "line_items": ["revenue", "net_income"]}
+    args = {"search": "total revenue 2024", "isin": "US0378331005", "line_items": ["revenue", "net_income"]}
     assert sanitize_mcp_arguments(args) == args
 
