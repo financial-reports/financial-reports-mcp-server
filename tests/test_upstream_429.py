@@ -245,6 +245,50 @@ async def test_unknown_429_type_falls_back_to_retry(
     assert "retry" in str(exc).lower()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body_name", ["FREE_QUOTA_BODY", "PAID_QUOTA_BODY", "DAILY_CAP_BODY", "MONTHLY_CEILING_BODY"])
+async def test_non_retryable_429_tells_the_agent_to_stop_and_relay(
+    mcp_module, monkeypatch, fake_access_token, respx_router, body_name
+) -> None:
+    """Agents kept calling tools after an account limit (prod telemetry: ~89% of
+    follow-up calls hit the same tool). The message must say the limit is
+    account-wide, not retryable, and that the remediation is for the user."""
+    exc = await _raise_on_429(
+        mcp_module, monkeypatch, fake_access_token, respx_router, json=globals()[body_name]
+    )
+    msg = str(exc).lower()
+    assert "not a temporary error" in msg
+    assert "other financialfilings tools" in msg
+    assert "stop and tell the user" in msg
+
+
+@pytest.mark.asyncio
+async def test_free_tier_stop_instruction_still_carries_the_payg_link(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    exc = await _raise_on_429(
+        mcp_module, monkeypatch, fake_access_token, respx_router, json=FREE_QUOTA_BODY
+    )
+    msg = str(exc)
+    # The relay sentence must come AFTER the instruction, whole, with the link.
+    assert msg.index("Stop and tell the user") < msg.index(PAYG_URL)
+
+
+@pytest.mark.asyncio
+async def test_burst_429_is_not_told_to_stop(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """A burst limit IS retryable after a short wait (and on the MCP channel it
+    is a flat per-minute rate that no plan change lifts), so it must not get the
+    stop-and-relay framing."""
+    exc = await _raise_on_429(
+        mcp_module, monkeypatch, fake_access_token, respx_router, json=BURST_BODY
+    )
+    msg = str(exc).lower()
+    assert "stop and tell the user" not in msg
+    assert "retry" in msg
+
+
 # --- 3. safety of the verbatim forward ---------------------------------------
 
 
