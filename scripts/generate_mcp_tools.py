@@ -343,7 +343,15 @@ if not _API_HOST:
     )
 LANDING_URL = os.environ.get(
     "LANDING_URL",
-    "https://financialreports.eu/integrations/claude/",
+    # The client-agnostic MCP hub (links the Claude, Claude Code, ChatGPT and
+    # Microsoft 365 Copilot guides). Was the Claude-only guide.
+    "https://financialfilings.com/mcp/",
+)
+# Account creation. The web app's route is users:register at
+# /accounts/register/. The previous hint pointed at /signup, which 301s from
+# financialreports.eu to financialfilings.com/signup and 404s there.
+SIGNUP_URL = os.environ.get(
+    "SIGNUP_URL", "https://financialfilings.com/accounts/register/"
 )
 # Public legal pages — surfaced as a footer on the connector landing
 # page so users (and Anthropic reviewers) can find Privacy / Terms /
@@ -2148,7 +2156,7 @@ def _upstream_hint(
             return (
                 "Your FinancialFilings account isn't linked to the identity "
                 "you signed in with. Create a free account at "
-                "https://financialreports.eu/signup using the same email you "
+                f"{SIGNUP_URL} using the same email you "
                 "used to sign in, or contact support@financialreports.eu if "
                 "you already have one."
             )
@@ -3119,8 +3127,8 @@ _LANDING_HTML = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FinancialFilings MCP — Public-company filings, available to Claude</title>
-    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude.ai, Claude Code, and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 16 tools across 5 domains. Free for any FinancialFilings account.">
+    <title>FinancialFilings MCP — Public-company filings in Claude, ChatGPT and Microsoft 365 Copilot</title>
+    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude, Claude Code, ChatGPT, Microsoft 365 Copilot and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 16 tools across 5 domains. Free for any FinancialFilings account.">
     <meta name="robots" content="index, follow">
     __GOOGLE_SITE_VERIFICATION_META__
     <link rel="canonical" href="__MCP_BASE_URL__/">
@@ -3131,15 +3139,15 @@ _LANDING_HTML = """<!DOCTYPE html>
     <link rel="apple-touch-icon" sizes="180x180" href="__MCP_BASE_URL__/apple-touch-icon.png">
 
     <meta property="og:type" content="website">
-    <meta property="og:title" content="FinancialFilings MCP — Public-company filings, available to Claude">
+    <meta property="og:title" content="FinancialFilings MCP — Public-company filings in Claude, ChatGPT and Microsoft 365 Copilot">
     <meta property="og:description" content="The official MCP connector for FinancialFilings. Free for any FinancialFilings account.">
     <meta property="og:image" content="__MCP_BASE_URL__/icon-512.png">
     <meta property="og:url" content="__MCP_BASE_URL__/">
     <meta property="og:site_name" content="FinancialFilings">
 
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="FinancialFilings MCP — Public-company filings, available to Claude">
-    <meta name="twitter:description" content="MCP connector for Claude — public-company filings, free.">
+    <meta name="twitter:title" content="FinancialFilings MCP — Public-company filings in Claude, ChatGPT and Microsoft 365 Copilot">
+    <meta name="twitter:description" content="MCP connector for Claude, ChatGPT and Microsoft 365 Copilot — public-company filings, free.">
     <meta name="twitter:image" content="__MCP_BASE_URL__/icon-512.png">
     <style>
         /* —— FinancialFilings tokens (subset, inlined for the standalone landing) —— */
@@ -3412,16 +3420,16 @@ _LANDING_HTML = """<!DOCTYPE html>
         <section class="hero">
             <div class="container">
                 <p class="eyebrow">01 / Connector</p>
-                <h1>Public-company <em>filings</em>, available to Claude.</h1>
+                <h1>Public-company <em>filings</em>, inside your AI assistant.</h1>
                 <p>
-                    The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude.ai, Claude Code, Cursor, and any MCP-compatible client to regulatory filings sourced from official regulators worldwide. <strong>Free for any FinancialFilings account.</strong>
+                    The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude, Claude Code, ChatGPT, Microsoft 365 Copilot, Cursor, and any MCP-compatible client to regulatory filings sourced from official regulators worldwide. <strong>Free for any FinancialFilings account.</strong>
                 </p>
             </div>
         </section>
 
         <section class="stats">
             <div class="container stats__inner">
-                <div class="stat"><span class="stat__num">15</span><span class="stat__label">MCP tools</span></div>
+                <div class="stat"><span class="stat__num">16</span><span class="stat__label">MCP tools</span></div>
                 <div class="stat"><span class="stat__num">5</span><span class="stat__label">Tool domains</span></div>
                 <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FinancialFilings account</span></div>
                 <div class="stat"><span class="stat__num">OAuth&nbsp;2.0</span><span class="stat__label">PKCE · DCR</span></div>
@@ -3446,8 +3454,8 @@ _LANDING_HTML = """<!DOCTYPE html>
                 <p class="eyebrow">03 / Setup</p>
                 <h2>Connect in three steps</h2>
                 <ol class="steps">
-                    <li>Create a free account at <a href="https://financialreports.eu">financialreports.eu</a> if you don't have one yet — no paid plan required for MCP access.</li>
-                    <li>In your MCP client (Claude.ai, Claude Code, Cursor, etc.), add a custom connector with the URL <code>__MCP_BASE_URL__/mcp</code>.</li>
+                    <li>Create a free account at <a href="__SIGNUP_URL__">financialfilings.com</a> if you don't have one yet — no paid plan required for MCP access.</li>
+                    <li>In your MCP client (Claude, ChatGPT, Cursor, etc.), add a custom connector with the URL <code>__MCP_BASE_URL__/mcp</code>.</li>
                     <li>Sign in via OAuth when prompted. The 16 tools become available immediately — no reconnection needed.</li>
                 </ol>
                 <a href="__LANDING_URL__" class="btn btn--secondary">Full setup guide →</a>
@@ -3551,6 +3559,7 @@ _RENDERED_LANDING_HTML = (
     .replace("__MCP_BASE_URL__", MCP_BASE_URL.rstrip("/"))
     .replace("__GOOGLE_SITE_VERIFICATION_META__", _GSV_META)
     .replace("__LANDING_URL__", LANDING_URL)
+    .replace("__SIGNUP_URL__", SIGNUP_URL)
     .replace("__PRIVACY_URL__", PRIVACY_URL)
     .replace("__TERMS_URL__", TERMS_URL)
     .replace("__IMPRINT_URL__", IMPRINT_URL)
