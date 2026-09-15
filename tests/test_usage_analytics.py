@@ -859,3 +859,20 @@ def test_value_shape_gate_keeps_the_values_analytics_is_for():
         "search": "Apple Inc annual report 2024",
     }
     assert sanitize_mcp_arguments(args) == args
+
+
+def test_scrub_is_bounded_for_huge_values(monkeypatch):
+    seen = []
+    real = usage_analytics._scrub_token_shapes
+    monkeypatch.setattr(usage_analytics, "_scrub_token_shapes", lambda t: (seen.append(len(t)), real(t))[1])
+    out = sanitize_mcp_arguments({"search": "a" * 5_000_000})["search"]
+    assert len(out) == usage_analytics.MAX_ARG_STRLEN
+    assert max(seen) <= usage_analytics._SCRUB_WINDOW
+
+
+def test_token_crossing_the_stored_boundary_is_still_redacted():
+    value = "x " * 115 + _opaque_key() * 20   # token starts inside the stored 256 chars
+    out = sanitize_mcp_arguments({"search": value})["search"]
+    assert "4eC39HqLyjWDarjtT1zdp7dc" not in out
+    assert "<redacted-token>" in out
+

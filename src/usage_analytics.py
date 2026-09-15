@@ -149,14 +149,25 @@ def _scrub_token_shapes(text: str) -> str:
     return _OPAQUE_TOKEN_RE.sub(_redact_if_opaque, cleaned)
 
 
+# Scrub only a bounded window, never the whole value: a caller-controlled
+# multi-megabyte string must not be regex-scanned synchronously in the request
+# path. The window is 4x the stored length, so a token that starts inside the
+# stored prefix still has >=3x MAX_ARG_STRLEN of its body in view and matches.
+_SCRUB_WINDOW = MAX_ARG_STRLEN * 4
+
+
+def _scrub_and_cap(text: str) -> str:
+    return _scrub_token_shapes(text[:_SCRUB_WINDOW])[:MAX_ARG_STRLEN]
+
+
 def _truncate(value: Any) -> Any:
     if isinstance(value, str):
-        return _scrub_token_shapes(value)[:MAX_ARG_STRLEN]
+        return _scrub_and_cap(value)
     if isinstance(value, list):
         return [_truncate(v) for v in value[:25]]
     if isinstance(value, (int, float, bool)) or value is None:
         return value
-    return _scrub_token_shapes(str(value))[:MAX_ARG_STRLEN]
+    return _scrub_and_cap(str(value))
 
 
 def sanitize_mcp_arguments(arguments: Any) -> dict:
