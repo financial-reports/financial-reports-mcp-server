@@ -165,3 +165,66 @@ async def test_text_tool_error_visible_to_analytics_through_real_middleware(
     assert ev.get("error_kind") not in (None, "unknown"), (
         f"error_kind degraded to {ev.get('error_kind')!r} on the raise path"
     )
+
+
+# --- 5. result cardinality for text tools ------------------------------------
+
+@pytest.mark.asyncio
+async def test_recorded_result_count_overrides_text_inference(monkeypatch) -> None:
+    """A "No match" message is non-empty text, so inference alone says has_data=True."""
+    monkeypatch.setattr(usage_analytics, "get_access_token", lambda: None)
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+
+    async def miss(_):
+        usage_analytics.record_result_count(0)
+        return "No match for 'x' in filing 1 (500 chars)."
+
+    async def plain(_):
+        return "some text"
+
+    await mw.on_call_tool(_fake_context("filings_markdown_search"), miss)
+    await mw.on_call_tool(_fake_context("filings_markdown_search"), plain)  # must not inherit 0
+
+    assert (emitter.events[0]["result_count"], emitter.events[0]["has_data"]) == (0, False)
+    assert emitter.events[1]["result_count"] is None
+    assert emitter.events[1]["has_data"] is True
+
+
+def test_record_result_count_rejects_non_counts() -> None:
+    usage_analytics._tool_result_count.set(None)
+    for bad in (-1, True, "3", 2.0, None):
+        usage_analytics.record_result_count(bad)
+    assert usage_analytics._tool_result_count.get() is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("query", "expected_count"),
+    [("total revenue", 2), ("no such phrase anywhere", 0)],
+)
+async def test_markdown_search_hit_count_reaches_analytics_through_real_middleware(
+    mcp_module, monkeypatch, fake_access_token, respx_router, query, expected_count
+) -> None:
+    """End-to-end through real FastMCP dispatch: the search tool's hit count, and
+    a miss as has_data=False, land on the event. The query text stays redacted."""
+    from fastmcp import Client
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    doc = "Intro. Total revenue was 10. Costs. Total Revenue rose to 12. End."
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
+        return_value=httpx.Response(200, text=doc)
+    )
+    captured: list[dict] = []
+    monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
+
+    async with Client(mcp_module.mcp) as client:
+        await client.call_tool("filings_markdown_search", {"filing_id": 7, "query": query})
+
+    events = [e for e in captured if e["name"] == "filings_markdown_search" and e["kind"] == "tool"]
+    assert events, "no analytics event captured for the search call"
+    ev = events[-1]
+    assert ev["status"] == "ok"
+    assert ev["result_count"] == expected_count
+    assert ev["has_data"] is (expected_count > 0)
+    assert ev["arguments"]["query"] == usage_analytics.REDACTED
