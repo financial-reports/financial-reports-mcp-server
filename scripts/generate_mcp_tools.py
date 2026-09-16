@@ -3748,7 +3748,8 @@ async def {{ func_name }}(
     For long filings, call this tool repeatedly with increasing `offset` values
     until the response no longer contains the truncation marker. Use a limit
     of 50000 chars (default) for most LLM context windows; the per-call cap
-    is 150000 chars (Claude.ai's documented tool-result ceiling).
+    is 150000 chars for the whole result (Claude.ai's documented tool-result
+    ceiling), so a full-size slice is trimmed by the length of the header.
     """
     try:
         _require_auth_context()
@@ -3759,8 +3760,10 @@ async def {{ func_name }}(
         # Clamp `limit` so a misbehaving caller cannot ask the server to
         # return tens of MB of text in a single call. 150k is the Claude.ai/
         # Claude Desktop documented tool-result ceiling — anything larger
-        # gets truncated by the host anyway.
-        limit = max(1, min(int(limit), 150000))
+        # gets truncated by the host anyway. The ceiling covers the WHOLE
+        # result, so the prose below is budgeted out of it before slicing (#122).
+        result_ceiling = 150000
+        limit = max(1, min(int(limit), result_ceiling))
 
         url = f"/filings/{filing_id}/markdown/"
 
@@ -3803,23 +3806,37 @@ async def {{ func_name }}(
                 f"--- MARKDOWN CONTENT (chars {offset} to {total_length} of {total_length}) ---\\n"
                 "(empty: offset is at or past the end of the document)"
             )
+        def _prose(end):
+            """Everything in the result that is not filing content."""
+            out = (
+                f"--- MARKDOWN CONTENT (chars {offset} to {end} of {total_length}) ---\\n"
+            )
+            if end < total_length:
+                out += (
+                    f"--- TRUNCATED. Call again with offset={end} to continue. ---\\n"
+                )
+            if truncated_upstream:
+                out += (
+                    f"--- WARNING: filing exceeds {_MAX_FILING_BYTES} bytes; "
+                    "tail was discarded. ---\\n"
+                )
+            return _nav_hint + out + "\\n"
+
+        # Budget the prose out of the ceiling BEFORE slicing (#122). Trimming the
+        # assembled result instead would leave `offset={end_index}` pointing past
+        # the content actually returned, so the next call would skip a gap.
+        # Iterate: trimming can ADD the "call again" line (a slice that reached
+        # the end no longer does), which re-grows the prose. Shrink-only, so it
+        # converges — two passes in practice, three is slack.
         end_index = min(offset + limit, total_length)
-        chunk = full_text[offset:end_index]
+        for _ in range(3):
+            budget = result_ceiling - len(_prose(end_index))
+            capped = min(end_index, offset + max(1, budget))
+            if capped == end_index:
+                break
+            end_index = capped
 
-        header = (
-            f"--- MARKDOWN CONTENT (chars {offset} to {end_index} of {total_length}) ---\\n"
-        )
-        if end_index < total_length:
-            header += (
-                f"--- TRUNCATED. Call again with offset={end_index} to continue. ---\\n"
-            )
-        if truncated_upstream:
-            header += (
-                f"--- WARNING: filing exceeds {_MAX_FILING_BYTES} bytes; "
-                "tail was discarded. ---\\n"
-            )
-
-        return _nav_hint + header + "\\n" + chunk
+        return _prose(end_index) + full_text[offset:end_index]
     except UpstreamHTTPError:
         # See #104 — must stay an error, not become a successful string result.
         raise

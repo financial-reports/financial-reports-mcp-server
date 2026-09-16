@@ -561,7 +561,8 @@ def test_markdown_clamp_is_150k(mcp_module) -> None:
     )
     with open(src) as f:
         body = f.read()
-    assert "min(int(limit), 150000)" in body
+    assert "result_ceiling = 150000" in body
+    assert "min(int(limit), result_ceiling)" in body
     assert "min(int(limit), 200000)" not in body
 
 
