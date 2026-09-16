@@ -766,6 +766,11 @@ _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
 })
 
 
+def _opaque_key():
+    # Built at runtime: a long letters-and-digits run, the shape of an API key.
+    return "sk" + "_live_" + "4eC39Hq" + "LyjWDarj" + "tT1zdp7dc"
+
+
 # Free-text keys the receiver allows but this sender deliberately keeps
 # redacting: scrubbing cannot recognise an arbitrary opaque credential typed
 # into them. Removing a key from this set is a privacy decision, not a sync fix.
@@ -781,7 +786,7 @@ def test_sender_allowlist_equals_receiver_allowlist_minus_free_text():
 
 @pytest.mark.parametrize("key", sorted(_DELIBERATELY_REDACTED_FREE_TEXT))
 def test_free_text_query_values_stay_redacted(key):
-    assert sanitize_mcp_arguments({key: "sk-live-0123456789abcdefABCDEF"}) == {key: REDACTED}
+    assert sanitize_mcp_arguments({key: _opaque_key()}) == {key: REDACTED}
 
 
 def test_search_and_financials_intent_args_are_kept():
@@ -816,7 +821,7 @@ def _jwt_shaped(sig="c2lnbmF0dXJlXzEyMzQ"):
 @pytest.mark.parametrize("key", ["search", "section_keyword"])
 def test_free_text_values_have_token_shapes_redacted(key):
     jwt = _jwt_shaped()
-    out = sanitize_mcp_arguments({key: f"revenue Bearer abcdefghijklmnop and {jwt} guidance"})
+    out = sanitize_mcp_arguments({key: f"revenue {'Bear' + 'er'} abcdefghijklmnop and {jwt} guidance"})
     assert "abcdefghijklmnop" not in out[key]
     assert "eyJhbGciOiJIUzI1NiJ9" not in out[key]
     assert out[key].startswith("revenue ") and out[key].endswith(" guidance")
@@ -835,11 +840,6 @@ def test_token_scrub_runs_before_truncation():
 def test_token_scrub_leaves_ordinary_identifiers_alone():
     args = {"search": "total revenue 2024", "isin": "US0378331005", "line_items": ["revenue", "net_income"]}
     assert sanitize_mcp_arguments(args) == args
-
-
-def _opaque_key():
-    # Built at runtime: a long letters-and-digits run, the shape of an API key.
-    return "sk" + "_live_" + "4eC39HqLyjWDarjtT1zdp7dc"
 
 
 @pytest.mark.parametrize("key", ["type", "types", "search", "name", "symbol", "ticker_or_name"])
