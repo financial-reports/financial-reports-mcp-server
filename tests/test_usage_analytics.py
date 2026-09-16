@@ -767,8 +767,11 @@ _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
 
 
 def _opaque_key():
-    # Built at runtime: a long letters-and-digits run, the shape of an API key.
-    return "sk" + "_live_" + "4eC39Hq" + "LyjWDarj" + "tT1zdp7dc"
+    # A generic 32-char mixed alphanumeric run: the SHAPE the value-scrubber keys
+    # on (length + letters and digits). Deliberately carries no vendor live-key
+    # prefix — the sanitizer does not look for one, and a repo test should not
+    # contain a credential-looking fixture even synthetically.
+    return "K7m2Qp9x4Vb1Nc8Ld3Rf6Ty0Hs5Wj2Zg"
 
 
 # Free-text keys the receiver allows but this sender deliberately keeps
@@ -845,7 +848,7 @@ def test_token_scrub_leaves_ordinary_identifiers_alone():
 @pytest.mark.parametrize("key", ["type", "types", "search", "name", "symbol", "ticker_or_name"])
 def test_opaque_credential_in_any_free_string_key_is_redacted(key):
     out = sanitize_mcp_arguments({key: f"10-K {_opaque_key()} AR"})
-    assert "4eC39HqLyjWDarjtT1zdp7dc" not in out[key]
+    assert _opaque_key() not in out[key]
     assert out[key] == "10-K <redacted-token> AR"
 
 
@@ -873,6 +876,6 @@ def test_scrub_is_bounded_for_huge_values(monkeypatch):
 def test_token_crossing_the_stored_boundary_is_still_redacted():
     value = "x " * 115 + _opaque_key() * 20   # token starts inside the stored 256 chars
     out = sanitize_mcp_arguments({"search": value})["search"]
-    assert "4eC39HqLyjWDarjtT1zdp7dc" not in out
+    assert _opaque_key() not in out
     assert "<redacted-token>" in out
 
