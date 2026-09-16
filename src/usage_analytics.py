@@ -58,6 +58,26 @@ ALLOWED_ARG_KEYS = frozenset({
     "ordering", "view", "on_watchlist",
     "id", "company_id", "filing_id", "ticker_or_name",
     "page", "page_size",
+    # Keys the RECEIVER already allowlists that this sender was still redacting
+    # first — so they reached the table as <redacted> regardless: lookup
+    # identifiers (platform, 2026-07-01) and the real filing-list type filters
+    # (platform, 2026-09-08); `type`/`types` were <redacted> on every filings_list
+    # call, so type-filter failures could not be read from analytics at all.
+    # Several of these are unconstrained strings in the schema, so their values
+    # pass through _scrub_token_shapes like every other allowlisted string.
+    "code", "cik", "figi", "symbol", "exchange", "mic", "name",
+    "type", "types",
+    # DELIBERATELY NOT HERE, although the receiver allowlists them: "query", "q".
+    # They are free text, and value-level scrubbing cannot recognise an arbitrary
+    # opaque credential (only JWT / Bearer shapes), so a pasted key would be
+    # stored durably. Whether raw in-text search terms may be logged is an open
+    # product/privacy decision, not an allowlist tweak — see #119.
+    # New on both ends (the platform allowlist must add these too, or the
+    # stricter receiver keeps redacting them). Enums, integers, dates and public
+    # identifiers — none names a person or carries a credential.
+    "statement_type", "fiscal_year_from", "fiscal_year_to", "as_of",
+    "company", "company_isin",
+    "max_hits", "context_chars", "offset", "limit",
 })
 
 DENY_ARG_SUBSTRINGS = (
@@ -96,14 +116,58 @@ def sanitize_error_detail(detail: str, max_len: int = MAX_ERROR_DETAIL) -> str:
     return cleaned[:max_len]
 
 
+# An unbroken run of 24+ URL-safe characters mixing letters AND digits: the shape
+# of an opaque API key or secret (`sk_live_…`, hex digests, UUIDs). The values
+# analytics exists to capture fall short of it: filing-type codes, tickers,
+# ISINs (12), LEIs (20), CIKs, ISO dates (broken up by `:`/`.`/`+`), and
+# snake_case line-item codes (letters only, however long).
+_OPAQUE_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{24,}")
+
+
+def _redact_if_opaque(match: "re.Match[str]") -> str:
+    run = match.group(0)
+    has_letter = any(c.isalpha() for c in run)
+    has_digit = any(c.isdigit() for c in run)
+    return "<redacted-token>" if has_letter and has_digit else run
+
+
+def _scrub_token_shapes(text: str) -> str:
+    """Redact credential-shaped substrings from an allowlisted string VALUE.
+
+    The allowlist decides which KEYS keep their value; it cannot constrain what a
+    caller puts in one. Several allowlisted keys are unconstrained strings in the
+    schema (`search`, `type`, `types`, `name`, `symbol`, ...), so a credential
+    placed in any of them would otherwise be stored verbatim. This is a
+    best-effort VALUE-SHAPE gate applied to every allowlisted string, not a
+    per-key list: JWT and Bearer shapes (sanitize_error_detail's patterns), then
+    any long letters-and-digits run. It does NOT catch a short or letters-only
+    secret. Applied BEFORE truncation: cutting first can split a token so no
+    pattern matches and a prefix leaks.
+    """
+    cleaned = _JWT_SHAPED_RE.sub("<redacted-jwt>", text)
+    cleaned = _BEARER_RE.sub("<redacted-bearer>", cleaned)
+    return _OPAQUE_TOKEN_RE.sub(_redact_if_opaque, cleaned)
+
+
+# Scrub only a bounded window, never the whole value: a caller-controlled
+# multi-megabyte string must not be regex-scanned synchronously in the request
+# path. The window is 4x the stored length, so a token that starts inside the
+# stored prefix still has >=3x MAX_ARG_STRLEN of its body in view and matches.
+_SCRUB_WINDOW = MAX_ARG_STRLEN * 4
+
+
+def _scrub_and_cap(text: str) -> str:
+    return _scrub_token_shapes(text[:_SCRUB_WINDOW])[:MAX_ARG_STRLEN]
+
+
 def _truncate(value: Any) -> Any:
     if isinstance(value, str):
-        return value[:MAX_ARG_STRLEN]
+        return _scrub_and_cap(value)
     if isinstance(value, list):
         return [_truncate(v) for v in value[:25]]
     if isinstance(value, (int, float, bool)) or value is None:
         return value
-    return str(value)[:MAX_ARG_STRLEN]
+    return _scrub_and_cap(str(value))
 
 
 def sanitize_mcp_arguments(arguments: Any) -> dict:
@@ -310,6 +374,31 @@ def record_tool_error(
         )
     except Exception:  # pragma: no cover — contextvar.set effectively never fails
         logger.debug("record_tool_error skipped", exc_info=True)
+
+
+# --- text-tool result cardinality --------------------------------------------
+#
+# `_result_metrics` can only count a STRUCTURED result. A text tool's payload is
+# prose, so it logged result_count=NULL and has_data=bool(text) — and a "No match"
+# message is non-empty text, so every filings_markdown_search miss was recorded as
+# has_data=True. Measured: result_count NULL on 100% of ok search events, has_data
+# true on 100%, and misses recoverable only by guessing from response_bytes. A text
+# tool that knows its own count stashes it here; the middleware prefers it.
+_tool_result_count: ContextVar[Optional[int]] = ContextVar("_tool_result_count", default=None)
+
+
+def record_result_count(count: int) -> None:
+    """Record how many results the current text-tool call produced (0 = empty).
+
+    The middleware folds it into the event as result_count, with has_data derived
+    from it. Never raises; a non-int or negative value is ignored rather than
+    logged, so a caller bug cannot fabricate a count.
+    """
+    try:
+        if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+            _tool_result_count.set(count)
+    except Exception:  # pragma: no cover — contextvar.set effectively never fails
+        logger.debug("record_result_count skipped", exc_info=True)
 
 
 # --- middleware: capture tool + prompt calls ---
@@ -722,6 +811,7 @@ class UsageAnalyticsMiddleware(Middleware):
     async def on_call_tool(self, context: MiddlewareContext, call_next):
         started = time.monotonic()
         _tool_error.set(None)  # clear any value carried over within this context
+        _tool_result_count.set(None)  # same: a stale count must not leak into this event
         call_id_token = _call_id.set(uuid.uuid4().hex)
         await self._resolve_client_info(context)
         status, err, result = "ok", _ErrorInfo(), None
@@ -770,6 +860,11 @@ class UsageAnalyticsMiddleware(Middleware):
         arguments = getattr(message, "arguments", None) or {}
         sub, client_id, host_name, host_version = self._identity(context)
         metrics = _result_metrics(result)
+        recorded_count = _tool_result_count.get()
+        if kind == "tool" and status == "ok" and recorded_count is not None:
+            # The tool's own count beats inference from the payload shape.
+            metrics["result_count"] = recorded_count
+            metrics["has_data"] = recorded_count > 0
         session_id = ""
         try:
             fc = getattr(context, "fastmcp_context", None)

@@ -737,3 +737,145 @@ async def test_meta_survives_real_fastmcp_dispatch(monkeypatch):
     assert "openai/userLocation" not in ev["mcp_meta"]   # geo exclusion still holds
     assert ev["correlation_id"] == "conv_real"
     assert ev["correlation_source"] == "meta:openai/session"
+
+
+# --- sender/receiver allowlist sync -----------------------------------------
+
+# Snapshot of the platform receiver's ALLOWED_ARG_KEYS
+# (financial-reports/web users/mcp_analytics.py at origin/master, 2026-09-15,
+# after web#2875). Sanitisation runs on BOTH ends and the stricter side wins, so
+# a key on only ONE list is redacted in the table no matter what the other
+# allows. Equality, not containment: a sender-only key is just as dead as a
+# receiver-only one. Update this snapshot together with the platform list.
+_RECEIVER_ALLOWED_ARG_KEYS = frozenset({
+    "search", "ticker", "isin", "lei",
+    "code", "cik", "figi", "symbol", "exchange", "mic", "name", "query", "q",
+    "date", "date_from", "date_to", "year",
+    "release_datetime_from", "release_datetime_to",
+    "filing_type_code", "filing_category", "category",
+    "type", "types",
+    "line_items", "section_keyword",
+    "fiscal_year", "fiscal_period", "current_fiscal_year", "prior_fiscal_year",
+    "countries", "country", "sector", "industry", "industry_group", "sub_industry",
+    "ordering", "view", "on_watchlist",
+    "id", "company_id", "filing_id", "ticker_or_name",
+    "page", "page_size",
+    "statement_type", "fiscal_year_from", "fiscal_year_to", "as_of",
+    "company", "company_isin",
+    "max_hits", "context_chars", "offset", "limit",
+})
+
+
+def _opaque_key():
+    # A generic 32-char mixed alphanumeric run: the SHAPE the value-scrubber keys
+    # on (length + letters and digits). Deliberately carries no vendor live-key
+    # prefix — the sanitizer does not look for one, and a repo test should not
+    # contain a credential-looking fixture even synthetically.
+    return "K7m2Qp9x4Vb1Nc8Ld3Rf6Ty0Hs5Wj2Zg"
+
+
+# Free-text keys the receiver allows but this sender deliberately keeps
+# redacting: scrubbing cannot recognise an arbitrary opaque credential typed
+# into them. Removing a key from this set is a privacy decision, not a sync fix.
+_DELIBERATELY_REDACTED_FREE_TEXT = frozenset({"query", "q"})
+
+
+def test_sender_allowlist_equals_receiver_allowlist_minus_free_text():
+    sender = usage_analytics.ALLOWED_ARG_KEYS
+    expected = _RECEIVER_ALLOWED_ARG_KEYS - _DELIBERATELY_REDACTED_FREE_TEXT
+    assert sorted(expected - sender) == [], "receiver-approved keys the sender still redacts"
+    assert sorted(sender - expected) == [], "sender keys the receiver redacts, or free text re-allowed"
+
+
+@pytest.mark.parametrize("key", sorted(_DELIBERATELY_REDACTED_FREE_TEXT))
+def test_free_text_query_values_stay_redacted(key):
+    assert sanitize_mcp_arguments({key: _opaque_key()}) == {key: REDACTED}
+
+
+def test_search_and_financials_intent_args_are_kept():
+    """The arguments the telemetry analysis could not read: in-text search
+    queries and paging, filing-type filters, and the financials filters that
+    decide whether a call comes back empty."""
+    args = {
+        "max_hits": 5, "filing_id": 123,
+        "offset": 150000, "limit": 150000, "context_chars": 440,
+        "type": "10-K", "types": "10-K,AR", "company": 42, "company_isin": "US0378331005",
+        "statement_type": "IS", "fiscal_year_from": 2021, "fiscal_year_to": 2024,
+        "as_of": "2025-01-01",
+    }
+    assert sanitize_mcp_arguments(args) == args
+
+
+def test_new_allowlist_entries_never_trip_the_deny_list():
+    # INVARIANT: a key that matched a deny substring would be redacted despite
+    # the allowlist, so an entry like that is dead weight at best.
+    tripping = sorted(
+        k for k in usage_analytics.ALLOWED_ARG_KEYS
+        if any(bad in k for bad in usage_analytics.DENY_ARG_SUBSTRINGS)
+    )
+    assert not tripping, tripping
+
+
+def _jwt_shaped(sig="c2lnbmF0dXJlXzEyMzQ"):
+    # Built at runtime so no token-shaped literal sits in the source.
+    return ".".join(["eyJ" + "hbGciOiJIUzI1NiJ9", "eyJ" + "zdWIiOiJ4In0", sig])
+
+
+@pytest.mark.parametrize("key", ["search", "section_keyword"])
+def test_free_text_values_have_token_shapes_redacted(key):
+    jwt = _jwt_shaped()
+    out = sanitize_mcp_arguments({key: f"revenue {'Bear' + 'er'} abcdefghijklmnop and {jwt} guidance"})
+    assert "abcdefghijklmnop" not in out[key]
+    assert "eyJhbGciOiJIUzI1NiJ9" not in out[key]
+    assert out[key].startswith("revenue ") and out[key].endswith(" guidance")
+
+
+def test_token_scrub_runs_before_truncation():
+    # Truncating first can cut a JWT's signature segment; the pattern then fails
+    # to match and the header+payload would be stored.
+    jwt = _jwt_shaped("s" * 40)
+    value = "x" * (usage_analytics.MAX_ARG_STRLEN - 30) + " " + jwt
+    out = sanitize_mcp_arguments({"search": value})["search"]
+    assert "eyJhbGciOiJIUzI1NiJ9" not in out
+    assert len(out) <= usage_analytics.MAX_ARG_STRLEN
+
+
+def test_token_scrub_leaves_ordinary_identifiers_alone():
+    args = {"search": "total revenue 2024", "isin": "US0378331005", "line_items": ["revenue", "net_income"]}
+    assert sanitize_mcp_arguments(args) == args
+
+
+@pytest.mark.parametrize("key", ["type", "types", "search", "name", "symbol", "ticker_or_name"])
+def test_opaque_credential_in_any_free_string_key_is_redacted(key):
+    out = sanitize_mcp_arguments({key: f"10-K {_opaque_key()} AR"})
+    assert _opaque_key() not in out[key]
+    assert out[key] == "10-K <redacted-token> AR"
+
+
+def test_value_shape_gate_keeps_the_values_analytics_is_for():
+    args = {
+        "types": "10-K,DEF 14A,10-K-ESEF,AGM-R",
+        "isin": "US0378331005",
+        "lei": "529900T8BM49AURSDO55",
+        "release_datetime_from": "2026-09-15T17:20:02.123456+00:00",
+        "line_items": ["cash_and_cash_equivalents_at_end_of_period", "net_income_loss"],
+        "search": "Apple Inc annual report 2024",
+    }
+    assert sanitize_mcp_arguments(args) == args
+
+
+def test_scrub_is_bounded_for_huge_values(monkeypatch):
+    seen = []
+    real = usage_analytics._scrub_token_shapes
+    monkeypatch.setattr(usage_analytics, "_scrub_token_shapes", lambda t: (seen.append(len(t)), real(t))[1])
+    out = sanitize_mcp_arguments({"search": "a" * 5_000_000})["search"]
+    assert len(out) == usage_analytics.MAX_ARG_STRLEN
+    assert max(seen) <= usage_analytics._SCRUB_WINDOW
+
+
+def test_token_crossing_the_stored_boundary_is_still_redacted():
+    value = "x " * 115 + _opaque_key() * 20   # token starts inside the stored 256 chars
+    out = sanitize_mcp_arguments({"search": value})["search"]
+    assert _opaque_key() not in out
+    assert "<redacted-token>" in out
+
