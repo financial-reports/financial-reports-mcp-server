@@ -330,3 +330,46 @@ def test_retry_delay_rejects_non_retryable_and_long_waits(mcp_module) -> None:
     assert m._retry_delay(429, '{"type": "burst_limit_exceeded"}', "") is not None
     # malformed 429 bodies fall into the retryable bucket by design
     assert m._retry_delay(429, "not json", "") is not None
+
+
+# --- #122: the 150k ceiling covers the WHOLE result, prose included ----------
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("doc_len", [200_000, 150_100, 150_055, 150_000, 149_999, 149_950, 149_895, 100])
+async def test_markdown_retrieve_result_never_exceeds_the_ceiling(
+    mcp_module, monkeypatch, fake_access_token, respx_router, doc_len
+) -> None:
+    """A full-size slice used to return ~150,055 chars: content clamped to the
+    ceiling, then a header prepended on top, so the host truncated mid-content."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
+        return_value=httpx.Response(200, text="x" * doc_len)
+    )
+    out = await _text_tool(mcp_module, "filings_markdown_retrieve")(filing_id=1, limit=150000)
+    assert len(out) <= 150000, f"result is {len(out)} chars, over the ceiling"
+
+
+@pytest.mark.asyncio
+async def test_markdown_retrieve_continuation_offset_matches_content_returned(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """The budget must be applied before slicing: trimming the assembled result
+    instead would leave offset=N pointing past what was returned, so the next
+    call would skip the gap. Paging twice must reproduce the document exactly."""
+    import re
+
+    doc = "".join(chr(97 + (i % 26)) for i in range(200_000))
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
+        return_value=httpx.Response(200, text=doc)
+    )
+    tool = _text_tool(mcp_module, "filings_markdown_retrieve")
+
+    first = await tool(filing_id=1, limit=150000)
+    next_offset = int(re.search(r"Call again with offset=(\d+)", first).group(1))
+    body_first = first.split("---\n\n", 1)[1] if "---\n\n" in first else first
+    content_first = body_first[-next_offset:] if next_offset <= len(body_first) else body_first
+    assert content_first == doc[:next_offset], "header says a different offset than it returned"
+
+    second = await tool(filing_id=1, offset=next_offset, limit=150000)
+    assert doc[next_offset:next_offset + 100] in second, "page 2 does not continue where page 1 ended"
