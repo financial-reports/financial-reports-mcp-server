@@ -98,6 +98,24 @@ def test_filing_type_guide_carries_the_translation_table(mcp_module) -> None:
     assert "no single code" in guide or "28 codes" in guide
 
 
+def test_guide_pairs_the_code_with_a_title_search_for_form_exact_asks(mcp_module) -> None:
+    """A taxonomy code is BROADER than the SEC form: `type=IR` alone returns the
+    8% of IR that is 6-K/424B3, so reporting it as "the 10-Qs" is wrong. `search`
+    covers the filing title, and 94% of SEC 10-Q titles name the form.
+    """
+    guide = mcp_module._resource_filing_types.fn()
+    assert 'search="10-Q"' in guide or 'search=\\"10-Q\\"' in guide.replace('\\\\', '\\')
+    assert "BROADER than the form" in guide
+    # Form 4 is the exception that makes this a measurement, not a slogan.
+    assert "9%" in guide and "DIRS" in guide
+
+
+def test_instructions_warn_the_code_is_broader_than_the_form(mcp_module) -> None:
+    text = mcp_module.mcp.instructions
+    assert "BROADER than the SEC form" in text
+    assert "92% 10-Q" in text
+
+
 def test_guide_warns_that_def_14a_is_a_name_collision(mcp_module) -> None:
     """The dangerous one: `DEF 14A` IS a valid code, so it returns real filings
     — but SEC DEF 14A proxies are `PSI` (3,234 in 180d) while the code spelled
