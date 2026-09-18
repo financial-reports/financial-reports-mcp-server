@@ -110,6 +110,51 @@ def test_guide_pairs_the_code_with_a_title_search_for_form_exact_asks(mcp_module
     assert "9%" in guide and "DIRS" in guide
 
 
+def test_guide_does_not_claim_dirs_is_purely_form_4(mcp_module) -> None:
+    """REGRESSION (shipped wrong in #126, live at v1.4.76): the guide and the
+    instructions both said "DIRS is 100% Form 4 — use the code alone there".
+    That conflated RECALL (100% of Form 4 is DIRS — true) with PRECISION
+    (88.6% of DIRS is Form 4 — 8.9% is Form 3, an initial-ownership snapshot
+    and NOT a transaction). It was the one place the guidance told the model to
+    stop qualifying, and it was the one claim that did not hold.
+    """
+    guide = mcp_module._resource_filing_types.fn()
+    text = mcp_module.mcp.instructions
+    for surface, name in ((guide, "guide"), (text, "instructions")):
+        assert "100% Form 4" not in surface, f"{name} still claims DIRS is purely Form 4"
+        assert "88.6%" in surface, f"{name} does not state the measured DIRS precision"
+        assert "Form 3" in surface, f"{name} does not name the contaminating form"
+
+
+def test_form_4_recipe_includes_amendments(mcp_module) -> None:
+    """`4/A` is an AMENDED Form 4 and is 1.4% of DIRS. A `4`-only filter drops
+    it silently from a request for Form 4 insider transactions."""
+    guide = mcp_module._resource_filing_types.fn()
+    assert 'source_filing_type in ("4", "4/A")' in guide, (
+        "the Form 4 recipe must accept amendments; a 4-only filter drops them"
+    )
+    assert "amend" in guide.lower()
+
+
+def test_both_surfaces_qualify_the_nullable_field(mcp_module) -> None:
+    """`source_filing_type` is nullable (the schema: "Null when the source
+    publishes no label"). Saying every row carries it tells a model it can
+    confirm a form when it cannot."""
+    for surface in (mcp_module._resource_filing_types.fn(), mcp_module.mcp.instructions):
+        assert "null" in surface.lower()
+        assert "UNCONFIRMED" in surface
+    assert "Every filing row carries" not in mcp_module.mcp.instructions
+
+
+def test_both_surfaces_point_at_source_filing_type(mcp_module) -> None:
+    """The exact discriminator is on the row and is 99.99% populated on SEC.
+    Advertised in the output schema since the 1.4.0 snapshot — but a model has
+    no reason to read it unless the guidance says so.
+    """
+    for surface in (mcp_module._resource_filing_types.fn(), mcp_module.mcp.instructions):
+        assert "source_filing_type" in surface
+
+
 def test_instructions_warn_the_code_is_broader_than_the_form(mcp_module) -> None:
     text = mcp_module.mcp.instructions
     assert "BROADER than the SEC form" in text
