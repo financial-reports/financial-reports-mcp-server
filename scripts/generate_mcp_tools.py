@@ -801,6 +801,35 @@ def _build_oauth_storage(cache: Any, client_store_url: str, secret: str) -> Any:
     )
 
 
+def _encrypt_oauth_storage(store: Any, keys: str) -> Any:
+    """Fernet-encrypt every value before it reaches Redis.
+
+    The proxy keeps upstream Cognito access + refresh tokens in this store, so
+    the Redis values must be ciphertext. FastMCP only encrypts its own default
+    DiskStore; a store we pass in is used as-is.
+
+    `keys` is a comma-separated list of Fernet keys. The first encrypts; all of
+    them decrypt, so a key is rotated by prepending the new one.
+
+    Values written before encryption carry no envelope and are passed through
+    by the wrapper as plaintext, so existing sessions and client registrations
+    keep working and are re-encrypted as they are rewritten or expire. A value
+    that cannot be decrypted (wrong or lost key) reads as a miss: tokens cost
+    one re-login, and registrations restore from the durable mirror.
+    """
+    from cryptography.fernet import Fernet, MultiFernet
+    from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+
+    fernets = [Fernet(k.strip()) for k in keys.split(",") if k.strip()]
+    if not fernets:
+        raise ValueError("no Fernet key given")
+    return FernetEncryptionWrapper(
+        key_value=store,
+        fernet=MultiFernet(fernets),
+        raise_on_decryption_error=False,
+    )
+
+
 # ---------------------------------------------------------------------------
 # FastMCP server with AWS Cognito OAuth proxy
 # ---------------------------------------------------------------------------
@@ -848,12 +877,25 @@ if MCP_REDIS_URL:
         # must set it explicitly when constructing the client ourselves.
         decode_responses=True,
     )
-    _oauth_storage = RedisStore(
-        client=_redis_client,
-        default_collection="financial-reports-mcp-oauth",
+    _storage_encryption_keys = os.environ.get("MCP_STORAGE_ENCRYPTION_KEY", "").strip()
+    if not _storage_encryption_keys:
+        raise SystemExit(
+            "[financial-reports-mcp] MCP_REDIS_URL is set but "
+            "MCP_STORAGE_ENCRYPTION_KEY is not. Refusing to store OAuth tokens "
+            "in Redis as plaintext. Generate one with "
+            "`python -c 'from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())'`."
+        )
+    _oauth_storage = _encrypt_oauth_storage(
+        RedisStore(
+            client=_redis_client,
+            default_collection="financial-reports-mcp-oauth",
+        ),
+        _storage_encryption_keys,
     )
     logger.info(
-        "OAuth state backend=RedisStore (durable, shared across replicas) "
+        "OAuth state backend=RedisStore (durable, shared across replicas, "
+        "Fernet-encrypted values) "
         "redis=%s db=%s instance=%s",
         _redact_redis_url(MCP_REDIS_URL),
         _redis_db_number(MCP_REDIS_URL),
