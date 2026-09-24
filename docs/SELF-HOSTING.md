@@ -32,6 +32,7 @@ Copy `.env.example` to `.env` and populate:
 | `MCP_STARTUP_SELFCHECK` | optional | Upstream reachability probe at boot: `warn` (default) logs a warning and serves anyway, `strict` fails the boot, `off` skips it. Any HTTP response counts as reachable — the upstream health endpoint sits behind an anonymous burst throttle, so a 429 is still proof of life |
 | `LOG_FORMAT` | optional | `text` (default) or `json`. `json` emits single-line JSON with a `severity` field and the full traceback as one string — required for Google Cloud Logging, which otherwise splits a multi-line traceback into separate unrelated entries and loses the stack trace. Defaults to `json` automatically when `K_SERVICE` is set (i.e. on Cloud Run) |
 | `MCP_REDIS_URL` | optional | `rediss://:<token>@host:6380/0` for persistent OAuth state. Without it, FastMCP's per-replica DiskStore is used (refresh tokens are lost on deploy/restart) |
+| `MCP_STORAGE_ENCRYPTION_KEY` | required with `MCP_REDIS_URL` | Fernet key(s), comma-separated, that encrypt every OAuth value (upstream tokens included) before it reaches Redis. The first key encrypts, all decrypt; rotate by prepending a new key. Values written before it was set are read as plaintext and re-encrypted on rewrite |
 | `GOOGLE_SITE_VERIFICATION` | optional | If set, the landing page emits `<meta name="google-site-verification" content="...">` for Search Console verification |
 | `MCP_ANALYTICS_INGEST_URL` | optional | Backend endpoint for usage-analytics events (e.g. `<API_BASE_URL>/api/internal/mcp-events/`). Capture is inert unless this and `MCP_INGEST_SHARED_SECRET` are both set |
 | `MCP_INGEST_SHARED_SECRET` | optional | Shared secret sent as `X-Internal-Token` to the ingest endpoint; must match the Django backend's `MCP_INGEST_SHARED_SECRET` |
@@ -138,6 +139,7 @@ There's no built-in metrics endpoint. For production, wrap the FastAPI app with 
 ## Production checklist (if you actually deploy this)
 
 - [ ] `MCP_REDIS_URL` set (TLS, persistent storage)
+- [ ] `MCP_STORAGE_ENCRYPTION_KEY` set (kept in a secret manager, not in the image)
 - [ ] `MCP_BASE_URL` matches Cognito callback URL exactly
 - [ ] HTTPS-only at the edge (HTTP → HTTPS redirect)
 - [ ] CSP headers preserved (don't strip via reverse proxy)

@@ -263,3 +263,59 @@ class TestCollectionRouting:
     async def test_routed_get_does_not_read_through_for_codes(self, routed, backing):
         assert await routed.get("code-1", collection=CODES) is None
         assert backing.gets == []
+
+
+class TestEncryptOAuthStorage:
+    """`_encrypt_oauth_storage` — upstream Cognito tokens must never sit in
+    Redis as plaintext (#3613), and turning it on must not log anyone out."""
+
+    KEY = "3QjnzVhsIcj4eal0EQHBcW7A6_7GQzc1jq4dpeuDaOs="
+    OTHER_KEY = "Hq2mJcEo0cA9CzG4B0z1u8d0m9hQwq2m3Yb3rG3b6k4="
+    TOKENS = "mcp-upstream-tokens"
+    TOKEN = {"access_token": "eyJ-upstream-access", "refresh_token": "eyJ-refresh"}
+
+    @pytest.fixture()
+    def raw(self):
+        from key_value.aio.stores.memory import MemoryStore
+
+        return MemoryStore()
+
+    async def test_values_reach_the_store_as_ciphertext(self, mcp_module, raw):
+        store = mcp_module._encrypt_oauth_storage(raw, self.KEY)
+        await store.put("t1", self.TOKEN, collection=self.TOKENS)
+
+        stored = await raw.get("t1", collection=self.TOKENS)
+        assert "eyJ" not in repr(stored)
+        assert set(stored) == {"__encrypted_data__", "__encryption_version__"}
+        assert await store.get("t1", collection=self.TOKENS) == self.TOKEN
+
+    async def test_plaintext_written_before_encryption_still_reads(
+        self, mcp_module, raw
+    ):
+        # Existing sessions and client registrations were written in the clear.
+        await raw.put("legacy", REGISTRATION, collection=CLIENTS)
+        store = mcp_module._encrypt_oauth_storage(raw, self.KEY)
+
+        assert await store.get("legacy", collection=CLIENTS) == REGISTRATION
+
+    async def test_undecryptable_value_is_a_miss_not_a_crash(self, mcp_module, raw):
+        await mcp_module._encrypt_oauth_storage(raw, self.OTHER_KEY).put(
+            "t1", self.TOKEN, collection=self.TOKENS
+        )
+        store = mcp_module._encrypt_oauth_storage(raw, self.KEY)
+
+        assert await store.get("t1", collection=self.TOKENS) is None
+
+    async def test_rotation_old_key_still_decrypts(self, mcp_module, raw):
+        await mcp_module._encrypt_oauth_storage(raw, self.OTHER_KEY).put(
+            "t1", self.TOKEN, collection=self.TOKENS
+        )
+        rotated = mcp_module._encrypt_oauth_storage(
+            raw, f"{self.KEY}, {self.OTHER_KEY}"
+        )
+
+        assert await rotated.get("t1", collection=self.TOKENS) == self.TOKEN
+
+    def test_no_key_is_refused(self, mcp_module, raw):
+        with pytest.raises(ValueError):
+            mcp_module._encrypt_oauth_storage(raw, " , ")

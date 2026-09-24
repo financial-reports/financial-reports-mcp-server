@@ -86,6 +86,8 @@ services:
       LOG_LEVEL: "INFO"
       MCP_VERSION: "e2e-redis"
       MCP_REDIS_URL: "redis://redis:6379/3"
+      # Test-only Fernet key; required whenever MCP_REDIS_URL is set.
+      MCP_STORAGE_ENCRYPTION_KEY: "3QjnzVhsIcj4eal0EQHBcW7A6_7GQzc1jq4dpeuDaOs="
       # See the note on the `mcp` service above.
       MCP_STARTUP_SELFCHECK: "off"
     ports:
