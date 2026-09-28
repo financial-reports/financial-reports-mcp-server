@@ -2195,6 +2195,10 @@ _MAX_ERROR_BODY = 32_000
 # can echo a caller's argument, so redact this too (#135 review). Filing codes,
 # snake_case line-item codes and `types=IR`-style suggestions never match.
 _OPAQUE_4XX_RE = re.compile("[A-Za-z0-9_-]{24,}")
+# Known SHORT credential shapes the 24+ rule misses: AWS access-key IDs are 20
+# chars. Named formats only; lowering the general threshold would eat real
+# identifiers. Best-effort by design; closed-grammar validation per key is #124.
+_SHORT_KEY_RE = re.compile("(AKIA|ASIA|AIDA|AROA)[A-Z0-9]{16}")
 
 
 def _redact_opaque(text: str) -> str:
@@ -2203,7 +2207,7 @@ def _redact_opaque(text: str) -> str:
         mixed = any(c.isalpha() for c in run) and any(c.isdigit() for c in run)
         return "<redacted-token>" if mixed else run
 
-    return _OPAQUE_4XX_RE.sub(repl, text)
+    return _SHORT_KEY_RE.sub("<redacted-token>", _OPAQUE_4XX_RE.sub(repl, text))
 
 
 # The API's max_page_size on every paginated endpoint (web
@@ -2296,7 +2300,9 @@ def _upstream_4xx_copy(body_text: str) -> str:
         return ""
 
     def cap(text: str) -> str:
-        text = " ".join(text.split())
+        # Redact BEFORE truncating: a cut can shorten a key below the
+        # redaction threshold and leak its prefix (#135 review).
+        text = _redact_opaque(" ".join(text.split()))
         return text if len(text) <= _MAX_4XX_PART else text[: _MAX_4XX_PART - 1] + "…"
 
     fields = []

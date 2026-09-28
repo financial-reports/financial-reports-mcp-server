@@ -366,3 +366,35 @@ async def test_opaque_key_shapes_are_redacted_but_codes_survive(
     msg = str(exc)
     assert key not in msg
     assert "10-Q" in msg and "types=IR" in msg and "source_filing_type=10-Q" in msg
+
+
+@pytest.mark.asyncio
+async def test_key_after_long_prose_is_redacted_not_truncated_to_a_prefix(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    # #135 review: a cut at the per-part cap used to shorten the key below the
+    # redaction threshold, so its prefix leaked. Redaction now runs first.
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    key = "frk9sQ2mX7pL4vT8zW1nB6cD3eF5gH0jK"
+    prose = "word " * 51  # 255 chars, so the key straddles the 280-char cap
+    exc = await _raise_from_filings_list(
+        mcp_module, respx_router, 400, json={"types": prose + key}
+    )
+    msg = str(exc)
+    assert key[:10] not in msg
+
+
+@pytest.mark.asyncio
+async def test_aws_access_key_id_is_redacted(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    akid = "AKIAIOSFODNN7EXAMPLE"  # AWS's documented example ID, 20 chars
+    exc = await _raise_from_filings_list(
+        mcp_module,
+        respx_router,
+        400,
+        json={"types": f"Unknown filing type code(s): {akid}, 10-Q."},
+    )
+    msg = str(exc)
+    assert akid not in msg and "10-Q" in msg
