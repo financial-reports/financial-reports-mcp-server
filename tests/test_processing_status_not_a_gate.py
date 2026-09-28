@@ -135,3 +135,17 @@ def test_markdown_strategy_resource_is_not_a_gate(mcp_module) -> None:
     # present, non-COMPLETED value.
     assert "take the newest row" in body
     assert "is not a reason to skip" in body
+
+
+@pytest.mark.asyncio
+async def test_not_found_is_not_promised_as_pending(mcp_module) -> None:
+    """A markdown 404 carries reasons that are permanent (`no_narrative_content`)
+    as well as pending (`not_processed`), and the tool does not forward the
+    reason to the model. Guidance must therefore not tell the model a
+    not-found means markdown is coming "yet"."""
+    texts = await _rendered_texts(mcp_module)
+    offenders = [
+        k for k, v in texts.items()
+        if re.search(r"no markdown yet|not available yet", _flat(v), re.I)
+    ]
+    assert not offenders, offenders
