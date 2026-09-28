@@ -2314,20 +2314,36 @@ def _upstream_4xx_copy(body_text: str) -> str:
         text = _flatten_error_value(value)
         if text:
             fields.append(cap(f"{key}: {text}"))
-    parts = fields[:5]
+    head = fields[:5]
     detail = payload.get("detail")
-    if not parts and isinstance(detail, str) and detail.strip():
-        parts.append(cap(detail))
+    if not head and isinstance(detail, str) and detail.strip():
+        head.append(cap(detail))
+    # The remedy (resolution, did_you_mean, plans link) is what lets the model
+    # fix the call, so it is budgeted FIRST and field prose gets what is left
+    # (#135 review: three long field errors used to push the suggestion out).
+    tail = []
     resolution = payload.get("resolution")
     if isinstance(resolution, str) and resolution.strip():
-        parts.append(cap(resolution))
+        tail.append(cap(resolution))
     suggestion = _did_you_mean_text(payload.get("did_you_mean"))
     if suggestion:
-        parts.append(cap(suggestion))
+        tail.append(cap(suggestion))
     upgrade = payload.get("upgrade_url")
-    if isinstance(upgrade, str) and upgrade.startswith("https://") and upgrade not in " ".join(parts):
-        parts.append(cap(f"Plans: {upgrade}"))
-    text = _redact_opaque(" ".join(parts))
+    if isinstance(upgrade, str) and upgrade.startswith("https://"):
+        if upgrade not in " ".join(head + tail):
+            tail.append(cap(f"Plans: {upgrade}"))
+    budget = _MAX_UPSTREAM_4XX_COPY - len(" ".join(tail)) - 1
+    parts = []
+    for part in head:
+        room = budget - len(" ".join(parts + [part]))
+        if room >= 0:
+            parts.append(part)
+            continue
+        short = part[: len(part) + room - 1]
+        if len(short) >= 40:  # keep the field name and some of the reason
+            parts.append(short + "…")
+        break
+    text = _redact_opaque(" ".join(parts + tail))
     return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_4XX_COPY) if text else ""
 
 
@@ -2361,6 +2377,26 @@ def _classify_upstream_error(status: int, body_text: str) -> str:
         return _classify_upstream_429(body_text)
     if status >= 500:
         return "transient"
+    if status == 404:
+        return _classify_upstream_404(body_text)
+    return "unknown"
+
+
+def _classify_upstream_404(body_text: str) -> str:
+    """Markdown 404s say WHY there is no text (web MarkdownNotFound).
+
+    A conversion still queued is retryable and is not a missing filing; telling
+    the model "does not exist" made it give up on a filing that would have been
+    readable minutes later (#135 review). Any other 404 stays "unknown".
+    """
+    payload = _parse_upstream_json(body_text) or {}
+    reason = payload.get("reason")
+    if reason == "not_processed":
+        if payload.get("retryable") is True:
+            return "markdown_pending"
+        return "markdown_not_scheduled"
+    if reason == "no_narrative_content":
+        return "markdown_no_content"
     return "unknown"
 
 
@@ -2426,6 +2462,19 @@ def _upstream_hint(
             "not a credentials problem, so reconnecting will not help."
         )
         return f"{base} Tell the user: {upstream_copy}" if upstream_copy else base
+    if status == 404 and error_kind == "markdown_pending":
+        wait = f"after {retry_after} seconds" if retry_after else "in a few minutes"
+        return (
+            "This filing exists; its Markdown is still being converted, so this "
+            f"is not a missing filing. Retry {wait}. Meanwhile a human can open "
+            "the filing's raw document."
+        )
+    if status == 404 and error_kind in ("markdown_not_scheduled", "markdown_no_content"):
+        return (
+            "This filing exists but has no Markdown text, and retrying will not "
+            "change that. Use the filing's raw document (`document` / "
+            "`document_url`) or choose a different filing."
+        )
     if status == 404:
         base = "The requested resource does not exist upstream — check the id/arguments."
         return f"{base} The API said: {upstream_copy}" if upstream_copy else base

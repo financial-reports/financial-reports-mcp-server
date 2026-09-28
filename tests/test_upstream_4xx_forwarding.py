@@ -398,3 +398,81 @@ async def test_aws_access_key_id_is_redacted(
     )
     msg = str(exc)
     assert akid not in msg and "10-Q" in msg
+
+
+async def _markdown_404(mcp_module, monkeypatch, fake_access_token, respx_router, body, headers=None):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
+        return_value=httpx.Response(404, json=body, headers=headers or {})
+    )
+    with pytest.raises(mcp_module.UpstreamHTTPError) as ei:
+        await _tool(mcp_module, "filings_markdown_retrieve")(filing_id=1)
+    return ei.value
+
+
+_NOT_FOUND = "Processed content not found for this filing."
+
+
+@pytest.mark.asyncio
+async def test_markdown_conversion_in_progress_is_retryable_not_missing(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    # #135 review: web's ConversionInProgress 404 is retryable; "does not
+    # exist" made the model give up on a filing readable minutes later.
+    exc = await _markdown_404(
+        mcp_module, monkeypatch, fake_access_token, respx_router,
+        {"detail": _NOT_FOUND, "processing_status": "QUEUED",
+         "reason": "not_processed", "retryable": True},
+        headers={"Retry-After": "120"},
+    )
+    msg = str(exc)
+    assert exc.error_kind == "markdown_pending"
+    assert "does not exist" not in msg
+    assert "Retry after 120 seconds" in msg
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reason,retryable,kind",
+    [("not_processed", False, "markdown_not_scheduled"),
+     ("no_narrative_content", False, "markdown_no_content")],
+)
+async def test_markdown_404_without_text_says_do_not_retry(
+    mcp_module, monkeypatch, fake_access_token, respx_router, reason, retryable, kind
+) -> None:
+    exc = await _markdown_404(
+        mcp_module, monkeypatch, fake_access_token, respx_router,
+        {"detail": _NOT_FOUND, "reason": reason, "retryable": retryable},
+    )
+    msg = str(exc)
+    assert exc.error_kind == kind
+    assert "retrying will not change that" in msg and "raw document" in msg
+
+
+@pytest.mark.asyncio
+async def test_plain_404_keeps_the_missing_resource_hint(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    exc = await _markdown_404(
+        mcp_module, monkeypatch, fake_access_token, respx_router, {"detail": "Not found."}
+    )
+    assert exc.error_kind == "unknown"
+    assert "does not exist upstream" in str(exc)
+
+
+@pytest.mark.asyncio
+async def test_long_field_errors_leave_room_for_the_suggestion(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    # #135 review: three near-cap field errors used to fill the 800-char copy
+    # before did_you_mean was appended.
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    long = "invalid value " * 25
+    exc = await _raise_from_filings_list(
+        mcp_module, respx_router, 400,
+        json={"types": long, "category": long, "countries": long,
+              "did_you_mean": {"10-Q": ["types=IR", "source_filing_type=10-Q"]}},
+    )
+    msg = str(exc)
+    assert "types=IR" in msg and "source_filing_type=10-Q" in msg
+    assert "types:" in msg  # field prose shortened, name kept
