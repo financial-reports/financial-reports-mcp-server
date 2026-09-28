@@ -15,7 +15,10 @@ def test_link_guide_routes_content_free_filings_to_document(mcp_module) -> None:
     guide = mcp_module._resource_markdown.fn()
     assert "PENDING, QUEUED, PROCESSING, FAILED or SKIPPED" in guide
     # list rows carry document_url, not document (FilingSummary schema)
-    assert "them `document_url` instead of `viewer_url`" in guide
+    assert "raw file link instead of `viewer_url`" in guide
+    # summary rows carry document_url; view=full rows and retrieve carry document
+    assert "`document_url` on default" in guide and "`document` on `view='full'` rows" in guide
+    assert "no file link is available yet" in guide  # null raw link: say so
     assert "HTM or XHTML" in guide  # the viewer inlines these too
     assert "A null status" in guide  # view='full' nulls the status
 
@@ -24,6 +27,7 @@ def test_filings_list_description_carries_the_rule(mcp_module) -> None:
     """The guide is read on demand; the list tool is where viewer_url arrives."""
     desc = mcp_module.mcp._tool_manager._tools["filings_list"].description
     assert "viewer_url" in desc and "document_url" in desc
+    assert "view=full rows" in desc and "no file link is available yet" in desc
     assert "PENDING/QUEUED/PROCESSING/FAILED/SKIPPED" in desc
     assert "null" in desc
 
@@ -36,3 +40,7 @@ def test_list_guidance_names_a_field_the_list_row_actually_has(mcp_module) -> No
     snap = json.loads(Path("scripts/openapi.snapshot.json").read_text())
     props = snap["components"]["schemas"]["FilingSummary"]["properties"]
     assert "document_url" in props and "document" not in props
+    # ...and view=full rows carry `document` (list example, #137 review round 2)
+    op = snap["paths"]["/filings/"]["get"]["responses"]["200"]["content"]
+    full = op["application/json"]["examples"]["FullView(`?view=full`)"]["value"][0]
+    assert "document" in full and "document_url" not in full
