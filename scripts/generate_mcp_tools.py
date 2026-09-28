@@ -343,11 +343,24 @@ if not _API_HOST:
         "Refusing to start."
     )
 LANDING_URL = os.environ.get(
-    "LANDING_URL",
+    # Renamed from LANDING_URL (#125). Cloud Run `mcp-connector` carries a
+    # stale LANDING_URL pointing at the Claude-only guide, and it silently beat
+    # #117's default: every doc link on the live page kept sending ChatGPT and
+    # Microsoft 365 Copilot users to the Claude guide. The service env is not
+    # readable or writable from this repo's deploy path, so the old name is
+    # ignored rather than trusted; the warning below tells ops to remove it.
+    "MCP_LANDING_URL",
     # The client-agnostic MCP hub (links the Claude, Claude Code, ChatGPT and
     # Microsoft 365 Copilot guides). Was the Claude-only guide.
     "https://financialfilings.com/mcp/",
 )
+if os.environ.get("LANDING_URL"):
+    logger.warning(
+        "LANDING_URL is set but no longer read (#125); the landing page uses "
+        "MCP_LANDING_URL=%s. Remove LANDING_URL from the service env, and set "
+        "MCP_LANDING_URL if a different docs link is really wanted.",
+        LANDING_URL,
+    )
 # Account creation. The web app's route is users:register at
 # /accounts/register/. The previous hint pointed at /signup, which 301s from
 # financialreports.eu to financialfilings.com/signup and 404s there.
