@@ -206,3 +206,25 @@ async def test_durable_payload_is_json_round_trippable(monkeypatch):
     await _drain_writes()
     raw = store.kv[f"mcp-client-info:v2::{CLIENT_ID}"]
     assert json.loads(raw) == {"name": "Anthropic/ClaudeAI", "version": "2.1"}
+
+
+@pytest.mark.asyncio
+async def test_local_cache_stays_bounded_on_the_store_read_path(monkeypatch):
+    """Per-connection keys (#97) mean one entry per (registration, user), so the
+    replica that only ever READS from the shared store must bound its cache too —
+    not only the replica that saw `initialize`."""
+    from src.usage_analytics import _CLIENT_INFO_KEY, _CLIENT_INFO_LOCAL_MAX
+
+    store = FakeRedis()
+    for i in range(_CLIENT_INFO_LOCAL_MAX + 25):
+        store.kv[_CLIENT_INFO_KEY.format(key=f"k-{i}")] = json.dumps({"name": f"h-{i}", "version": "1"})
+    mw = UsageAnalyticsMiddleware(
+        UsageAnalyticsEmitter("http://ingest.invalid/", "secret"),
+        server_version="test", client_info_store=store,
+    )
+    for i in range(_CLIENT_INFO_LOCAL_MAX + 25):
+        monkeypatch.setattr(UsageAnalyticsMiddleware, "_connection_key",
+                            classmethod(lambda cls, i=i: f"k-{i}"))
+        await mw._resolve_client_info(_Ctx())
+        assert _client_info.get() == (f"h-{i}", "1")
+    assert len(_client_info_local) <= _CLIENT_INFO_LOCAL_MAX

@@ -886,6 +886,16 @@ def _token_fingerprint() -> str:
         return ""
 
 
+def _cache_client_info_locally(key: str, value: tuple) -> None:
+    """The ONE writer of the process-local tier, so both paths into it — capture
+    at `initialize` and a read-back from the shared store — honour the bound.
+    With per-connection keys (#97) a replica that only ever reads from the store
+    sees one key per (registration, user), so that path needs it as much."""
+    if key not in _client_info_local and len(_client_info_local) >= _CLIENT_INFO_LOCAL_MAX:
+        _client_info_local.clear()  # cheap bound; repopulates from the store / next initialize
+    _client_info_local[key] = value
+
+
 def _presented_client_id() -> str:
     """The ``client_id`` claim of the bearer JWT this request PRESENTED, or ``''``.
 
@@ -999,9 +1009,7 @@ class UsageAnalyticsMiddleware(Middleware):
         return await call_next(context)
 
     async def _remember_client_info(self, key: str, value: tuple) -> None:
-        if len(_client_info_local) >= _CLIENT_INFO_LOCAL_MAX:
-            _client_info_local.clear()  # cheap bound; repopulates on next initialize
-        _client_info_local[key] = value
+        _cache_client_info_locally(key, value)
         store = self._client_info_store
         if store is None:
             return
@@ -1061,7 +1069,7 @@ class UsageAnalyticsMiddleware(Middleware):
             data = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
             value = (str(data.get("name") or ""), str(data.get("version") or ""))
             if value[0]:
-                _client_info_local[key] = value
+                _cache_client_info_locally(key, value)
                 _client_info.set(value)
         except Exception:
             logger.debug("clientInfo resolve skipped", exc_info=True)
