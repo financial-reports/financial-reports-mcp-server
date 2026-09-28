@@ -2091,7 +2091,28 @@ def _classify_upstream_403(body_text: str) -> str:
         return "missing_profile"
     if _TOKEN_EXPIRED_MARKER in detail_lower:
         return "expired_token"
+    # Plan gating is not a credentials problem: "disconnect and reconnect"
+    # sends the user round a loop that cannot help (#132). The monolith tags
+    # these 403s with `type` (web#4140); `detail` is unchanged there, which is
+    # why the substring markers above still run first. Allowlist, not
+    # "any type": a credential tag (authentication_required, invalid_api_key)
+    # carries an X-API-Key resolution that means nothing to an OAuth user, and
+    # a tag added later must not be read as plan gating by default.
+    raw_type = payload.get("type") if payload is not None else None
+    if isinstance(raw_type, str) and raw_type in _PLAN_403_TYPES:
+        return "plan_restricted"
     return "invalid_credentials"
+
+
+_PLAN_403_TYPES = frozenset(
+    {
+        "plan_level_insufficient",
+        "webhooks_not_in_plan",
+        "mcp_only_account",
+        "endpoint_not_in_plan",
+        "api_root_not_available",
+    }
+)
 
 
 # Upstream 429 discriminator. Source of truth: financialreports
@@ -2162,6 +2183,134 @@ def _upstream_429_copy(body_text: str) -> str:
     return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_COPY) if text else ""
 
 
+# The API's max_page_size on every paginated endpoint (web
+# filings/api_pagination.py MultiRangePagination, companies/search.py). The
+# tool templates clamp to it before the request (#132).
+_MAX_PAGE_SIZE = 100
+
+# Client-facing caps for a forwarded 4xx body (#132). Per part, so a long field
+# message cannot push `did_you_mean` (the actionable half) out of the window.
+_MAX_4XX_PART = 280
+_MAX_UPSTREAM_4XX_COPY = 800
+
+# Keys of a 4xx body that are metadata or are rendered separately, never an
+# argument's error message. `type` is special-cased below: on a 403/429 or
+# web#4189's page_size 400 it is a snake_case TAG, but on /filings/ it holds the
+# `type=` PARAM's own error message (web#4185 names its tag `error_type` for
+# exactly that reason).
+_4XX_NON_FIELD_KEYS = frozenset(
+    {
+        "detail",
+        "resolution",
+        "did_you_mean",
+        "error_type",
+        "invalid_codes",
+        "valid_codes_url",
+        "upgrade_url",
+        "max_page_size",
+        "max_offset",
+        "message",
+        "error",
+        "code",
+        "status_code",
+        "retry_after_seconds",
+        "scope",
+    }
+)
+_TAG_RE = re.compile("^[a-z][a-z0-9_]*$")
+
+
+def _flatten_error_value(value: Any, depth: int = 0) -> str:
+    """DRF error values are a str, a list of str, or a nested dict of those."""
+    if depth > 3:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, list):
+        items = (_flatten_error_value(v, depth + 1) for v in value[:10])
+        return "; ".join(i for i in items if i)
+    if isinstance(value, dict):
+        items = (
+            f"{k}: {_flatten_error_value(v, depth + 1)}"
+            for k, v in list(value.items())[:10]
+        )
+        return "; ".join(i for i in items if not i.endswith(": "))
+    return ""
+
+
+def _did_you_mean_text(value: Any) -> str:
+    """Render web#4185/#4139's `did_you_mean` ({bad: [fragments]}) for a model."""
+    if not isinstance(value, dict):
+        return ""
+    rows = []
+    for bad, fixes in list(value.items())[:10]:
+        if isinstance(fixes, str):
+            fixes = [fixes]
+        if not isinstance(fixes, list):
+            continue
+        fixes = [f for f in fixes if isinstance(f, str) and f]
+        if fixes:
+            rows.append(f"{bad} -> " + " or ".join(fixes))
+    return "Did you mean: " + "; ".join(rows) + "." if rows else ""
+
+
+def _upstream_4xx_copy(body_text: str) -> str:
+    """What the API said about a rejected request, for the model (#132).
+
+    Every 400 used to reach the model as "check the arguments" although the REST
+    body already named the bad argument; prod repeated identical failing calls
+    because the model never saw why. Forwarded, not reconstructed, so REST and
+    MCP stay equal and the suggestions live in one place (the monolith).
+
+    Untrusted input: credential-shaped substrings are redacted and every part is
+    capped. A body that is not a JSON object (an HTML error page, say) forwards
+    nothing — it is not argument guidance.
+    """
+    payload = _parse_upstream_json(body_text)
+    if payload is None:
+        return ""
+
+    def cap(text: str) -> str:
+        text = " ".join(text.split())
+        return text if len(text) <= _MAX_4XX_PART else text[: _MAX_4XX_PART - 1] + "…"
+
+    fields = []
+    for key, value in payload.items():
+        if key in _4XX_NON_FIELD_KEYS:
+            continue
+        if key == "type" and isinstance(value, str) and _TAG_RE.match(value):
+            continue
+        text = _flatten_error_value(value)
+        if text:
+            fields.append(cap(f"{key}: {text}"))
+    parts = fields[:5]
+    detail = payload.get("detail")
+    if not parts and isinstance(detail, str) and detail.strip():
+        parts.append(cap(detail))
+    resolution = payload.get("resolution")
+    if isinstance(resolution, str) and resolution.strip():
+        parts.append(cap(resolution))
+    suggestion = _did_you_mean_text(payload.get("did_you_mean"))
+    if suggestion:
+        parts.append(cap(suggestion))
+    upgrade = payload.get("upgrade_url")
+    if isinstance(upgrade, str) and upgrade.startswith("https://") and upgrade not in " ".join(parts):
+        parts.append(cap(f"Plans: {upgrade}"))
+    text = " ".join(parts)
+    return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_4XX_COPY) if text else ""
+
+
+def _upstream_copy(status: int, body_text: str) -> str:
+    """The upstream's own words to forward for this status, or ""."""
+    if status == 429:
+        return _upstream_429_copy(body_text)
+    if status == 401 or status >= 500 or status < 400:
+        return ""
+    return _upstream_4xx_copy(body_text)
+
+
 def _retry_after_seconds(response: httpx.Response) -> str:
     """`Retry-After` when it is the integer-seconds form DRF emits (#40 §5).
 
@@ -2220,7 +2369,7 @@ def _upstream_hint(
     upstream_copy: str = "",
     retry_after: str = "",
 ) -> str:
-    if status in (401, 403):
+    if status in (401, 403) and error_kind != "plan_restricted":
         if error_kind == "missing_profile":
             # Reconnecting won't help — the Cognito identity has no matching
             # FR UserProfile. Tell the LLM to surface the actual remediation.
@@ -2241,8 +2390,16 @@ def _upstream_hint(
             "Ask the user to disconnect and reconnect the FinancialFilings "
             "connector, then retry."
         )
+    if status == 403 and error_kind == "plan_restricted":
+        # Not a credentials problem, so no reconnect advice (#132).
+        base = (
+            "The user's FinancialFilings plan does not include this request — "
+            "not a credentials problem, so reconnecting will not help."
+        )
+        return f"{base} Tell the user: {upstream_copy}" if upstream_copy else base
     if status == 404:
-        return "The requested resource does not exist upstream — check the id/arguments."
+        base = "The requested resource does not exist upstream — check the id/arguments."
+        return f"{base} The API said: {upstream_copy}" if upstream_copy else base
     if status == 429:
         # Quota and spend-cap exhaustion are not retryable within the period —
         # "wait a moment" is actively wrong there (a credit allowance resets at
@@ -2270,6 +2427,14 @@ def _upstream_hint(
         # so do not tell the caller to retry immediately — that would be a third
         # attempt against an upstream that has failed twice.
         return "Transient upstream error, already retried once — report if it persists."
+    if upstream_copy:
+        # The body names the bad argument (and, from web#4138/#4139, a
+        # replacement). An identical retry fails the same way, which is the
+        # repeat-loop prod telemetry showed before this was forwarded (#132).
+        return (
+            "The API rejected the arguments: " + upstream_copy + " Fix the "
+            "arguments before retrying; an identical retry fails the same way."
+        )
     return "The request was rejected upstream — check the arguments."
 
 
@@ -2301,7 +2466,7 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
     hint = _upstream_hint(
         status,
         error_kind,
-        upstream_copy=_upstream_429_copy(body_text) if status == 429 else "",
+        upstream_copy=_upstream_copy(status, body_text),
         retry_after=_retry_after_seconds(response),
     )
     raise UpstreamHTTPError(
@@ -2357,7 +2522,7 @@ def _upstream_error_text(response: httpx.Response, body_text: str) -> str:
     hint = _upstream_hint(
         status,
         error_kind,
-        upstream_copy=_upstream_429_copy(body_text) if status == 429 else "",
+        upstream_copy=_upstream_copy(status, body_text),
         retry_after=_retry_after_seconds(response),
     )
     return f"Error {status} {response.reason_phrase}: {hint}"
@@ -3707,6 +3872,11 @@ async def {{ func_name }}(
             _pg_val = query_params.get(_pg_key)
             if _pg_val is not None and int(_pg_val) < 1:
                 raise ToolInputError(f"{_pg_key} must be >= 1")
+        # Above the API's max_page_size is a 400 (71 in prod over 30 days,
+        # #132). Clamp rather than reject: the page still carries `count` and
+        # `next`, so nothing is hidden and the call does not fail.
+        if query_params.get("page_size") is not None:
+            query_params["page_size"] = min(int(query_params["page_size"]), _MAX_PAGE_SIZE)
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:
@@ -3965,6 +4135,11 @@ async def {{ func_name }}(
             _pg_val = query_params.get(_pg_key)
             if _pg_val is not None and int(_pg_val) < 1:
                 raise ToolInputError(f"{_pg_key} must be >= 1")
+        # Above the API's max_page_size is a 400 (71 in prod over 30 days,
+        # #132). Clamp rather than reject: the page still carries `count` and
+        # `next`, so nothing is hidden and the call does not fail.
+        if query_params.get("page_size") is not None:
+            query_params["page_size"] = min(int(query_params["page_size"]), _MAX_PAGE_SIZE)
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:
