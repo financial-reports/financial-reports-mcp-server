@@ -228,3 +228,70 @@ async def test_markdown_search_hit_count_reaches_analytics_through_real_middlewa
     assert ev["result_count"] == expected_count
     assert ev["has_data"] is (expected_count > 0)
     assert ev["arguments"]["query"] == usage_analytics.REDACTED
+
+
+# --- 6. response_bytes is the text the client receives (#127) ---------------
+#
+# FastMCP wraps a `str` return as structured_content={"result": <text>}, so
+# `_result_metrics` used to take the structured branch and record
+# len(json.dumps({"result": text})) — every newline and quote costs an extra
+# character. Measured in the issue: 152,131 logged for a 150,000-char slice.
+
+_NEWLINE_DENSE = 'He said "revenue"\n' * 400  # 7,200 chars, 800 escapes when JSON-encoded
+
+
+def _tool_result(text, structured):
+    from mcp.types import TextContent
+
+    return types.SimpleNamespace(
+        structured_content=structured,
+        content=[TextContent(type="text", text=text)],
+    )
+
+
+def test_str_tool_wrapper_records_text_length_not_json_length() -> None:
+    res = _tool_result(_NEWLINE_DENSE, {"result": _NEWLINE_DENSE})
+    m = usage_analytics._result_metrics(res)
+    assert m["response_bytes"] == len(_NEWLINE_DENSE)
+    assert m["has_data"] is True
+    assert m["result_count"] is None
+
+
+def test_empty_str_tool_result_has_no_data() -> None:
+    m = usage_analytics._result_metrics(_tool_result("", {"result": ""}))
+    assert m["response_bytes"] == 0
+    assert m["has_data"] is False
+
+
+def test_genuinely_structured_result_key_is_still_json_sized() -> None:
+    """A tool returning the dict {"result": "abc"} is structured: its client-visible
+    text is the JSON, so the JSON size stays the measure."""
+    import json
+
+    sc = {"result": "a\nb"}
+    res = _tool_result(json.dumps(sc, separators=(",", ":")), sc)
+    assert usage_analytics._result_metrics(res)["response_bytes"] == len(json.dumps(sc, default=str))
+
+
+@pytest.mark.asyncio
+async def test_markdown_retrieve_response_bytes_equals_received_text_through_real_dispatch(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """End-to-end: the logged size equals the length of the text the client got."""
+    from fastmcp import Client
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
+        return_value=httpx.Response(200, text=_NEWLINE_DENSE)
+    )
+    captured: list[dict] = []
+    monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
+
+    async with Client(mcp_module.mcp) as client:
+        result = await client.call_tool("filings_markdown_retrieve", {"filing_id": 7})
+
+    received = "".join(getattr(b, "text", "") or "" for b in result.content)
+    assert '"' in received and "\n" in received  # the precondition that makes JSON inflate
+    ev = [e for e in captured if e["name"] == "filings_markdown_retrieve" and e["kind"] == "tool"][-1]
+    assert ev["status"] == "ok"
+    assert ev["response_bytes"] == len(received)

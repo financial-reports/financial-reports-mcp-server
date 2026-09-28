@@ -515,6 +515,34 @@ def _extract_entities(sc: dict):
     return ids[:_ENTITY_CAP], sorted(countries)
 
 
+def _content_text(result) -> Optional[str]:
+    """Concatenated text blocks of a tool result's ``content``, or None."""
+    content = getattr(result, "content", None)
+    if not content:
+        return None
+    return "".join(p for p in (getattr(b, "text", None) for b in content) if p)
+
+
+def _wrapped_text(sc: Any, result: Any) -> Optional[str]:
+    """The text of a ``str``-returning tool, or None for anything else (#127).
+
+    FastMCP reports a ``str`` return as ``structured_content={"result": <text>}``,
+    so the structured branch below used to measure ``len(json.dumps(...))`` — every
+    newline and quote in the payload cost an extra character (152,131 logged for a
+    150,000-char slice). A tool that genuinely returns the dict
+    ``{"result": "..."}`` has the same structured_content, so the shape alone
+    cannot tell them apart; the content blocks can. The client of a wrapped
+    ``str`` receives exactly that string as text, while a real dict arrives as its
+    JSON serialization. Only the former is unwrapped.
+    """
+    if not isinstance(sc, dict) or len(sc) != 1:
+        return None
+    inner = sc.get("result")
+    if not isinstance(inner, str):
+        return None
+    return inner if _content_text(result) == inner else None
+
+
 def _result_metrics(result) -> dict:
     """Best-effort, never-raises shape metrics about a tool result.
 
@@ -524,12 +552,15 @@ def _result_metrics(result) -> dict:
     ids surfaced, and the distinct country codes (which markets are in demand).
 
     ``response_bytes`` is a size PROXY, not wire bytes — the name is kept only for
-    column stability across this repo and the web ingest serializer (#54). It is
-    ``len()`` of the re-serialized ``structured_content`` JSON, or of the text
-    payload: a CHARACTER count, which diverges from UTF-8 bytes for non-ASCII, and
-    excludes the MCP envelope, framing, headers, and transport encoding. Good for
-    relative size trends; never reconcile it against load-balancer / APM / CDN
-    byte counters.
+    column stability across this repo and the web ingest serializer (#54). It is a
+    CHARACTER count of what the client receives as the tool's text: for a
+    structured tool, ``len()`` of the re-serialized ``structured_content`` JSON;
+    for a ``str``-returning tool, ``len()`` of the text itself (#127 — see
+    `_wrapped_text`). It diverges from UTF-8 bytes for non-ASCII and excludes the
+    MCP envelope, framing, headers, and transport encoding. Good for relative size
+    trends and for comparison against the text tools' character ceilings; never
+    reconcile it against load-balancer / APM / CDN byte counters. Rows written
+    before #127 measured text tools as JSON (an upper bound, content-dependent).
     """
     out = {"result_count": None, "has_data": None, "response_bytes": None,
            "returned_ids": [], "result_countries": []}
@@ -537,6 +568,13 @@ def _result_metrics(result) -> dict:
         sc = getattr(result, "structured_content", None)
         if sc is None and isinstance(result, dict):
             sc = result
+        wrapped = _wrapped_text(sc, result)
+        if wrapped is not None:
+            # A str-returning tool: structured_content is FastMCP's wrapper, not
+            # the payload. Measure it exactly like any other text result.
+            out["response_bytes"] = len(wrapped)
+            out["has_data"] = bool(wrapped.strip())
+            return out
         if isinstance(sc, dict):
             out["response_bytes"] = len(json.dumps(sc, default=str))
             cnt = _count_results(sc)
@@ -545,11 +583,8 @@ def _result_metrics(result) -> dict:
             out["returned_ids"], out["result_countries"] = _extract_entities(sc)
             return out
         # Non-structured (text) result: size + non-empty only.
-        text = None
-        content = getattr(result, "content", None)
-        if content:
-            text = "".join(p for p in (getattr(b, "text", None) for b in content) if p)
-        elif isinstance(result, str):
+        text = _content_text(result)
+        if text is None and isinstance(result, str):
             text = result
         if text is not None:
             out["response_bytes"] = len(text)
