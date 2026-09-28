@@ -30,7 +30,7 @@ import time
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 from fastmcp.server.dependencies import get_access_token, get_http_headers
@@ -161,6 +161,147 @@ def _scrub_and_cap(text: str) -> str:
     return _scrub_token_shapes(text[:_SCRUB_WINDOW])[:MAX_ARG_STRLEN]
 
 
+# --- closed-grammar validation of allowlisted values (#124) ------------------
+#
+# `_scrub_token_shapes` is best effort: it cannot enumerate credential formats, and
+# six review rounds on #119 each found a shape it missed. So every allowlisted key
+# whose values come from a CLOSED grammar is validated instead: the value is stored
+# only when it conforms, otherwise a marker is. For these keys nothing a caller
+# types can reach the table unless it IS a valid value — and the marker still
+# records HOW OFTEN an invalid value is sent, which is the diagnostic #119 exists
+# for. Keys with no closed grammar (search, name, symbol, ticker_or_name, code,
+# ticker, ...) keep the best-effort scrub above.
+
+UNRECOGNIZED = "<unrecognized>"
+INVALID = "<invalid>"
+
+# The FinancialFilings filing-type taxonomy: the codes `filings_list` `type` /
+# `types` accept. Kept in step with the 30-code table in the generator's
+# `fr://guide/filing-types` resource by tests/test_usage_analytics.py, and equal to
+# prod `filings_filingtype.code` when measured on 2026-09-28. A constant rather
+# than a lookup because capture runs in the request path and must not make a
+# network call; a code added upstream records as <unrecognized> until added here.
+FILING_TYPE_CODES = frozenset({
+    "10-K", "10-K-ESEF", "IR", "ER", "XLSX", "AR",
+    "MDA", "MANG", "DEF 14A", "DIRS",
+    "SR", "CGR",
+    "CT", "IP", "RPA",
+    "TAR", "LTR",
+    "AGM-R", "DVA", "PSI",
+    "CAP", "IRAT",
+    "MRQ", "DIV", "SHA", "POS",
+    "FS", "NAV",
+    "DLST",
+    "RNS",
+})
+# SEC form names agents send INSTEAD of a code (10-Q for IR, 20-F for 10-K, ...).
+# Not valid filter values — the API returns an empty list for them — but a closed
+# set, and precisely the misuse the filing-type guidance targets, so they are
+# stored verbatim rather than collapsed into <unrecognized>. Beyond #124's table
+# by design; drop entries here to trade that diagnostic away.
+_SEC_FORM_NAMES = frozenset({
+    "10-Q", "10-Q/A", "10-K/A", "8-K", "8-K/A", "20-F", "20-F/A", "6-K", "40-F",
+    "S-1", "S-3", "S-4", "F-1", "424B3", "4", "4/A", "3", "5", "13F-HR",
+    "SC 13D", "SC 13G", "11-K", "ARS", "DEFA14A", "DEFM14A", "N-CSR",
+})
+_FILING_TYPE_VOCAB = {v.upper(): v for v in FILING_TYPE_CODES | _SEC_FORM_NAMES}
+_FISCAL_PERIODS = frozenset({"FY", "H1", "H2", "Q1", "Q2", "Q3", "Q4", "9M"})
+# BS/IS/CFS on financials; line_item_definitions_list also takes SUP.
+_STATEMENT_TYPES = frozenset({"BS", "IS", "CFS", "SUP"})
+
+_CIK_RE = re.compile(r"(?i)(?:cik)?[0-9]{1,10}")
+_ISIN_RE = re.compile(r"[A-Z]{2}[A-Z0-9]{9}[0-9]")
+_LEI_RE = re.compile(r"[A-Z0-9]{18}[0-9]{2}")
+# OpenFIGI: two consonants, "G", eight consonants/digits, a check digit. The check
+# digit itself is not verified (structure only).
+_FIGI_RE = re.compile(r"[B-DF-HJ-NP-TV-Z]{2}G[B-DF-HJ-NP-TV-Z0-9]{8}[0-9]")
+_MIC_RE = re.compile(r"[A-Z0-9]{4}")
+_ID_MAXLEN = 32  # no identifier grammar here is longer; refuse before any work
+
+
+def _alnum_digits(text: str) -> str:
+    """ISO 6166 / ISO 17442 letter expansion: A=10 ... Z=35, digits as-is."""
+    return "".join(str(int(c, 36)) for c in text)
+
+
+def _isin_check_ok(isin: str) -> bool:
+    digits = _alnum_digits(isin[:-1]) + isin[-1]
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        v = int(ch)
+        if i % 2 == 1:
+            v = v * 2 - 9 if v * 2 > 9 else v * 2
+        total += v
+    return total % 10 == 0
+
+
+def _id_grammar(pattern: "re.Pattern[str]", check: Optional[Callable[[str], bool]] = None):
+    def validate(value: Any) -> Any:
+        if not isinstance(value, str) or len(value) > _ID_MAXLEN:
+            return INVALID
+        stripped = value.strip()
+        upper = stripped.upper()
+        if not pattern.fullmatch(upper) or (check is not None and not check(upper)):
+            return INVALID
+        return stripped
+    return validate
+
+
+def _cik(value: Any) -> Any:
+    if isinstance(value, bool):
+        return INVALID
+    if isinstance(value, int):
+        return value if 0 <= value < 10**10 else INVALID
+    if isinstance(value, str) and len(value) <= _ID_MAXLEN and _CIK_RE.fullmatch(value.strip()):
+        return value.strip()
+    return INVALID
+
+
+def _enum(members: frozenset):
+    def validate(value: Any) -> Any:
+        if isinstance(value, str) and len(value) <= _ID_MAXLEN and value.strip().upper() in members:
+            return value.strip()
+        return INVALID
+    return validate
+
+
+def _filing_types(value: Any) -> Any:
+    """Comma-separated filing-type codes: each member kept as sent if it is a code
+    (or a known SEC form name), else <unrecognized>. The output alphabet is closed."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return UNRECOGNIZED
+    text = str(value)
+    if len(text) > _SCRUB_WINDOW:  # 30 codes fit in ~300 chars; never split a huge value
+        return UNRECOGNIZED
+    members = []
+    for part in text.split(","):
+        member = part.strip()
+        members.append(member if not member or member.upper() in _FILING_TYPE_VOCAB else UNRECOGNIZED)
+    return ",".join(members)[:MAX_ARG_STRLEN]
+
+
+_GRAMMARS: dict = {
+    "type": _filing_types,
+    "types": _filing_types,
+    "cik": _cik,
+    "isin": _id_grammar(_ISIN_RE, _isin_check_ok),
+    "company_isin": _id_grammar(_ISIN_RE, _isin_check_ok),
+    "lei": _id_grammar(_LEI_RE, lambda s: int(_alnum_digits(s)) % 97 == 1),
+    "figi": _id_grammar(_FIGI_RE),
+    "mic": _id_grammar(_MIC_RE),
+    "fiscal_period": _enum(_FISCAL_PERIODS),
+    "statement_type": _enum(_STATEMENT_TYPES),
+}
+
+
+def _apply_grammar(value: Any, validate: Callable[[Any], Any]) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [None if v is None else validate(v) for v in value[:25]]
+    return validate(value)
+
+
 def _truncate(value: Any) -> Any:
     if isinstance(value, str):
         return _scrub_and_cap(value)
@@ -182,7 +323,8 @@ def sanitize_mcp_arguments(arguments: Any) -> dict:
         if any(bad in key_lower for bad in DENY_ARG_SUBSTRINGS):
             clean[key] = REDACTED
         elif key_lower in ALLOWED_ARG_KEYS:
-            clean[key] = _truncate(value)
+            grammar = _GRAMMARS.get(key_lower)
+            clean[key] = _apply_grammar(value, grammar) if grammar else _truncate(value)
         else:
             clean[key] = REDACTED
     return clean
