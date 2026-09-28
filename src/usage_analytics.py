@@ -20,6 +20,7 @@ Hard guarantees:
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -320,23 +321,40 @@ def current_call_id() -> str:
 # arrives `session.client_params` is gone and every event logged a blank host.
 # Measured: 100% blank from 2026-07-16, i.e. the host-split analytics went dark.
 #
-# So we carry it ourselves: capture at `initialize`, key it by the OAuth
-# client_id (which rides the access token, not the session, so it survives),
-# and resolve it on the way into an event. Two tiers — a bounded per-process
-# dict, and the shared Redis the connector already runs — because with
-# horizontal scaling the `initialize` and the tool call routinely land on
-# different replicas, which is the same reason #63 existed.
+# So we carry it ourselves: capture at `initialize`, key it by the CONNECTION
+# (see `_connection_key`), and resolve it on the way into an event. Two tiers — a
+# bounded per-process dict, and the shared Redis the connector already runs —
+# because with horizontal scaling the `initialize` and the tool call routinely
+# land on different replicas, which is the same reason #63 existed.
+#
+# The key is NOT the validated token's `client_id` claim (#97). That claim is the
+# Cognito app client, and every host reaches us through the same one, so keying
+# on it made the cache a single global slot: whichever host initialized last was
+# stamped on every later call, from every host and every user (12 host names on
+# one id in prod). The per-connection key that survives the stateless transport
+# is the bearer the client presents: the OAuth proxy's reference JWT, whose
+# `client_id` is that client's own DCR registration, stable across token refresh.
+# Mcp-Session-Id is not an option: with stateless_http the server never issues
+# one, so a conforming client never sends it and FastMCP mints a fresh id per
+# request — it could never join an `initialize` to a later call.
 _client_info: ContextVar[Optional[tuple]] = ContextVar("_client_info", default=None)
 
-# Bounded so a hostile or buggy client cannot grow it without limit; clientInfo
-# is low-cardinality (one entry per registered OAuth client) so this is ample.
+# Bounded so a hostile or buggy client cannot grow it without limit. One entry
+# per (DCR registration, user); an overflow clears it and it repopulates on the
+# next `initialize`, falling back to the shared store meanwhile.
 _CLIENT_INFO_LOCAL_MAX = 512
 _client_info_local: dict[str, tuple] = {}
 
 # Long enough to span a client's normal reconnect cadence, short enough that a
 # renamed/upgraded host converges without manual eviction.
 CLIENT_INFO_TTL_SECONDS = 30 * 24 * 3600
-_CLIENT_INFO_KEY = "mcp-client-info::{client_id}"
+# v2: entries written under the v1 key ("mcp-client-info::<cognito client id>")
+# are the misattributed global slot of #97; a new prefix guarantees none is read
+# back. They age out under the TTL above.
+_CLIENT_INFO_KEY = "mcp-client-info:v2::{key}"
+
+# A bearer is a few KB at most; never base64-decode an unbounded header value.
+_MAX_BEARER_LEN = 8192
 
 # This module's contract is that capture never adds latency to a real call. A
 # store round-trip inside the request path would break that, and a `try/except`
@@ -726,6 +744,39 @@ def _token_fingerprint() -> str:
         return ""
 
 
+def _presented_client_id() -> str:
+    """The ``client_id`` claim of the bearer JWT this request PRESENTED, or ``''``.
+
+    Under the OAuth proxy that bearer is the proxy's own reference token, issued
+    per DCR registration — unlike the swapped upstream token `get_access_token()`
+    returns, whose ``client_id`` is the shared Cognito app client (#97). The
+    signature is not checked here: the auth middleware already verified this exact
+    credential for this request before any MCP handler ran, and the value is used
+    only as an analytics cache key, never for authorization. Never raises.
+    """
+    try:
+        raw = get_http_headers(include_all=True) or {}
+        auth = ""
+        for key, val in raw.items():
+            if str(key).lower() == "authorization":
+                auth = str(val or "")
+                break
+        scheme, _, token = auth.strip().partition(" ")
+        token = token.strip()
+        if scheme.lower() != "bearer" or not token or len(token) > _MAX_BEARER_LEN:
+            return ""
+        parts = token.split(".")
+        if len(parts) != 3:
+            return ""
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+        cid = claims.get("client_id") if isinstance(claims, dict) else None
+        return cid[:256] if isinstance(cid, str) else ""
+    except Exception:
+        logger.debug("usage analytics: presented client_id unavailable", exc_info=True)
+        return ""
+
+
 class UsageAnalyticsMiddleware(Middleware):
     """Captures every tool call and prompt fetch and hands it to the emitter.
 
@@ -758,6 +809,36 @@ class UsageAnalyticsMiddleware(Middleware):
         claims = getattr(token, "claims", {}) or {}
         return str(claims.get("client_id") or getattr(token, "client_id", "") or "")
 
+    @classmethod
+    def _connection_key(cls) -> str:
+        """Per-connection clientInfo cache key, or ``''`` when there is none (#97).
+
+        ``(DCR registration, user)``: the registration separates host programs,
+        and the user separates the many people a hosted connector can serve from
+        one registration (ChatGPT's are shared). Hashed so the store holds neither
+        identifier. Returns ``''`` — i.e. log a blank host — when the presented
+        bearer carries no client_id, or carries the SHARED Cognito app client id,
+        which identifies no connection at all: a blank host is honest, a
+        neighbour's host is not. Never raises.
+        """
+        try:
+            presented = _presented_client_id()
+            if not presented:
+                return ""
+            shared = os.environ.get("COGNITO_CLIENT_ID", "").strip() or cls._token_client_id()
+            if presented == shared:
+                return ""
+            sub = ""
+            try:
+                token = get_access_token()
+                sub = str((getattr(token, "claims", {}) or {}).get("sub") or "") if token else ""
+            except Exception:
+                sub = ""
+            return hashlib.sha256(f"{presented}\x00{sub}".encode("utf-8")).hexdigest()[:32]
+        except Exception:
+            logger.debug("usage analytics: connection key unavailable", exc_info=True)
+            return ""
+
     async def on_initialize(self, context: MiddlewareContext, call_next):
         # Capture from the initialize REQUEST — at this point in the chain the
         # session is not populated yet (verified: reading session.client_params
@@ -768,17 +849,17 @@ class UsageAnalyticsMiddleware(Middleware):
             info = getattr(params, "clientInfo", None)
             name = (getattr(info, "name", "") or "")[:128]
             version = (getattr(info, "version", "") or "")[:64]
-            client_id = self._token_client_id()
-            if name and client_id:
-                await self._remember_client_info(client_id, (name, version))
+            key = self._connection_key()
+            if name and key:
+                await self._remember_client_info(key, (name, version))
         except Exception:
             logger.debug("clientInfo capture skipped", exc_info=True)
         return await call_next(context)
 
-    async def _remember_client_info(self, client_id: str, value: tuple) -> None:
+    async def _remember_client_info(self, key: str, value: tuple) -> None:
         if len(_client_info_local) >= _CLIENT_INFO_LOCAL_MAX:
             _client_info_local.clear()  # cheap bound; repopulates on next initialize
-        _client_info_local[client_id] = value
+        _client_info_local[key] = value
         store = self._client_info_store
         if store is None:
             return
@@ -786,7 +867,7 @@ class UsageAnalyticsMiddleware(Middleware):
         async def _write():
             try:
                 await store.set(
-                    _CLIENT_INFO_KEY.format(client_id=client_id),
+                    _CLIENT_INFO_KEY.format(key=key),
                     json.dumps({"name": value[0], "version": value[1]}),
                     ex=CLIENT_INFO_TTL_SECONDS,
                 )
@@ -817,10 +898,10 @@ class UsageAnalyticsMiddleware(Middleware):
         except Exception:
             pass
         try:
-            client_id = self._token_client_id()
-            if not client_id:
+            key = self._connection_key()
+            if not key:
                 return
-            cached = _client_info_local.get(client_id)
+            cached = _client_info_local.get(key)
             if cached:
                 _client_info.set(cached)
                 return
@@ -830,7 +911,7 @@ class UsageAnalyticsMiddleware(Middleware):
             # Bounded: a stalled store must not hold up the tool call. On timeout we
             # fall through to a blank host for this call and try again on the next.
             raw = await asyncio.wait_for(
-                store.get(_CLIENT_INFO_KEY.format(client_id=client_id)),
+                store.get(_CLIENT_INFO_KEY.format(key=key)),
                 timeout=_CLIENT_INFO_READ_TIMEOUT,
             )
             if not raw:
@@ -838,7 +919,7 @@ class UsageAnalyticsMiddleware(Middleware):
             data = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
             value = (str(data.get("name") or ""), str(data.get("version") or ""))
             if value[0]:
-                _client_info_local[client_id] = value
+                _client_info_local[key] = value
                 _client_info.set(value)
         except Exception:
             logger.debug("clientInfo resolve skipped", exc_info=True)

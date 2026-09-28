@@ -5,9 +5,11 @@
 `session.client_params` is gone by the time a tool call arrives and every
 analytics event logged a blank host — 100% blank in prod from 2026-07-16.
 
-These tests pin the carry-over: capture at initialize, key by OAuth client_id
-(which rides the access token, not the session), resolve on the way into an
-event, and never let any of it touch a real tool call.
+These tests pin the carry-over: capture at initialize, key by CONNECTION (the
+presented bearer's DCR registration + user — see
+tests/test_client_info_per_connection.py for why not the Cognito client_id, #97),
+resolve on the way into an event, and never let any of it touch a real tool call.
+Here the connection key is stubbed; the keying itself is tested there.
 """
 import asyncio
 import json
@@ -24,7 +26,7 @@ from src.usage_analytics import (
     _client_info_writes,
 )
 
-CLIENT_ID = "client-abc"
+CLIENT_ID = "conn-key-abc"  # stands in for a per-connection cache key
 
 
 class FakeRedis:
@@ -56,7 +58,7 @@ class _Ctx:
 
 def _mw(store, monkeypatch):
     monkeypatch.setattr(
-        UsageAnalyticsMiddleware, "_token_client_id", staticmethod(lambda: CLIENT_ID)
+        UsageAnalyticsMiddleware, "_connection_key", classmethod(lambda cls: CLIENT_ID)
     )
     return UsageAnalyticsMiddleware(
         UsageAnalyticsEmitter("http://ingest.invalid/", "secret"),
@@ -202,5 +204,5 @@ async def test_durable_payload_is_json_round_trippable(monkeypatch):
     mw = _mw(store, monkeypatch)
     await mw._remember_client_info(CLIENT_ID, ("Anthropic/ClaudeAI", "2.1"))
     await _drain_writes()
-    raw = store.kv[f"mcp-client-info::{CLIENT_ID}"]
+    raw = store.kv[f"mcp-client-info:v2::{CLIENT_ID}"]
     assert json.loads(raw) == {"name": "Anthropic/ClaudeAI", "version": "2.1"}
