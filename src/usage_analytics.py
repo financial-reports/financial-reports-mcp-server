@@ -20,6 +20,7 @@ Hard guarantees:
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -29,7 +30,7 @@ import time
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 from fastmcp.server.dependencies import get_access_token, get_http_headers
@@ -160,6 +161,147 @@ def _scrub_and_cap(text: str) -> str:
     return _scrub_token_shapes(text[:_SCRUB_WINDOW])[:MAX_ARG_STRLEN]
 
 
+# --- closed-grammar validation of allowlisted values (#124) ------------------
+#
+# `_scrub_token_shapes` is best effort: it cannot enumerate credential formats, and
+# six review rounds on #119 each found a shape it missed. So every allowlisted key
+# whose values come from a CLOSED grammar is validated instead: the value is stored
+# only when it conforms, otherwise a marker is. For these keys nothing a caller
+# types can reach the table unless it IS a valid value — and the marker still
+# records HOW OFTEN an invalid value is sent, which is the diagnostic #119 exists
+# for. Keys with no closed grammar (search, name, symbol, ticker_or_name, code,
+# ticker, ...) keep the best-effort scrub above.
+
+UNRECOGNIZED = "<unrecognized>"
+INVALID = "<invalid>"
+
+# The FinancialFilings filing-type taxonomy: the codes `filings_list` `type` /
+# `types` accept. Kept in step with the 30-code table in the generator's
+# `fr://guide/filing-types` resource by tests/test_usage_analytics.py, and equal to
+# prod `filings_filingtype.code` when measured on 2026-09-28. A constant rather
+# than a lookup because capture runs in the request path and must not make a
+# network call; a code added upstream records as <unrecognized> until added here.
+FILING_TYPE_CODES = frozenset({
+    "10-K", "10-K-ESEF", "IR", "ER", "XLSX", "AR",
+    "MDA", "MANG", "DEF 14A", "DIRS",
+    "SR", "CGR",
+    "CT", "IP", "RPA",
+    "TAR", "LTR",
+    "AGM-R", "DVA", "PSI",
+    "CAP", "IRAT",
+    "MRQ", "DIV", "SHA", "POS",
+    "FS", "NAV",
+    "DLST",
+    "RNS",
+})
+# SEC form names agents send INSTEAD of a code (10-Q for IR, 20-F for 10-K, ...).
+# Not valid filter values — the API returns an empty list for them — but a closed
+# set, and precisely the misuse the filing-type guidance targets, so they are
+# stored verbatim rather than collapsed into <unrecognized>. Beyond #124's table
+# by design; drop entries here to trade that diagnostic away.
+_SEC_FORM_NAMES = frozenset({
+    "10-Q", "10-Q/A", "10-K/A", "8-K", "8-K/A", "20-F", "20-F/A", "6-K", "40-F",
+    "S-1", "S-3", "S-4", "F-1", "424B3", "4", "4/A", "3", "5", "13F-HR",
+    "SC 13D", "SC 13G", "11-K", "ARS", "DEFA14A", "DEFM14A", "N-CSR",
+})
+_FILING_TYPE_VOCAB = {v.upper(): v for v in FILING_TYPE_CODES | _SEC_FORM_NAMES}
+_FISCAL_PERIODS = frozenset({"FY", "H1", "H2", "Q1", "Q2", "Q3", "Q4", "9M"})
+# BS/IS/CFS on financials; line_item_definitions_list also takes SUP.
+_STATEMENT_TYPES = frozenset({"BS", "IS", "CFS", "SUP"})
+
+_CIK_RE = re.compile(r"(?i)(?:cik)?[0-9]{1,10}")
+_ISIN_RE = re.compile(r"[A-Z]{2}[A-Z0-9]{9}[0-9]")
+_LEI_RE = re.compile(r"[A-Z0-9]{18}[0-9]{2}")
+# OpenFIGI: two consonants, "G", eight consonants/digits, a check digit. The check
+# digit itself is not verified (structure only).
+_FIGI_RE = re.compile(r"[B-DF-HJ-NP-TV-Z]{2}G[B-DF-HJ-NP-TV-Z0-9]{8}[0-9]")
+_MIC_RE = re.compile(r"[A-Z0-9]{4}")
+_ID_MAXLEN = 32  # no identifier grammar here is longer; refuse before any work
+
+
+def _alnum_digits(text: str) -> str:
+    """ISO 6166 / ISO 17442 letter expansion: A=10 ... Z=35, digits as-is."""
+    return "".join(str(int(c, 36)) for c in text)
+
+
+def _isin_check_ok(isin: str) -> bool:
+    digits = _alnum_digits(isin[:-1]) + isin[-1]
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        v = int(ch)
+        if i % 2 == 1:
+            v = v * 2 - 9 if v * 2 > 9 else v * 2
+        total += v
+    return total % 10 == 0
+
+
+def _id_grammar(pattern: "re.Pattern[str]", check: Optional[Callable[[str], bool]] = None):
+    def validate(value: Any) -> Any:
+        if not isinstance(value, str) or len(value) > _ID_MAXLEN:
+            return INVALID
+        stripped = value.strip()
+        upper = stripped.upper()
+        if not pattern.fullmatch(upper) or (check is not None and not check(upper)):
+            return INVALID
+        return stripped
+    return validate
+
+
+def _cik(value: Any) -> Any:
+    if isinstance(value, bool):
+        return INVALID
+    if isinstance(value, int):
+        return value if 0 <= value < 10**10 else INVALID
+    if isinstance(value, str) and len(value) <= _ID_MAXLEN and _CIK_RE.fullmatch(value.strip()):
+        return value.strip()
+    return INVALID
+
+
+def _enum(members: frozenset):
+    def validate(value: Any) -> Any:
+        if isinstance(value, str) and len(value) <= _ID_MAXLEN and value.strip().upper() in members:
+            return value.strip()
+        return INVALID
+    return validate
+
+
+def _filing_types(value: Any) -> Any:
+    """Comma-separated filing-type codes: each member kept as sent if it is a code
+    (or a known SEC form name), else <unrecognized>. The output alphabet is closed."""
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return UNRECOGNIZED
+    text = str(value)
+    if len(text) > _SCRUB_WINDOW:  # 30 codes fit in ~300 chars; never split a huge value
+        return UNRECOGNIZED
+    members = []
+    for part in text.split(","):
+        member = part.strip()
+        members.append(member if not member or member.upper() in _FILING_TYPE_VOCAB else UNRECOGNIZED)
+    return ",".join(members)[:MAX_ARG_STRLEN]
+
+
+_GRAMMARS: dict = {
+    "type": _filing_types,
+    "types": _filing_types,
+    "cik": _cik,
+    "isin": _id_grammar(_ISIN_RE, _isin_check_ok),
+    "company_isin": _id_grammar(_ISIN_RE, _isin_check_ok),
+    "lei": _id_grammar(_LEI_RE, lambda s: int(_alnum_digits(s)) % 97 == 1),
+    "figi": _id_grammar(_FIGI_RE),
+    "mic": _id_grammar(_MIC_RE),
+    "fiscal_period": _enum(_FISCAL_PERIODS),
+    "statement_type": _enum(_STATEMENT_TYPES),
+}
+
+
+def _apply_grammar(value: Any, validate: Callable[[Any], Any]) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [None if v is None else validate(v) for v in value[:25]]
+    return validate(value)
+
+
 def _truncate(value: Any) -> Any:
     if isinstance(value, str):
         return _scrub_and_cap(value)
@@ -181,7 +323,8 @@ def sanitize_mcp_arguments(arguments: Any) -> dict:
         if any(bad in key_lower for bad in DENY_ARG_SUBSTRINGS):
             clean[key] = REDACTED
         elif key_lower in ALLOWED_ARG_KEYS:
-            clean[key] = _truncate(value)
+            grammar = _GRAMMARS.get(key_lower)
+            clean[key] = _apply_grammar(value, grammar) if grammar else _truncate(value)
         else:
             clean[key] = REDACTED
     return clean
@@ -320,23 +463,40 @@ def current_call_id() -> str:
 # arrives `session.client_params` is gone and every event logged a blank host.
 # Measured: 100% blank from 2026-07-16, i.e. the host-split analytics went dark.
 #
-# So we carry it ourselves: capture at `initialize`, key it by the OAuth
-# client_id (which rides the access token, not the session, so it survives),
-# and resolve it on the way into an event. Two tiers — a bounded per-process
-# dict, and the shared Redis the connector already runs — because with
-# horizontal scaling the `initialize` and the tool call routinely land on
-# different replicas, which is the same reason #63 existed.
+# So we carry it ourselves: capture at `initialize`, key it by the CONNECTION
+# (see `_connection_key`), and resolve it on the way into an event. Two tiers — a
+# bounded per-process dict, and the shared Redis the connector already runs —
+# because with horizontal scaling the `initialize` and the tool call routinely
+# land on different replicas, which is the same reason #63 existed.
+#
+# The key is NOT the validated token's `client_id` claim (#97). That claim is the
+# Cognito app client, and every host reaches us through the same one, so keying
+# on it made the cache a single global slot: whichever host initialized last was
+# stamped on every later call, from every host and every user (12 host names on
+# one id in prod). The per-connection key that survives the stateless transport
+# is the bearer the client presents: the OAuth proxy's reference JWT, whose
+# `client_id` is that client's own DCR registration, stable across token refresh.
+# Mcp-Session-Id is not an option: with stateless_http the server never issues
+# one, so a conforming client never sends it and FastMCP mints a fresh id per
+# request — it could never join an `initialize` to a later call.
 _client_info: ContextVar[Optional[tuple]] = ContextVar("_client_info", default=None)
 
-# Bounded so a hostile or buggy client cannot grow it without limit; clientInfo
-# is low-cardinality (one entry per registered OAuth client) so this is ample.
+# Bounded so a hostile or buggy client cannot grow it without limit. One entry
+# per (DCR registration, user); an overflow clears it and it repopulates on the
+# next `initialize`, falling back to the shared store meanwhile.
 _CLIENT_INFO_LOCAL_MAX = 512
 _client_info_local: dict[str, tuple] = {}
 
 # Long enough to span a client's normal reconnect cadence, short enough that a
 # renamed/upgraded host converges without manual eviction.
 CLIENT_INFO_TTL_SECONDS = 30 * 24 * 3600
-_CLIENT_INFO_KEY = "mcp-client-info::{client_id}"
+# v2: entries written under the v1 key ("mcp-client-info::<cognito client id>")
+# are the misattributed global slot of #97; a new prefix guarantees none is read
+# back. They age out under the TTL above.
+_CLIENT_INFO_KEY = "mcp-client-info:v2::{key}"
+
+# A bearer is a few KB at most; never base64-decode an unbounded header value.
+_MAX_BEARER_LEN = 8192
 
 # This module's contract is that capture never adds latency to a real call. A
 # store round-trip inside the request path would break that, and a `try/except`
@@ -515,6 +675,34 @@ def _extract_entities(sc: dict):
     return ids[:_ENTITY_CAP], sorted(countries)
 
 
+def _content_text(result) -> Optional[str]:
+    """Concatenated text blocks of a tool result's ``content``, or None."""
+    content = getattr(result, "content", None)
+    if not content:
+        return None
+    return "".join(p for p in (getattr(b, "text", None) for b in content) if p)
+
+
+def _wrapped_text(sc: Any, result: Any) -> Optional[str]:
+    """The text of a ``str``-returning tool, or None for anything else (#127).
+
+    FastMCP reports a ``str`` return as ``structured_content={"result": <text>}``,
+    so the structured branch below used to measure ``len(json.dumps(...))`` — every
+    newline and quote in the payload cost an extra character (152,131 logged for a
+    150,000-char slice). A tool that genuinely returns the dict
+    ``{"result": "..."}`` has the same structured_content, so the shape alone
+    cannot tell them apart; the content blocks can. The client of a wrapped
+    ``str`` receives exactly that string as text, while a real dict arrives as its
+    JSON serialization. Only the former is unwrapped.
+    """
+    if not isinstance(sc, dict) or len(sc) != 1:
+        return None
+    inner = sc.get("result")
+    if not isinstance(inner, str):
+        return None
+    return inner if _content_text(result) == inner else None
+
+
 def _result_metrics(result) -> dict:
     """Best-effort, never-raises shape metrics about a tool result.
 
@@ -524,12 +712,15 @@ def _result_metrics(result) -> dict:
     ids surfaced, and the distinct country codes (which markets are in demand).
 
     ``response_bytes`` is a size PROXY, not wire bytes — the name is kept only for
-    column stability across this repo and the web ingest serializer (#54). It is
-    ``len()`` of the re-serialized ``structured_content`` JSON, or of the text
-    payload: a CHARACTER count, which diverges from UTF-8 bytes for non-ASCII, and
-    excludes the MCP envelope, framing, headers, and transport encoding. Good for
-    relative size trends; never reconcile it against load-balancer / APM / CDN
-    byte counters.
+    column stability across this repo and the web ingest serializer (#54). It is a
+    CHARACTER count of what the client receives as the tool's text: for a
+    structured tool, ``len()`` of the re-serialized ``structured_content`` JSON;
+    for a ``str``-returning tool, ``len()`` of the text itself (#127 — see
+    `_wrapped_text`). It diverges from UTF-8 bytes for non-ASCII and excludes the
+    MCP envelope, framing, headers, and transport encoding. Good for relative size
+    trends and for comparison against the text tools' character ceilings; never
+    reconcile it against load-balancer / APM / CDN byte counters. Rows written
+    before #127 measured text tools as JSON (an upper bound, content-dependent).
     """
     out = {"result_count": None, "has_data": None, "response_bytes": None,
            "returned_ids": [], "result_countries": []}
@@ -537,6 +728,13 @@ def _result_metrics(result) -> dict:
         sc = getattr(result, "structured_content", None)
         if sc is None and isinstance(result, dict):
             sc = result
+        wrapped = _wrapped_text(sc, result)
+        if wrapped is not None:
+            # A str-returning tool: structured_content is FastMCP's wrapper, not
+            # the payload. Measure it exactly like any other text result.
+            out["response_bytes"] = len(wrapped)
+            out["has_data"] = bool(wrapped.strip())
+            return out
         if isinstance(sc, dict):
             out["response_bytes"] = len(json.dumps(sc, default=str))
             cnt = _count_results(sc)
@@ -545,11 +743,8 @@ def _result_metrics(result) -> dict:
             out["returned_ids"], out["result_countries"] = _extract_entities(sc)
             return out
         # Non-structured (text) result: size + non-empty only.
-        text = None
-        content = getattr(result, "content", None)
-        if content:
-            text = "".join(p for p in (getattr(b, "text", None) for b in content) if p)
-        elif isinstance(result, str):
+        text = _content_text(result)
+        if text is None and isinstance(result, str):
             text = result
         if text is not None:
             out["response_bytes"] = len(text)
@@ -691,6 +886,49 @@ def _token_fingerprint() -> str:
         return ""
 
 
+def _cache_client_info_locally(key: str, value: tuple) -> None:
+    """The ONE writer of the process-local tier, so both paths into it — capture
+    at `initialize` and a read-back from the shared store — honour the bound.
+    With per-connection keys (#97) a replica that only ever reads from the store
+    sees one key per (registration, user), so that path needs it as much."""
+    if key not in _client_info_local and len(_client_info_local) >= _CLIENT_INFO_LOCAL_MAX:
+        _client_info_local.clear()  # cheap bound; repopulates from the store / next initialize
+    _client_info_local[key] = value
+
+
+def _presented_client_id() -> str:
+    """The ``client_id`` claim of the bearer JWT this request PRESENTED, or ``''``.
+
+    Under the OAuth proxy that bearer is the proxy's own reference token, issued
+    per DCR registration — unlike the swapped upstream token `get_access_token()`
+    returns, whose ``client_id`` is the shared Cognito app client (#97). The
+    signature is not checked here: the auth middleware already verified this exact
+    credential for this request before any MCP handler ran, and the value is used
+    only as an analytics cache key, never for authorization. Never raises.
+    """
+    try:
+        raw = get_http_headers(include_all=True) or {}
+        auth = ""
+        for key, val in raw.items():
+            if str(key).lower() == "authorization":
+                auth = str(val or "")
+                break
+        scheme, _, token = auth.strip().partition(" ")
+        token = token.strip()
+        if scheme.lower() != "bearer" or not token or len(token) > _MAX_BEARER_LEN:
+            return ""
+        parts = token.split(".")
+        if len(parts) != 3:
+            return ""
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+        cid = claims.get("client_id") if isinstance(claims, dict) else None
+        return cid[:256] if isinstance(cid, str) else ""
+    except Exception:
+        logger.debug("usage analytics: presented client_id unavailable", exc_info=True)
+        return ""
+
+
 class UsageAnalyticsMiddleware(Middleware):
     """Captures every tool call and prompt fetch and hands it to the emitter.
 
@@ -723,6 +961,36 @@ class UsageAnalyticsMiddleware(Middleware):
         claims = getattr(token, "claims", {}) or {}
         return str(claims.get("client_id") or getattr(token, "client_id", "") or "")
 
+    @classmethod
+    def _connection_key(cls) -> str:
+        """Per-connection clientInfo cache key, or ``''`` when there is none (#97).
+
+        ``(DCR registration, user)``: the registration separates host programs,
+        and the user separates the many people a hosted connector can serve from
+        one registration (ChatGPT's are shared). Hashed so the store holds neither
+        identifier. Returns ``''`` — i.e. log a blank host — when the presented
+        bearer carries no client_id, or carries the SHARED Cognito app client id,
+        which identifies no connection at all: a blank host is honest, a
+        neighbour's host is not. Never raises.
+        """
+        try:
+            presented = _presented_client_id()
+            if not presented:
+                return ""
+            shared = os.environ.get("COGNITO_CLIENT_ID", "").strip() or cls._token_client_id()
+            if presented == shared:
+                return ""
+            sub = ""
+            try:
+                token = get_access_token()
+                sub = str((getattr(token, "claims", {}) or {}).get("sub") or "") if token else ""
+            except Exception:
+                sub = ""
+            return hashlib.sha256(f"{presented}\x00{sub}".encode("utf-8")).hexdigest()[:32]
+        except Exception:
+            logger.debug("usage analytics: connection key unavailable", exc_info=True)
+            return ""
+
     async def on_initialize(self, context: MiddlewareContext, call_next):
         # Capture from the initialize REQUEST — at this point in the chain the
         # session is not populated yet (verified: reading session.client_params
@@ -733,17 +1001,15 @@ class UsageAnalyticsMiddleware(Middleware):
             info = getattr(params, "clientInfo", None)
             name = (getattr(info, "name", "") or "")[:128]
             version = (getattr(info, "version", "") or "")[:64]
-            client_id = self._token_client_id()
-            if name and client_id:
-                await self._remember_client_info(client_id, (name, version))
+            key = self._connection_key()
+            if name and key:
+                await self._remember_client_info(key, (name, version))
         except Exception:
             logger.debug("clientInfo capture skipped", exc_info=True)
         return await call_next(context)
 
-    async def _remember_client_info(self, client_id: str, value: tuple) -> None:
-        if len(_client_info_local) >= _CLIENT_INFO_LOCAL_MAX:
-            _client_info_local.clear()  # cheap bound; repopulates on next initialize
-        _client_info_local[client_id] = value
+    async def _remember_client_info(self, key: str, value: tuple) -> None:
+        _cache_client_info_locally(key, value)
         store = self._client_info_store
         if store is None:
             return
@@ -751,7 +1017,7 @@ class UsageAnalyticsMiddleware(Middleware):
         async def _write():
             try:
                 await store.set(
-                    _CLIENT_INFO_KEY.format(client_id=client_id),
+                    _CLIENT_INFO_KEY.format(key=key),
                     json.dumps({"name": value[0], "version": value[1]}),
                     ex=CLIENT_INFO_TTL_SECONDS,
                 )
@@ -782,10 +1048,10 @@ class UsageAnalyticsMiddleware(Middleware):
         except Exception:
             pass
         try:
-            client_id = self._token_client_id()
-            if not client_id:
+            key = self._connection_key()
+            if not key:
                 return
-            cached = _client_info_local.get(client_id)
+            cached = _client_info_local.get(key)
             if cached:
                 _client_info.set(cached)
                 return
@@ -795,7 +1061,7 @@ class UsageAnalyticsMiddleware(Middleware):
             # Bounded: a stalled store must not hold up the tool call. On timeout we
             # fall through to a blank host for this call and try again on the next.
             raw = await asyncio.wait_for(
-                store.get(_CLIENT_INFO_KEY.format(client_id=client_id)),
+                store.get(_CLIENT_INFO_KEY.format(key=key)),
                 timeout=_CLIENT_INFO_READ_TIMEOUT,
             )
             if not raw:
@@ -803,7 +1069,7 @@ class UsageAnalyticsMiddleware(Middleware):
             data = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
             value = (str(data.get("name") or ""), str(data.get("version") or ""))
             if value[0]:
-                _client_info_local[client_id] = value
+                _cache_client_info_locally(key, value)
                 _client_info.set(value)
         except Exception:
             logger.debug("clientInfo resolve skipped", exc_info=True)

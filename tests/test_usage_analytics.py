@@ -845,7 +845,7 @@ def test_token_scrub_leaves_ordinary_identifiers_alone():
     assert sanitize_mcp_arguments(args) == args
 
 
-@pytest.mark.parametrize("key", ["type", "types", "search", "name", "symbol", "ticker_or_name"])
+@pytest.mark.parametrize("key", ["search", "name", "symbol", "ticker_or_name"])
 def test_opaque_credential_in_any_free_string_key_is_redacted(key):
     out = sanitize_mcp_arguments({key: f"10-K {_opaque_key()} AR"})
     assert _opaque_key() not in out[key]
@@ -879,3 +879,98 @@ def test_token_crossing_the_stored_boundary_is_still_redacted():
     assert _opaque_key() not in out
     assert "<redacted-token>" in out
 
+
+
+# --- closed-grammar validation of allowlisted values (#124) ------------------
+#
+# A shape scrubber cannot enumerate credential formats (six SPECHT rounds on #119,
+# six shapes). For every key whose values come from a closed grammar, store the
+# value only when it conforms and a marker otherwise: nothing a caller types into
+# such a key can reach the table unless it IS a valid value.
+
+UNRECOGNIZED = "<unrecognized>"
+INVALID = "<invalid>"
+
+
+def _guide_filing_type_codes():
+    """The 30-code table in the generator's fr://guide/filing-types resource."""
+    import pathlib
+    import re
+
+    src = (pathlib.Path(__file__).resolve().parents[1] / "scripts" / "generate_mcp_tools.py").read_text()
+    head = '"| Code | Name | Category |\\\\n"'
+    start = src.index(head)
+    block = src[start:src.index('"\\\\n"', start)]
+    return frozenset(re.findall(r'"\| ([^|]+?) \| [^|]+ \| [^|]+ \|\\\\n"', block)) - {"Code"}
+
+
+def test_filing_type_codes_match_the_guide_table():
+    codes = _guide_filing_type_codes()
+    assert len(codes) == 30, sorted(codes)
+    assert usage_analytics.FILING_TYPE_CODES == codes
+
+
+@pytest.mark.parametrize("key", ["type", "types"])
+def test_filing_type_values_are_kept_only_when_they_are_codes(key):
+    assert sanitize_mcp_arguments({key: "10-K,DEF 14A,AGM-R"}) == {key: "10-K,DEF 14A,AGM-R"}
+    # A credential typed into the filter can no longer reach the table at all —
+    # not even the letters-only / short / oversized shapes the scrubber missed.
+    for secret in (_opaque_key(), "AKIAABCDEFGHIJKLMNOP", "hunterhunterhunter", _jwt_shaped("s" * 300)):
+        out = sanitize_mcp_arguments({key: f"10-K,{secret}"})[key]
+        assert secret not in out
+        assert out == f"10-K,{UNRECOGNIZED}"
+    # Past the scan window the value is not split at all, so the JWT that outran
+    # the scrubber's window in round 6 of #119 is refused whole.
+    assert sanitize_mcp_arguments({key: "10-K," + _jwt_shaped("s" * 3000)}) == {key: UNRECOGNIZED}
+
+
+def test_filing_type_list_keeps_per_member_verdicts_and_known_sec_form_names():
+    """SEC form names are a closed set too, and they ARE the diagnostic #119 was
+    for (agents sending 10-Q / 8-K instead of IR / nothing): keep them verbatim."""
+    out = sanitize_mcp_arguments({"types": " 10-K , 10-Q,8-K,ANNUAL"})
+    assert out == {"types": f"10-K,10-Q,8-K,{UNRECOGNIZED}"}
+
+
+def test_filing_type_case_variant_is_recognized_as_sent():
+    assert sanitize_mcp_arguments({"type": "10-k"}) == {"type": "10-k"}
+
+
+def test_filing_type_json_array_and_non_string_values():
+    assert sanitize_mcp_arguments({"types": ["IR", "nope"]}) == {"types": ["IR", UNRECOGNIZED]}
+    assert sanitize_mcp_arguments({"type": 19}) == {"type": UNRECOGNIZED}
+    assert sanitize_mcp_arguments({"type": None}) == {"type": None}
+
+
+def test_huge_filing_type_value_is_not_split():
+    out = sanitize_mcp_arguments({"types": "IR," * 2_000_000})["types"]
+    assert out == UNRECOGNIZED
+
+
+@pytest.mark.parametrize(("key", "good", "bad"), [
+    ("cik", "0000320193", "320193abc"),
+    ("cik", "CIK0000320193", "12345678901"),
+    ("cik", 320193, -5),
+    ("isin", "US0378331005", "US0378331006"),          # wrong check digit
+    ("isin", "us0378331005", "US03"),
+    ("company_isin", "DE0007164600", _opaque_key()),
+    ("lei", "529900T8BM49AURSDO55", "529900T8BM49AURSDO56"),
+    ("figi", "BBG000BLNNH6", "BBG000BLNNH6X"),
+    ("mic", "XNAS", "XNASDAQ"),
+    ("fiscal_period", "Q3", "Q5"),
+    ("fiscal_period", "9M", "FY2024"),
+    ("statement_type", "CFS", "PL"),
+    ("statement_type", "SUP", "BS;drop"),
+])
+def test_closed_grammar_keys_keep_valid_and_mark_invalid(key, good, bad):
+    assert sanitize_mcp_arguments({key: good}) == {key: good}
+    assert sanitize_mcp_arguments({key: bad}) == {key: INVALID}
+
+
+def test_bool_is_not_a_cik():
+    assert sanitize_mcp_arguments({"cik": True}) == {"cik": INVALID}
+
+
+@pytest.mark.parametrize("key", ["search", "name", "symbol", "ticker_or_name"])
+def test_free_text_keys_still_use_the_best_effort_scrub(key):
+    """No closed grammar exists for these; they keep the #119 scrub (residual)."""
+    assert sanitize_mcp_arguments({key: "Apple Inc"}) == {key: "Apple Inc"}
