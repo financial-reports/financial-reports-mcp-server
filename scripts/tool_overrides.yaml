@@ -86,8 +86,8 @@ companies_financials_retrieve:
     call `filings_list` for this `id` filtered with `type` (or `types`) to an
     annual report (e.g. 10-K, 20-F, or the local annual type) with
     `ordering='-release_datetime'` and `page_size=10`, take the NEWEST row (do
-    not gate on `processing_status` — it is null whenever `view='full'` is
-    used), retrieve it with `filings_markdown_retrieve`, and read
+    not gate on `processing_status` — it can be null, e.g. whenever
+    `view='full'` is used), retrieve it with `filings_markdown_retrieve`, and read
     the figures directly from the filing body — citing the filing type, date, and
     fiscal period. Never estimate, recall a figure from training knowledge, or
     attach a citation to a number you did not read from a tool result this session.
@@ -98,9 +98,10 @@ companies_financials_retrieve:
     provenance: a computed figure is chosen to make the totals tie. To verify a
     figure, take `source_filing.id` (or the `sources` entry with
     `is_selected: true`, field `filing_id`) — it is already in this response, so
-    no `filings_list` call is needed — confirm that filing's
-    `processing_status` is `COMPLETED`, then read it with
-    `filings_markdown_retrieve`.
+    no `filings_list` call is needed — and read it with
+    `filings_markdown_retrieve` (no `processing_status` check first: the
+    field is not on this response; a not-found error means no Markdown is
+    available for that filing — do not promise it will appear).
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without
@@ -118,6 +119,11 @@ filings_list:
     Use to search and filter regulatory filings across companies.
     Supports filtering by company, filing type, category, country,
     date range. Returns metadata — not filing content.
+    VIEW: the default `view='summary'` carries `processing_status`.
+    `view='full'` adds more metadata fields but can return
+    `processing_status` as null on every row — it is not "everything", so
+    don't pass it just to get more data. Never gate filing selection on
+    `processing_status`: a null value means unknown, not "no markdown".
   when_not_to_use: >
     Don't use to get filing content — use `filings_markdown_retrieve`
     after getting the filing ID. Don't use for financial KPIs — use
@@ -164,10 +170,15 @@ filings_markdown_retrieve:
     indefinitely against the request budget.
   when_not_to_use: >
     Don't use to search for filings — use `filings_list` first. Not
-    every filing has Markdown content; only filings whose
-    `processing_status == "COMPLETED"` do — check that field (returned by
-    `filings_list`; it is NOT on the `filings_retrieve` response) before
-    calling this tool.
+    every filing has Markdown content. If a `filings_list` row shows a
+    `processing_status` other than `"COMPLETED"`, that filing has no Markdown
+    available (it may still be processing, or may never get any) — if the
+    user asked for THAT filing (e.g. the latest), say so rather than silently
+    answering from an older one. If the field is null or absent (it is under
+    `filings_list(view='full')`, and it is not on the `filings_retrieve`
+    response), that means unknown — call this tool anyway; a not-found error
+    means no Markdown is available for that filing (do not promise it will
+    appear), while any other error is about access or availability.
   examples:
     - user_says: "Show me Apple's 10-K risk factors"
       parameters: "filing_id=<id>, offset=0, limit=50000"

@@ -78,8 +78,9 @@ unfiltered and 81 with the filter, and the unfiltered list sorts alphabetically
 into companies delisted in the 1990s.
 
 3. `companies_financials_retrieve` per result to filter by metric.
-4. When pulling filing content, prefer rows whose `processing_status` is
-   `COMPLETED`.
+4. When pulling filing content, skip rows whose `processing_status` is
+   present and not `COMPLETED`. A null value (every row under `view='full'`)
+   means unknown — don't gate on it.
 
 ISIC is not GICS or NAICS. If the user asks in GICS terms, say the mapping is
 approximate.
