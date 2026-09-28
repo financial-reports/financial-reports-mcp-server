@@ -306,3 +306,63 @@ async def test_page_size_within_range_is_untouched(
     )
     await _tool(mcp_module, "filings_list")(page_size=37)
     assert route.calls.last.request.url.params["page_size"] == "37"
+
+
+# --- specht #135 findings ------------------------------------------------------
+
+
+def _big_body():
+    codes = [f"BAD{i:03d}" for i in range(250)]
+    return {
+        "types": "Unknown filing type code(s): " + ", ".join(codes) + ".",
+        "did_you_mean": {"10-Q": ["types=IR", "source_filing_type=10-Q"]},
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_body_over_1000_chars_is_still_parsed(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """The body used to be sliced to 1,000 chars BEFORE json parsing, so a long
+    list of invalid codes produced invalid JSON and the generic hint."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    import json as _json
+
+    assert len(_json.dumps(_big_body())) > 1000
+    exc = await _raise_from_filings_list(mcp_module, respx_router, 400, json=_big_body())
+    msg = str(exc)
+    assert "types=IR" in msg
+    assert "The API rejected the arguments" in msg
+
+
+@pytest.mark.asyncio
+async def test_text_tool_body_over_1000_chars_is_still_parsed(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/filing-types/").mock(
+        return_value=httpx.Response(400, json=_big_body())
+    )
+    with pytest.raises(mcp_module.UpstreamHTTPError) as ei:
+        await _tool(mcp_module, "filing_types_list")()
+    assert "types=IR" in str(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_opaque_key_shapes_are_redacted_but_codes_survive(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    key = "frk9sQ2mX7pL4vT8zW1nB6cD3eF5gH0jK"
+    exc = await _raise_from_filings_list(
+        mcp_module,
+        respx_router,
+        400,
+        json={
+            "types": f"Unknown filing type code(s): {key}, 10-Q.",
+            "did_you_mean": {"10-Q": ["types=IR", "source_filing_type=10-Q"]},
+        },
+    )
+    msg = str(exc)
+    assert key not in msg
+    assert "10-Q" in msg and "types=IR" in msg and "source_filing_type=10-Q" in msg

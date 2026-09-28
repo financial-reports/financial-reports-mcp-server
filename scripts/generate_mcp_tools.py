@@ -2184,6 +2184,28 @@ def _upstream_429_copy(body_text: str) -> str:
     return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_COPY) if text else ""
 
 
+# How much of an upstream error body is read (#135 review). It used to be 1,000
+# chars sliced BEFORE the JSON parse, so a 400 listing many invalid codes became
+# invalid JSON and the model got the generic hint instead of did_you_mean. Only
+# parsing sees this much; the client copy and the log line keep their own caps.
+_MAX_ERROR_BODY = 32_000
+
+# An unbroken 24+ run mixing letters and digits: the shape of an opaque API key
+# or secret. sanitize_error_detail only knows JWT and Bearer shapes; the 4xx copy
+# can echo a caller's argument, so redact this too (#135 review). Filing codes,
+# snake_case line-item codes and `types=IR`-style suggestions never match.
+_OPAQUE_4XX_RE = re.compile("[A-Za-z0-9_-]{24,}")
+
+
+def _redact_opaque(text: str) -> str:
+    def repl(m):
+        run = m.group(0)
+        mixed = any(c.isalpha() for c in run) and any(c.isdigit() for c in run)
+        return "<redacted-token>" if mixed else run
+
+    return _OPAQUE_4XX_RE.sub(repl, text)
+
+
 # The API's max_page_size on every paginated endpoint (web
 # filings/api_pagination.py MultiRangePagination, companies/search.py). The
 # tool templates clamp to it before the request (#132).
@@ -2299,7 +2321,7 @@ def _upstream_4xx_copy(body_text: str) -> str:
     upgrade = payload.get("upgrade_url")
     if isinstance(upgrade, str) and upgrade.startswith("https://") and upgrade not in " ".join(parts):
         parts.append(cap(f"Plans: {upgrade}"))
-    text = " ".join(parts)
+    text = _redact_opaque(" ".join(parts))
     return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_4XX_COPY) if text else ""
 
 
@@ -2448,7 +2470,7 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
     """
     status = response.status_code
     request_id = _upstream_request_id(response)
-    body_text = response.text[:1000]
+    body_text = response.text[:_MAX_ERROR_BODY]
     error_kind = _classify_upstream_error(status, body_text)
     logger.warning(
         "upstream %s status=%d kind=%s request_id=%s client_request_id=%s "
@@ -2657,7 +2679,7 @@ def _format_response(response: httpx.Response) -> str:
         # unsanitized — both a leak risk and the reason they never got the
         # quota upsell. Same classifier as the structured path now (#73); the
         # unredacted-but-sanitized body still reaches analytics for triage.
-        _raise_upstream_text_error(exc.response, exc.response.text[:1000])
+        _raise_upstream_text_error(exc.response, exc.response.text[:_MAX_ERROR_BODY])
         raise AssertionError("unreachable")  # pragma: no cover
     except Exception as exc:
         record_tool_error("ResponseFormatError", str(exc))
@@ -4014,7 +4036,7 @@ async def {{ func_name }}(
             if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
                 _raise_upstream_text_error(
-                    response, body[:1000].decode("utf-8", errors="replace")
+                    response, body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace")
                 )
 
             buf = bytearray()
@@ -4559,7 +4581,7 @@ async def filings_markdown_search(
             if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
                 _raise_upstream_text_error(
-                    response, body[:1000].decode("utf-8", errors="replace")
+                    response, body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace")
                 )
             buf = bytearray()
             async for _chunk in response.aiter_bytes():
