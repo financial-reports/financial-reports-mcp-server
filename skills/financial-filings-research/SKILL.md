@@ -134,11 +134,13 @@ a currency change is what warrants a second look.
 filing selection on it there — read it from the default view, or proceed
 without it.
 
-### An unknown filing-type code returns zero rows
+### An unknown filing-type code is a 400
 
-`filings_list` with an unrecognised `type` returns `count=0`, which looks
-identical to a genuine empty result. Verify the code with `filing_types_list`
-before telling the user a company has no such filings.
+`filings_list` rejects an unrecognised `type`/`types` code with a 400 that
+names it and, where one exists, suggests a replacement (for example
+`10-Q -> types=IR` or `source_filing_type=10-Q`). Read the suggestion and fix
+the call; an identical retry fails the same way. A regulator's own form name
+belongs on `source_filing_type`, not `type`.
 
 ## Output
 

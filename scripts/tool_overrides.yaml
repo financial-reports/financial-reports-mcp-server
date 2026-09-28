@@ -102,6 +102,14 @@ companies_financials_retrieve:
     `filings_markdown_retrieve` (no `processing_status` check first: the
     field is not on this response; a not-found error means no Markdown is
     available for that filing — do not promise it will appear).
+    LINE ITEM CODES: `line_items` takes exact lower-case snake_case codes,
+    comma-separated (not `;`); an unknown code is a 400 naming it. The codes
+    most often guessed wrong: net_income -> net_income_loss, operating_income
+    -> operating_income_loss, total_debt -> total_debt_bs, free_cash_flow ->
+    levered_free_cash_flow_cf, capital_expenditure -> capital_expenditure_cf,
+    operating_cash_flow -> cash_from_operations, eps -> basic_eps /
+    diluted_eps, cash -> cash_and_equivalents. Not sure of a code? Omit
+    `line_items` to get every line item.
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without
@@ -189,6 +197,13 @@ filings_markdown_retrieve:
     - user_says: "Show me Apple's 10-K risk factors"
       parameters: "filing_id=<id>, offset=0, limit=50000"
       notes: "Summarize specific sections — don't dump the whole document"
+
+filing_types_list:
+  when_to_use: >
+    Call when the user names a form or report type that is not in the
+    filing-type table in the instructions, to find its FinancialFilings code
+    before filtering `filings_list`. A regulator's own form name (10-Q, 8-K,
+    6-K) is not a code: it goes on `filings_list` `source_filing_type`.
 
 line_item_definitions_list:
   when_to_use: >

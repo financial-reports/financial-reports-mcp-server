@@ -131,7 +131,7 @@ import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, AsyncIterator, Awaitable, Callable, Literal, Optional
+from typing import Annotated, Any, AsyncIterator, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -149,6 +149,7 @@ from fastmcp.server.auth.oauth_proxy import OAuthProxy, ProxyDCRClient
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware
 from mcp.types import Icon, ToolAnnotations
+from pydantic import Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.usage_analytics import (
@@ -1481,8 +1482,8 @@ mcp = FastMCP(
         "     ER         Earnings Release\\n"
         "     MDA        Management Discussion & Analysis\\n"
         "     DIRS       Director's Dealing (insider transactions)\\n"
-        "   SEC form names are NOT codes, and an unknown code returns an "
-        "EMPTY LIST rather than an error, so it reads as \\"nothing filed\\": "
+        "   SEC form names are NOT codes; an unknown code is rejected with a 400 "
+        "that names it (read the 400 — it suggests a replacement): "
         "10-Q -> IR, 20-F -> 10-K, Form 4 -> DIRS, DEF 14A proxy -> PSI "
         "(NOT the code spelled `DEF 14A`), 8-K -> no single code.\\n"
         "   These codes are BROADER than the SEC form: `IR` is 92% 10-Q, the "
@@ -4043,7 +4044,8 @@ async def {{ func_name }}(
             )
         if offset >= total_length:
             return (
-                f"--- MARKDOWN CONTENT (chars {offset} to {total_length} of {total_length}) ---\\n"
+                f"--- MARKDOWN CONTENT (offset {offset} is past the end; the "
+                f"document has {total_length} chars) ---\\n"
                 "(empty: offset is at or past the end of the document)"
             )
         def _prose(end):
@@ -4236,9 +4238,9 @@ def _resource_filing_types() -> str:
         "FinancialFilings taxonomy category.\\n\\n"
         "## SEC form names are NOT codes — translate first\\n\\n"
         "These codes are a cross-jurisdiction taxonomy, not SEC form names. "
-        "`type=10-Q` matches nothing and returns an EMPTY LIST, not an error "
-        "(the filter is an exact `code IN (...)`), so a wrong code looks like "
-        "\\"this company filed nothing\\". Shares below measured on SEC "
+        "`type=10-Q` is not a code: an unknown code is rejected with a 400 "
+        "that names it and, where one exists, suggests the replacement (the "
+        "filter is an exact `code IN (...)`). Shares below measured on SEC "
         "over the 180 days to 2026-09-17.\\n\\n"
         "| You want (SEC form) | Use | Note |\\n"
         "|---|---|---|\\n"
@@ -5074,6 +5076,42 @@ def extract_response_schema(operation: dict, full_schema: dict) -> dict | None:
     return schema
 
 
+# Longest parameter description kept (#132). The /filings/ `types` text is 297
+# chars and is the one that matters most ("taxonomy codes, not regulator form
+# names"), so the cap sits just above it; anything longer is cut, not dropped.
+_MAX_PARAM_DESCRIPTION = 320
+
+# Which parameters carry their schema description into the tool's input schema
+# (#132). An ALLOWLIST, because every character here is sent on every session:
+# emitting all of them measured +2,774 tokens on `tools/list` (4,995 -> 7,769,
+# filings_list alone 927 -> 2,467), mostly text that restates the name ("Filter
+# by internal Company ID."). These are the parameters behind measured failures in
+# 30 days of prod traffic (2026-08-29 -> 09-28): form names passed as
+# `type`/`types` (83 400s) where `source_filing_type` belongs, invented KPI
+# codes in `line_items` (165), and period names like `Q3` passed as a type
+# (web#4185 redirects those to `fiscal_period`). Widen it here.
+_DESCRIBED_PARAMS = frozenset(
+    {"type", "types", "source_filing_type", "line_items", "fiscal_period"}
+)
+
+
+def describe_param(py_type: str, description, name: str = "") -> str:
+    """Wrap a param type in Annotated[..., Field(description=...)] (#132).
+
+    The generator used to emit bare `type: str | None`, so the parameter carried
+    no guidance even where the schema had some. Emitted via repr() so any quote
+    or backslash in the schema text stays a valid Python literal.
+    """
+    if name not in _DESCRIBED_PARAMS or not isinstance(description, str):
+        return py_type
+    text = " ".join(description.split())
+    if not text:
+        return py_type
+    if len(text) > _MAX_PARAM_DESCRIPTION:
+        text = text[: _MAX_PARAM_DESCRIPTION - 1].rstrip() + "…"
+    return f"Annotated[{py_type}, Field(description={text!r})]"
+
+
 def get_python_type(
     schema_type,
     schema_format=None,
@@ -5207,7 +5245,11 @@ def extract_path_params(operation: dict) -> list:
         params.append({
             "name": snake_case(name),
             "original_name": name,
-            "py_type": py_type,
+            "py_type": describe_param(
+                py_type,
+                param.get("description") or param_schema.get("description"),
+                name,
+            ),
             "default_val": default_val,
             "is_path": True,
             "is_query": False,
@@ -5245,7 +5287,7 @@ def extract_body_params(operation: dict, full_schema: dict) -> list:
         params.append({
             "name": snake_case(prop_name),
             "original_name": prop_name,
-            "py_type": py_type,
+            "py_type": describe_param(py_type, prop_schema.get("description"), prop_name),
             "default_val": default_val,
             "is_path": False,
             "is_query": False,
@@ -5272,7 +5314,11 @@ def extract_query_params(operation: dict) -> list:
         params.append({
             "name": snake_case(name),
             "original_name": name,
-            "py_type": py_type,
+            "py_type": describe_param(
+                py_type,
+                param.get("description") or param_schema.get("description"),
+                name,
+            ),
             "default_val": default_val,
             "is_path": False,
             "is_query": True,
