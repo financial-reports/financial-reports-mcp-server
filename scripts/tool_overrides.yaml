@@ -100,7 +100,8 @@ companies_financials_retrieve:
     `is_selected: true`, field `filing_id`) — it is already in this response, so
     no `filings_list` call is needed — and read it with
     `filings_markdown_retrieve` (no `processing_status` check first: the
-    field is not on this response, and an empty result is the signal).
+    field is not on this response; a not-found error means that filing has
+    no Markdown yet).
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without
@@ -170,10 +171,13 @@ filings_markdown_retrieve:
   when_not_to_use: >
     Don't use to search for filings — use `filings_list` first. Not
     every filing has Markdown content. If a `filings_list` row shows a
-    `processing_status` other than `"COMPLETED"`, skip that filing. If the
+    `processing_status` other than `"COMPLETED"`, that filing has no Markdown
+    yet — if the user asked for THAT filing (e.g. the latest), say it is not
+    available yet rather than silently answering from an older one. If the
     field is null or absent (it is under `filings_list(view='full')`, and it
     is not on the `filings_retrieve` response), that means unknown — call
-    this tool anyway; an empty result is the signal.
+    this tool anyway; a not-found error means no Markdown yet, while any
+    other error is about access or availability, not Markdown.
   examples:
     - user_says: "Show me Apple's 10-K risk factors"
       parameters: "filing_id=<id>, offset=0, limit=50000"

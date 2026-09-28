@@ -26,6 +26,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 
 MODEL_FACING = [
@@ -78,17 +80,30 @@ def test_denylist_matcher_positive_control() -> None:
     assert _flat(GATE_PHRASES[0]) in _flat(split)
 
 
-def _rendered_texts(mcp_module) -> dict[str, str]:
+async def _rendered_texts(mcp_module) -> dict[str, str]:
     m = mcp_module
     texts = {f"tool:{n}": (t.description or "") for n, t in m.mcp._tool_manager._tools.items()}
     texts["instructions"] = m.mcp.instructions or ""
     for uri, res in m.mcp._resource_manager._resources.items():
         texts[f"resource:{uri}"] = res.fn()
+    # Prompts are model-facing too. Render each with a string for every
+    # argument (MCP transports prompt arguments as strings); no API call is
+    # made at render time.
+    for name, prompt in (await m.mcp.get_prompts()).items():
+        args = {a.name: "AAPL" for a in (prompt.arguments or [])}
+        messages = await prompt.render(arguments=args)
+        texts[f"prompt:{name}"] = " ".join(
+            msg.content.text if hasattr(msg.content, "text") else str(msg.content)
+            for msg in messages
+        )
     return texts
 
 
-def test_every_completed_condition_says_what_null_means(mcp_module) -> None:
-    texts = _rendered_texts(mcp_module)
+@pytest.mark.asyncio
+async def test_every_completed_condition_says_what_null_means(mcp_module) -> None:
+    texts = await _rendered_texts(mcp_module)
+    # Positive control for the prompt leg: prompts were actually rendered.
+    assert any(k.startswith("prompt:") for k in texts), sorted(texts)
     conditioned = {
         k: v for k, v in texts.items()
         if "processing_status" in v and "COMPLETED" in v
