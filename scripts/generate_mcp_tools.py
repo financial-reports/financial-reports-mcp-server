@@ -5094,6 +5094,20 @@ def _make_fields_nullable(node: Any) -> Any:
         # rejects ("Input should be a valid URL, input is empty"). A thin proxy
         # must not assert a constraint the upstream data violates.
         node.pop("format", None)
+        # drf-spectacular renders a DESCRIBED enum as a single-branch allOf:
+        # `{"allOf": [{"$ref": <Enum>}], "description": ...}`. That has no null
+        # branch, and the skip below leaves it enum-only, so a null value (e.g.
+        # `processing_status`, which the API does null) failed validation for
+        # the WHOLE result. A one-branch allOf is just that branch, so rewrite it
+        # as "that branch, or null". Multi-branch combinators are left alone.
+        _all = node.get("allOf")
+        if (
+            isinstance(_all, list)
+            and len(_all) == 1
+            and "type" not in node
+            and not any(k in node for k in ("oneOf", "anyOf"))
+        ):
+            node["anyOf"] = [node.pop("allOf")[0], {"type": "null"}]
         has_combinator = any(k in node for k in ("oneOf", "anyOf", "allOf"))
         if not has_combinator:
             t = node.get("type")

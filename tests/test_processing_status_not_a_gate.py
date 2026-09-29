@@ -135,6 +135,10 @@ def test_no_guidance_claims_view_full_or_retrieve_lacks_processing_status(mcp_mo
     # The generated module holds every tool description, resource body and
     # prompt template, so scanning its source reaches all three.
     blob = _flat(Path(mcp_module.__file__).read_text())
+    # The bundled research skill is model-facing too.
+    repo = Path(mcp_module.__file__).resolve().parents[1]
+    for md in sorted((repo / "skills").rglob("*.md")):
+        blob += " " + _flat(md.read_text())
     for stale in (
         "null under view='full'",
         "as in `view='full'`",
@@ -142,6 +146,10 @@ def test_no_guidance_claims_view_full_or_retrieve_lacks_processing_status(mcp_mo
         "OMITTED (null) when you pass `view='full'`",
         "not on the `filings_retrieve`",
         "superset of the default view",
+        "omits `processing_status`",
+        "absent from `filings_retrieve`",
+        "every row under `view='full'`",
+        "(FilingSummary) shape only",
     ):
         assert stale not in blob, stale
 
