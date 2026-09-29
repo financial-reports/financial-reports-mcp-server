@@ -124,6 +124,12 @@ filings_list:
     `processing_status` as null on every row — it is not "everything", so
     don't pass it just to get more data. Never gate filing selection on
     `processing_status`: a null value means unknown, not "no markdown".
+    LINKS for a human: `viewer_url`, except when `processing_status` is
+    PENDING/QUEUED/PROCESSING/FAILED/SKIPPED and `file_extension` is not
+    PDF/HTML/HTM/XHTML — that page is empty, so give the raw file link
+    (`document_url` on default rows, `document` on view=full rows); if it is
+    null, say no file link is available yet. A null status (view=full) is
+    not a reason to switch.
   when_not_to_use: >
     Don't use to get filing content — use `filings_markdown_retrieve`
     after getting the filing ID. Don't use for financial KPIs — use
