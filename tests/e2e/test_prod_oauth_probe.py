@@ -108,6 +108,9 @@ def test_rejected_argument_reaches_the_model_with_the_api_reason(probe_report: d
     assert bad_type["classification"] == "error", bad_type
     detail = bad_type["detail"]
     assert "rejected the arguments" in detail and "10-Q" in detail, detail
+    # web#4220: the API's `did_you_mean` (web#4185) must reach the model too —
+    # it is the part that lets the model fix the call instead of repeating it.
+    assert "Did you mean:" in detail and "10-Q ->" in detail, detail
     assert "check the arguments" not in detail, detail
 
 
