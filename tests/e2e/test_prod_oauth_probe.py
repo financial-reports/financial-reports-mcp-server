@@ -59,7 +59,9 @@ def probe_report() -> dict:
                 "set FR_E2E_USERNAME + FR_E2E_PASSWORD (scheduled mode), or "
                 "FR_E2E_TOKEN, or FR_E2E_INTERACTIVE=1 to mint one via browser"
             )
-    return oauth_probe.run_probe(token, base)
+    return oauth_probe.run_probe(
+        token, base, calls=oauth_probe.STRUCTURED_TOOLS + oauth_probe.ERROR_CONTRACT_CALLS
+    )
 
 
 def test_session_initializes(probe_report: dict) -> None:
@@ -71,7 +73,7 @@ def test_session_initializes(probe_report: dict) -> None:
 def test_structured_tools_never_leak_upstream_403(probe_report: dict) -> None:
     """#32 contract: every structured tool returns data OR the typed reconnect
     error — NEVER a raw `upstream … returned 403` (the kid-less-token leak #32 was)."""
-    results = probe_report["results"]
+    results = probe_report["results"][: len(oauth_probe.STRUCTURED_TOOLS)]
     assert results, "no structured-tool results returned"
 
     forbidden = [r for r in results if r["classification"] == "forbidden"]
@@ -83,3 +85,31 @@ def test_structured_tools_never_leak_upstream_403(probe_report: dict) -> None:
     assert not unexpected, "structured tool(s) returned neither data nor a reconnect hint:\n" + "\n".join(
         f"  {r['tool']} -> {r['classification']}: {r['detail']}" for r in unexpected
     )
+
+
+def _skip_if_reconnect(result: dict) -> None:
+    """The typed reconnect response is a valid, fail-closed answer under the #32
+    auth contract, so it is not a #132 regression. It also means the call never
+    reached the API, so #132 is NOT verified by this run: skip, and say so."""
+    if result["classification"] == "reconnect":
+        pytest.skip(f"#132 not verified: {result['tool']} got the reconnect response")
+
+
+def test_rejected_argument_reaches_the_model_with_the_api_reason(probe_report: dict) -> None:
+    """#132: a 400 used to reach the model as "check the arguments", so models
+    repeated the same failing call. It must now carry the API's own reason."""
+    bad_type = probe_report["results"][len(oauth_probe.STRUCTURED_TOOLS)]
+    assert bad_type["args"] == {"types": "10-Q", "page_size": 1}, bad_type
+    _skip_if_reconnect(bad_type)
+    assert bad_type["classification"] == "error", bad_type
+    detail = bad_type["detail"]
+    assert "rejected the arguments" in detail and "10-Q" in detail, detail
+    assert "check the arguments" not in detail, detail
+
+
+def test_over_limit_page_size_is_clamped_not_rejected(probe_report: dict) -> None:
+    """#132: page_size above the API's max of 100 is clamped before the request."""
+    clamped = probe_report["results"][len(oauth_probe.STRUCTURED_TOOLS) + 1]
+    assert clamped["args"] == {"page_size": 500}, clamped
+    _skip_if_reconnect(clamped)
+    assert clamped["classification"] == "data", clamped
