@@ -88,6 +88,16 @@ ERROR_CONTRACT_CALLS: list[tuple[str, dict]] = [
 ]
 
 
+# #106, against prod: `view="full"` rows must carry a real `processing_status`
+# (web#4192 exposed it; before, full rows returned null). Filtered by company so
+# the call does not depend on the unfiltered-list count timeout (web#4208).
+VIEW_FULL_CALLS: list[tuple[str, dict]] = [
+    ("filings_list", {"view": "full", "company": 14, "page_size": 3}),
+]
+
+_PROCESSING_STATUS_RE = re.compile(r'"processing_status":\s*("[A-Za-z_]+"|null)')
+
+
 def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
@@ -408,6 +418,9 @@ def run_probe(
                 "classification": classify(text, bool(res.get("isError")) or "error" in (resp or {})),
                 "detail": text[:1200],
                 "bytes": len(json.dumps(res)),
+                # Read from the FULL text, not `detail`: the field can sit past
+                # the 1,200-char cut.
+                "processing_status_values": _PROCESSING_STATUS_RE.findall(text),
             }
         )
     return {"version": version, "tool_count": tool_count, "results": results}

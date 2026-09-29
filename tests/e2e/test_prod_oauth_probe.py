@@ -60,7 +60,11 @@ def probe_report() -> dict:
                 "FR_E2E_TOKEN, or FR_E2E_INTERACTIVE=1 to mint one via browser"
             )
     return oauth_probe.run_probe(
-        token, base, calls=oauth_probe.STRUCTURED_TOOLS + oauth_probe.ERROR_CONTRACT_CALLS
+        token,
+        base,
+        calls=oauth_probe.STRUCTURED_TOOLS
+        + oauth_probe.ERROR_CONTRACT_CALLS
+        + oauth_probe.VIEW_FULL_CALLS,
     )
 
 
@@ -113,3 +117,17 @@ def test_over_limit_page_size_is_clamped_not_rejected(probe_report: dict) -> Non
     assert clamped["args"] == {"page_size": 500}, clamped
     _skip_if_reconnect(clamped)
     assert clamped["classification"] == "data", clamped
+
+
+def test_view_full_rows_carry_processing_status(probe_report: dict) -> None:
+    """#106: `view="full"` returned `processing_status: null` on every row, so an
+    agent could not tell a converted filing from an unconverted one. web#4192
+    exposed the real value. At least one returned row must carry a non-null one."""
+    offset = len(oauth_probe.STRUCTURED_TOOLS) + len(oauth_probe.ERROR_CONTRACT_CALLS)
+    full = probe_report["results"][offset]
+    assert full["args"].get("view") == "full", full
+    _skip_if_reconnect(full)
+    assert full["classification"] == "data", full
+    values = full["processing_status_values"]
+    assert values, "no processing_status key in the view=full payload: " + full["detail"][:300]
+    assert any(v != "null" for v in values), f"every processing_status was null: {values}"
