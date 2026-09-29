@@ -87,11 +87,20 @@ def test_structured_tools_never_leak_upstream_403(probe_report: dict) -> None:
     )
 
 
+def _skip_if_reconnect(result: dict) -> None:
+    """The typed reconnect response is a valid, fail-closed answer under the #32
+    auth contract, so it is not a #132 regression. It also means the call never
+    reached the API, so #132 is NOT verified by this run: skip, and say so."""
+    if result["classification"] == "reconnect":
+        pytest.skip(f"#132 not verified: {result['tool']} got the reconnect response")
+
+
 def test_rejected_argument_reaches_the_model_with_the_api_reason(probe_report: dict) -> None:
     """#132: a 400 used to reach the model as "check the arguments", so models
     repeated the same failing call. It must now carry the API's own reason."""
     bad_type = probe_report["results"][len(oauth_probe.STRUCTURED_TOOLS)]
     assert bad_type["args"] == {"types": "10-Q", "page_size": 1}, bad_type
+    _skip_if_reconnect(bad_type)
     assert bad_type["classification"] == "error", bad_type
     detail = bad_type["detail"]
     assert "rejected the arguments" in detail and "10-Q" in detail, detail
@@ -102,4 +111,5 @@ def test_over_limit_page_size_is_clamped_not_rejected(probe_report: dict) -> Non
     """#132: page_size above the API's max of 100 is clamped before the request."""
     clamped = probe_report["results"][len(oauth_probe.STRUCTURED_TOOLS) + 1]
     assert clamped["args"] == {"page_size": 500}, clamped
+    _skip_if_reconnect(clamped)
     assert clamped["classification"] == "data", clamped
