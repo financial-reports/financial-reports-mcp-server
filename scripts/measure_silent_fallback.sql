@@ -21,8 +21,8 @@
 -- legitimate follow-up read. A rise in the gap is the signal. The e2e probe
 -- client (fr-e2e-probe) never falls back and should stay at 0 as a control.
 --
--- Conversation matching: only `meta:openai/session` correlation ids span a
--- conversation. `mcp_session` ids are minted per request under the stateless
+-- Conversation matching: only the OpenAI session ids (`meta:openai/session`,
+-- `header:x-openai-session`) span a conversation. `mcp_session` ids are minted per request under the stateless
 -- transport (measured 2026-09-28: 27,348 events, 27,348 ids), so matching on
 -- them would zero the metric. Rows are split into two cohorts:
 --   conversation_matched  both events carry the same openai session id
@@ -37,14 +37,14 @@
 --   user_window           1,191 / 222 (18.6%) / 133 (11.2%); fr-e2e-probe 0 / 0
 with f as (
   select user_id, timestamp ts, (arguments->>'id')::bigint company_id, mcp_client_name,
-         case when correlation_source = 'meta:openai/session' then correlation_id end conv
+         case when correlation_source in ('meta:openai/session', 'header:x-openai-session') then correlation_id end conv
   from users_mcptoolevent
   where name = 'companies_financials_retrieve' and status = 'ok' and has_data
     and timestamp > now() - interval '30 days' and user_id is not null
     and (arguments->>'id') ~ '^[0-9]{1,18}$'
 ), m as (
   select e.user_id, e.timestamp ts, fl.company_id,
-         case when e.correlation_source = 'meta:openai/session' then e.correlation_id end conv
+         case when e.correlation_source in ('meta:openai/session', 'header:x-openai-session') then e.correlation_id end conv
   from users_mcptoolevent e
   join filings_filing fl on fl.id = (e.arguments->>'filing_id')::bigint
   where e.name = 'filings_markdown_retrieve' and e.status = 'ok' and e.has_data
