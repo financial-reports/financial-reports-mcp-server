@@ -119,12 +119,39 @@ async def test_every_completed_condition_says_what_null_means(mcp_module) -> Non
     )
 
 
-def test_filings_list_documents_the_view_full_caveat(mcp_module) -> None:
+def test_filings_list_says_both_views_carry_processing_status(mcp_module) -> None:
+    """web#4192 (deployed 2026-09-29) made `view='full'` carry
+    `processing_status`, so the old "null on every row under view='full'"
+    caveat became false. The no-gate rule stays: a single row can still be null."""
     desc = _flat(mcp_module.mcp._tool_manager._tools["filings_list"].description or "")
-    assert "view='full'" in desc
-    assert "processing_status" in desc
-    assert re.search(r"processing_status` as null", desc), desc
+    assert "both views carry `processing_status`" in desc, desc
+    assert not re.search(r"processing_status` as null on every row", desc), desc
     assert "Never gate filing selection on `processing_status`" in desc
+
+
+def test_no_guidance_claims_view_full_or_retrieve_lacks_processing_status(mcp_module) -> None:
+    """Every surface a model reads (tool descriptions, resources, prompts) must
+    stop saying the field is missing from view='full' or filings_retrieve."""
+    # The generated module holds every tool description, resource body and
+    # prompt template, so scanning its source reaches all three.
+    blob = _flat(Path(mcp_module.__file__).read_text())
+    # The bundled research skill is model-facing too.
+    repo = Path(mcp_module.__file__).resolve().parents[1]
+    for md in sorted((repo / "skills").rglob("*.md")):
+        blob += " " + _flat(md.read_text())
+    for stale in (
+        "null under view='full'",
+        "as in `view='full'`",
+        "as under view='full'",
+        "OMITTED (null) when you pass `view='full'`",
+        "not on the `filings_retrieve`",
+        "superset of the default view",
+        "omits `processing_status`",
+        "absent from `filings_retrieve`",
+        "every row under `view='full'`",
+        "(FilingSummary) shape only",
+    ):
+        assert stale not in blob, stale
 
 
 def test_markdown_strategy_resource_is_not_a_gate(mcp_module) -> None:

@@ -60,7 +60,11 @@ def probe_report() -> dict:
                 "FR_E2E_TOKEN, or FR_E2E_INTERACTIVE=1 to mint one via browser"
             )
     return oauth_probe.run_probe(
-        token, base, calls=oauth_probe.STRUCTURED_TOOLS + oauth_probe.ERROR_CONTRACT_CALLS
+        token,
+        base,
+        calls=oauth_probe.STRUCTURED_TOOLS
+        + oauth_probe.ERROR_CONTRACT_CALLS
+        + oauth_probe.VIEW_FULL_CALLS,
     )
 
 
@@ -110,6 +114,23 @@ def test_rejected_argument_reaches_the_model_with_the_api_reason(probe_report: d
 def test_over_limit_page_size_is_clamped_not_rejected(probe_report: dict) -> None:
     """#132: page_size above the API's max of 100 is clamped before the request."""
     clamped = probe_report["results"][len(oauth_probe.STRUCTURED_TOOLS) + 1]
-    assert clamped["args"] == {"page_size": 500}, clamped
+    assert clamped["args"] == {"company": 14, "page_size": 500}, clamped
     _skip_if_reconnect(clamped)
     assert clamped["classification"] == "data", clamped
+
+
+@pytest.mark.parametrize("index", range(len(oauth_probe.VIEW_FULL_CALLS)))
+def test_view_full_and_retrieve_carry_processing_status(probe_report: dict, index: int) -> None:
+    """#106: `view="full"` rows and the `filings_retrieve` response had no
+    `processing_status` key at all, so an agent could not tell a converted
+    filing from an unconverted one. web#4192 exposed it. Measured on prod before
+    that deploy, this check failed with "no processing_status key"; after it, it
+    passes. Each call must return at least one non-null value."""
+    offset = len(oauth_probe.STRUCTURED_TOOLS) + len(oauth_probe.ERROR_CONTRACT_CALLS)
+    result = probe_report["results"][offset + index]
+    assert (result["tool"], result["args"]) == oauth_probe.VIEW_FULL_CALLS[index], result
+    _skip_if_reconnect(result)
+    assert result["classification"] == "data", result
+    values = result["processing_status_values"]
+    assert values, "no processing_status key in the payload: " + result["detail"][:300]
+    assert any(v != "null" for v in values), f"every processing_status was null: {values}"

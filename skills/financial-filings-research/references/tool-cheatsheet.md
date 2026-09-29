@@ -67,7 +67,7 @@ List filings across companies. **outputSchema-advertised**.
 
 Key params: `company`, `type` (one filing-type code) / `types` (comma-separated), `category` / `categories` (numeric FilingCategory ids), `countries` (comma-separated ISO2), `release_datetime_from`, `release_datetime_to`, `page_size`, `ordering`. `ordering` accepts ONLY `release_datetime`, `added_to_platform`, `id` (prefix `-` to reverse) — any other value is silently ignored and you get default order back.
 
-Returns (FilingSummary): `{id, title, release_datetime, document_url, proxy_url, viewer_url, company, filing_type, processing_status, file_extension, file_size}`. Note `processing_status` is on THIS list response only — it is absent from `filings_retrieve`.
+Returns (FilingSummary): `{id, title, release_datetime, document_url, proxy_url, viewer_url, company, filing_type, processing_status, file_extension, file_size}`. `processing_status` is also on `view='full'` rows and on `filings_retrieve`; it can be null, which means unknown.
 
 Pitfall: the param is `type`, not `filing_type`, and the code is jurisdiction-specific (e.g. "10-K" for US issuers vs. a local annual type). Use `filing_categories_list` to find a numeric category id, then pass `category`/`categories` for cross-jurisdiction queries — categories normalise across markets.
 
@@ -76,7 +76,7 @@ Single filing detail. **outputSchema-advertised**.
 
 Key params: `id`.
 
-Returns (Filing): `id`, `company`, `filing_type`, `language`, `filing_date`, `title`, `added_to_platform`, `updated_date`, `dissemination_datetime`, `release_datetime`, `source`, `document`, `proxy_url`, `viewer_url`, `file_extension`, `file_size`, `markdown_url`, `filing_type_confidence`, `filing_type_reasoning`, `fiscal_year`, `fiscal_period`, `period_ending_date`. It is NOT a superset of the list row — notably `processing_status` is on the `filings_list` (FilingSummary) shape only. There is no `summary`, `regulator`, `pdf_url` or `markdown_available`.
+Returns (Filing): `id`, `company`, `filing_type`, `language`, `filing_date`, `title`, `added_to_platform`, `updated_date`, `dissemination_datetime`, `release_datetime`, `source`, `document`, `proxy_url`, `viewer_url`, `file_extension`, `file_size`, `markdown_url`, `filing_type_confidence`, `filing_type_reasoning`, `fiscal_year`, `fiscal_period`, `period_ending_date`. Also carries `processing_status` (can be null — unknown). There is no `summary`, `regulator`, `pdf_url` or `markdown_available`.
 
 ### `filings_history_retrieve`
 Audit trail — every revision of a filing (originals, amendments, restatements).

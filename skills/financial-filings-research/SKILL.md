@@ -79,8 +79,8 @@ into companies delisted in the 1990s.
 
 3. `companies_financials_retrieve` per result to filter by metric.
 4. When pulling filing content, skip rows whose `processing_status` is
-   present and not `COMPLETED`. A null value (every row under `view='full'`)
-   means unknown — don't gate on it.
+   present and not `COMPLETED`. A null value means unknown — don't gate on
+   it.
 
 ISIC is not GICS or NAICS. If the user asks in GICS terms, say the mapping is
 approximate.
@@ -128,11 +128,12 @@ entity and period against the filing, report the figure you read there, and tell
 the user what you found. Genuine volatility exists; an order-of-magnitude gap or
 a currency change is what warrants a second look.
 
-### `processing_status` is absent under `view='full'`
+### `processing_status` can be null
 
-`view='full'` returns more fields but omits `processing_status`. Don't gate
-filing selection on it there — read it from the default view, or proceed
-without it.
+Both `filings_list` views and `filings_retrieve` carry `processing_status`,
+but a row can still return null. Null means unknown: don't gate filing
+selection on it — proceed, and treat it only as an explanation if a markdown
+fetch then comes back empty.
 
 ### An unknown filing-type code is a 400
 

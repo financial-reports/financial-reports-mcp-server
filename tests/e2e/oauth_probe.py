@@ -84,8 +84,23 @@ STRUCTURED_TOOLS: list[tuple[str, dict]] = [
 # "data or reconnect".
 ERROR_CONTRACT_CALLS: list[tuple[str, dict]] = [
     ("filings_list", {"types": "10-Q", "page_size": 1}),
-    ("filings_list", {"page_size": 500}),
+    # Company-filtered so the clamp check does not ride on the unfiltered-list
+    # count timeout (web#4208); the unfiltered call above stays as that canary.
+    ("filings_list", {"company": 14, "page_size": 500}),
 ]
+
+
+# #106, against prod: `view="full"` rows and the `filings_retrieve` response must
+# carry a real `processing_status` (web#4192 exposed it; before, both lacked the
+# key). Filtered by company so the list call does not depend on the
+# unfiltered-list count timeout (web#4208). 60573187 is an adidas (company 14)
+# filing that has been in prod since before this check was written.
+VIEW_FULL_CALLS: list[tuple[str, dict]] = [
+    ("filings_list", {"view": "full", "company": 14, "page_size": 3}),
+    ("filings_retrieve", {"id": 60573187}),
+]
+
+_PROCESSING_STATUS_RE = re.compile(r'"processing_status":\s*("[A-Za-z_]+"|null)')
 
 
 def _b64url(raw: bytes) -> str:
@@ -408,6 +423,9 @@ def run_probe(
                 "classification": classify(text, bool(res.get("isError")) or "error" in (resp or {})),
                 "detail": text[:1200],
                 "bytes": len(json.dumps(res)),
+                # Read from the FULL text, not `detail`: the field can sit past
+                # the 1,200-char cut.
+                "processing_status_values": _PROCESSING_STATUS_RE.findall(text),
             }
         )
     return {"version": version, "tool_count": tool_count, "results": results}
