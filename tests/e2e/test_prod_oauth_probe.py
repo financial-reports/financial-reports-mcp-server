@@ -114,7 +114,7 @@ def test_rejected_argument_reaches_the_model_with_the_api_reason(probe_report: d
 def test_over_limit_page_size_is_clamped_not_rejected(probe_report: dict) -> None:
     """#132: page_size above the API's max of 100 is clamped before the request."""
     clamped = probe_report["results"][len(oauth_probe.STRUCTURED_TOOLS) + 1]
-    assert clamped["args"] == {"page_size": 500}, clamped
+    assert clamped["args"] == {"company": 14, "page_size": 500}, clamped
     _skip_if_reconnect(clamped)
     assert clamped["classification"] == "data", clamped
 

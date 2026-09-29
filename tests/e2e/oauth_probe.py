@@ -84,7 +84,9 @@ STRUCTURED_TOOLS: list[tuple[str, dict]] = [
 # "data or reconnect".
 ERROR_CONTRACT_CALLS: list[tuple[str, dict]] = [
     ("filings_list", {"types": "10-Q", "page_size": 1}),
-    ("filings_list", {"page_size": 500}),
+    # Company-filtered so the clamp check does not ride on the unfiltered-list
+    # count timeout (web#4208); the unfiltered call above stays as that canary.
+    ("filings_list", {"company": 14, "page_size": 500}),
 ]
 
 
