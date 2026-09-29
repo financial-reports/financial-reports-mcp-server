@@ -85,8 +85,10 @@ def test_server_instructions_map_sec_form_names_to_codes(mcp_module) -> None:
     assert "10-Q -> IR" in text
     assert "Form 4 -> DIRS" in text
     assert "DEF 14A proxy -> PSI" in text
-    # The silence is the reason the wrong code is invisible — say so.
-    assert "EMPTY LIST" in text
+    # Since web#3031 (2026-09-18) a wrong code is a 400 naming it, not a
+    # silent empty list; the instructions must say what actually happens (#132).
+    assert "an unknown code is rejected with a 400" in text
+    assert "EMPTY LIST" not in text
 
 
 def test_filing_type_guide_carries_the_translation_table(mcp_module) -> None:

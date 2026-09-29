@@ -131,7 +131,7 @@ import uuid
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from functools import wraps
-from typing import Any, AsyncIterator, Awaitable, Callable, Literal, Optional
+from typing import Annotated, Any, AsyncIterator, Awaitable, Callable, Literal, Optional
 from urllib.parse import quote, urlsplit
 
 import httpx
@@ -149,6 +149,7 @@ from fastmcp.server.auth.oauth_proxy import OAuthProxy, ProxyDCRClient
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware
 from mcp.types import Icon, ToolAnnotations
+from pydantic import Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.usage_analytics import (
@@ -1481,8 +1482,8 @@ mcp = FastMCP(
         "     ER         Earnings Release\\n"
         "     MDA        Management Discussion & Analysis\\n"
         "     DIRS       Director's Dealing (insider transactions)\\n"
-        "   SEC form names are NOT codes, and an unknown code returns an "
-        "EMPTY LIST rather than an error, so it reads as \\"nothing filed\\": "
+        "   SEC form names are NOT codes; an unknown code is rejected with a 400 "
+        "that names it (read the 400 — it suggests a replacement): "
         "10-Q -> IR, 20-F -> 10-K, Form 4 -> DIRS, DEF 14A proxy -> PSI "
         "(NOT the code spelled `DEF 14A`), 8-K -> no single code.\\n"
         "   These codes are BROADER than the SEC form: `IR` is 92% 10-Q, the "
@@ -2091,7 +2092,28 @@ def _classify_upstream_403(body_text: str) -> str:
         return "missing_profile"
     if _TOKEN_EXPIRED_MARKER in detail_lower:
         return "expired_token"
+    # Plan gating is not a credentials problem: "disconnect and reconnect"
+    # sends the user round a loop that cannot help (#132). The monolith tags
+    # these 403s with `type` (web#4140); `detail` is unchanged there, which is
+    # why the substring markers above still run first. Allowlist, not
+    # "any type": a credential tag (authentication_required, invalid_api_key)
+    # carries an X-API-Key resolution that means nothing to an OAuth user, and
+    # a tag added later must not be read as plan gating by default.
+    raw_type = payload.get("type") if payload is not None else None
+    if isinstance(raw_type, str) and raw_type in _PLAN_403_TYPES:
+        return "plan_restricted"
     return "invalid_credentials"
+
+
+_PLAN_403_TYPES = frozenset(
+    {
+        "plan_level_insufficient",
+        "webhooks_not_in_plan",
+        "mcp_only_account",
+        "endpoint_not_in_plan",
+        "api_root_not_available",
+    }
+)
 
 
 # Upstream 429 discriminator. Source of truth: financialreports
@@ -2162,6 +2184,178 @@ def _upstream_429_copy(body_text: str) -> str:
     return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_COPY) if text else ""
 
 
+# How much of an upstream error body is read (#135 review). It used to be 1,000
+# chars sliced BEFORE the JSON parse, so a 400 listing many invalid codes became
+# invalid JSON and the model got the generic hint instead of did_you_mean. Only
+# parsing sees this much; the client copy and the log line keep their own caps.
+_MAX_ERROR_BODY = 32_000
+
+# An unbroken 24+ run mixing letters and digits: the shape of an opaque API key
+# or secret. sanitize_error_detail only knows JWT and Bearer shapes; the 4xx copy
+# can echo a caller's argument, so redact this too (#135 review). Filing codes,
+# snake_case line-item codes and `types=IR`-style suggestions never match.
+_OPAQUE_4XX_RE = re.compile("[A-Za-z0-9_-]{24,}")
+# Known SHORT credential shapes the 24+ rule misses: AWS access-key IDs are 20
+# chars. Named formats only; lowering the general threshold would eat real
+# identifiers. Best-effort by design; closed-grammar validation per key is #124.
+_SHORT_KEY_RE = re.compile("(AKIA|ASIA|AIDA|AROA)[A-Z0-9]{16}")
+
+
+def _redact_opaque(text: str) -> str:
+    def repl(m):
+        run = m.group(0)
+        mixed = any(c.isalpha() for c in run) and any(c.isdigit() for c in run)
+        return "<redacted-token>" if mixed else run
+
+    return _SHORT_KEY_RE.sub("<redacted-token>", _OPAQUE_4XX_RE.sub(repl, text))
+
+
+# The API's max_page_size on every paginated endpoint (web
+# filings/api_pagination.py MultiRangePagination, companies/search.py). The
+# tool templates clamp to it before the request (#132).
+_MAX_PAGE_SIZE = 100
+
+# Client-facing caps for a forwarded 4xx body (#132). Per part, so a long field
+# message cannot push `did_you_mean` (the actionable half) out of the window.
+_MAX_4XX_PART = 280
+_MAX_UPSTREAM_4XX_COPY = 800
+
+# Keys of a 4xx body that are metadata or are rendered separately, never an
+# argument's error message. `type` is special-cased below: on a 403/429 or
+# web#4189's page_size 400 it is a snake_case TAG, but on /filings/ it holds the
+# `type=` PARAM's own error message (web#4185 names its tag `error_type` for
+# exactly that reason).
+_4XX_NON_FIELD_KEYS = frozenset(
+    {
+        "detail",
+        "resolution",
+        "did_you_mean",
+        "error_type",
+        "invalid_codes",
+        "valid_codes_url",
+        "upgrade_url",
+        "max_page_size",
+        "max_offset",
+        "message",
+        "error",
+        "code",
+        "status_code",
+        "retry_after_seconds",
+        "scope",
+    }
+)
+_TAG_RE = re.compile("^[a-z][a-z0-9_]*$")
+
+
+def _flatten_error_value(value: Any, depth: int = 0) -> str:
+    """DRF error values are a str, a list of str, or a nested dict of those."""
+    if depth > 3:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if isinstance(value, list):
+        items = (_flatten_error_value(v, depth + 1) for v in value[:10])
+        return "; ".join(i for i in items if i)
+    if isinstance(value, dict):
+        items = (
+            f"{k}: {_flatten_error_value(v, depth + 1)}"
+            for k, v in list(value.items())[:10]
+        )
+        return "; ".join(i for i in items if not i.endswith(": "))
+    return ""
+
+
+def _did_you_mean_text(value: Any) -> str:
+    """Render web#4185/#4139's `did_you_mean` ({bad: [fragments]}) for a model."""
+    if not isinstance(value, dict):
+        return ""
+    rows = []
+    for bad, fixes in list(value.items())[:10]:
+        if isinstance(fixes, str):
+            fixes = [fixes]
+        if not isinstance(fixes, list):
+            continue
+        fixes = [f for f in fixes if isinstance(f, str) and f]
+        if fixes:
+            rows.append(f"{bad} -> " + " or ".join(fixes))
+    return "Did you mean: " + "; ".join(rows) + "." if rows else ""
+
+
+def _upstream_4xx_copy(body_text: str) -> str:
+    """What the API said about a rejected request, for the model (#132).
+
+    Every 400 used to reach the model as "check the arguments" although the REST
+    body already named the bad argument; prod repeated identical failing calls
+    because the model never saw why. Forwarded, not reconstructed, so REST and
+    MCP stay equal and the suggestions live in one place (the monolith).
+
+    Untrusted input: credential-shaped substrings are redacted and every part is
+    capped. A body that is not a JSON object (an HTML error page, say) forwards
+    nothing — it is not argument guidance.
+    """
+    payload = _parse_upstream_json(body_text)
+    if payload is None:
+        return ""
+
+    def cap(text: str) -> str:
+        # Redact BEFORE truncating: a cut can shorten a key below the
+        # redaction threshold and leak its prefix (#135 review).
+        text = _redact_opaque(" ".join(text.split()))
+        return text if len(text) <= _MAX_4XX_PART else text[: _MAX_4XX_PART - 1] + "…"
+
+    fields = []
+    for key, value in payload.items():
+        if key in _4XX_NON_FIELD_KEYS:
+            continue
+        if key == "type" and isinstance(value, str) and _TAG_RE.match(value):
+            continue
+        text = _flatten_error_value(value)
+        if text:
+            fields.append(cap(f"{key}: {text}"))
+    head = fields[:5]
+    detail = payload.get("detail")
+    if not head and isinstance(detail, str) and detail.strip():
+        head.append(cap(detail))
+    # The remedy (resolution, did_you_mean, plans link) is what lets the model
+    # fix the call, so it is budgeted FIRST and field prose gets what is left
+    # (#135 review: three long field errors used to push the suggestion out).
+    tail = []
+    resolution = payload.get("resolution")
+    if isinstance(resolution, str) and resolution.strip():
+        tail.append(cap(resolution))
+    suggestion = _did_you_mean_text(payload.get("did_you_mean"))
+    if suggestion:
+        tail.append(cap(suggestion))
+    upgrade = payload.get("upgrade_url")
+    if isinstance(upgrade, str) and upgrade.startswith("https://"):
+        if upgrade not in " ".join(head + tail):
+            tail.append(cap(f"Plans: {upgrade}"))
+    budget = _MAX_UPSTREAM_4XX_COPY - len(" ".join(tail)) - 1
+    parts = []
+    for part in head:
+        room = budget - len(" ".join(parts + [part]))
+        if room >= 0:
+            parts.append(part)
+            continue
+        short = part[: len(part) + room - 1]
+        if len(short) >= 40:  # keep the field name and some of the reason
+            parts.append(short + "…")
+        break
+    text = _redact_opaque(" ".join(parts + tail))
+    return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_4XX_COPY) if text else ""
+
+
+def _upstream_copy(status: int, body_text: str) -> str:
+    """The upstream's own words to forward for this status, or ""."""
+    if status == 429:
+        return _upstream_429_copy(body_text)
+    if status == 401 or status >= 500 or status < 400:
+        return ""
+    return _upstream_4xx_copy(body_text)
+
+
 def _retry_after_seconds(response: httpx.Response) -> str:
     """`Retry-After` when it is the integer-seconds form DRF emits (#40 §5).
 
@@ -2183,6 +2377,26 @@ def _classify_upstream_error(status: int, body_text: str) -> str:
         return _classify_upstream_429(body_text)
     if status >= 500:
         return "transient"
+    if status == 404:
+        return _classify_upstream_404(body_text)
+    return "unknown"
+
+
+def _classify_upstream_404(body_text: str) -> str:
+    """Markdown 404s say WHY there is no text (web MarkdownNotFound).
+
+    A conversion still queued is retryable and is not a missing filing; telling
+    the model "does not exist" made it give up on a filing that would have been
+    readable minutes later (#135 review). Any other 404 stays "unknown".
+    """
+    payload = _parse_upstream_json(body_text) or {}
+    reason = payload.get("reason")
+    if reason == "not_processed":
+        if payload.get("retryable") is True:
+            return "markdown_pending"
+        return "markdown_not_scheduled"
+    if reason == "no_narrative_content":
+        return "markdown_no_content"
     return "unknown"
 
 
@@ -2220,7 +2434,7 @@ def _upstream_hint(
     upstream_copy: str = "",
     retry_after: str = "",
 ) -> str:
-    if status in (401, 403):
+    if status in (401, 403) and error_kind != "plan_restricted":
         if error_kind == "missing_profile":
             # Reconnecting won't help — the Cognito identity has no matching
             # FR UserProfile. Tell the LLM to surface the actual remediation.
@@ -2241,8 +2455,39 @@ def _upstream_hint(
             "Ask the user to disconnect and reconnect the FinancialFilings "
             "connector, then retry."
         )
+    if status == 403 and error_kind == "plan_restricted":
+        # Not a credentials problem, so no reconnect advice (#132).
+        base = (
+            "The user's FinancialFilings plan does not include this request — "
+            "not a credentials problem, so reconnecting will not help."
+        )
+        return f"{base} Tell the user: {upstream_copy}" if upstream_copy else base
+    if status == 404 and error_kind == "markdown_pending":
+        wait = f"after {retry_after} seconds" if retry_after else "in a few minutes"
+        return (
+            "This filing exists; its Markdown is still being converted, so this "
+            f"is not a missing filing. Retry {wait}. Meanwhile a human can open "
+            "the filing's raw document."
+        )
+    if status == 404 and error_kind == "markdown_not_scheduled":
+        # retryable=false here means "stop polling now", not "never": the
+        # filing may be scheduled later, which makes markdown_url non-null.
+        return (
+            "This filing exists but its Markdown is not scheduled for "
+            "conversion yet, so do not retry now. It may become available "
+            "later (its `markdown_url` becomes non-null). For now use the "
+            "filing's raw document (`document` / `document_url`) or a "
+            "different filing."
+        )
+    if status == 404 and error_kind == "markdown_no_content":
+        return (
+            "This filing exists but has no narrative text to convert, and "
+            "retrying will not change that. Use the filing's raw document "
+            "(`document` / `document_url`) or choose a different filing."
+        )
     if status == 404:
-        return "The requested resource does not exist upstream — check the id/arguments."
+        base = "The requested resource does not exist upstream — check the id/arguments."
+        return f"{base} The API said: {upstream_copy}" if upstream_copy else base
     if status == 429:
         # Quota and spend-cap exhaustion are not retryable within the period —
         # "wait a moment" is actively wrong there (a credit allowance resets at
@@ -2270,6 +2515,14 @@ def _upstream_hint(
         # so do not tell the caller to retry immediately — that would be a third
         # attempt against an upstream that has failed twice.
         return "Transient upstream error, already retried once — report if it persists."
+    if upstream_copy:
+        # The body names the bad argument (and, from web#4138/#4139, a
+        # replacement). An identical retry fails the same way, which is the
+        # repeat-loop prod telemetry showed before this was forwarded (#132).
+        return (
+            "The API rejected the arguments: " + upstream_copy + " Fix the "
+            "arguments before retrying; an identical retry fails the same way."
+        )
     return "The request was rejected upstream — check the arguments."
 
 
@@ -2282,7 +2535,7 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
     """
     status = response.status_code
     request_id = _upstream_request_id(response)
-    body_text = response.text[:1000]
+    body_text = response.text[:_MAX_ERROR_BODY]
     error_kind = _classify_upstream_error(status, body_text)
     logger.warning(
         "upstream %s status=%d kind=%s request_id=%s client_request_id=%s "
@@ -2301,7 +2554,7 @@ def _raise_upstream_error(func_name: str, response: httpx.Response) -> None:
     hint = _upstream_hint(
         status,
         error_kind,
-        upstream_copy=_upstream_429_copy(body_text) if status == 429 else "",
+        upstream_copy=_upstream_copy(status, body_text),
         retry_after=_retry_after_seconds(response),
     )
     raise UpstreamHTTPError(
@@ -2357,7 +2610,7 @@ def _upstream_error_text(response: httpx.Response, body_text: str) -> str:
     hint = _upstream_hint(
         status,
         error_kind,
-        upstream_copy=_upstream_429_copy(body_text) if status == 429 else "",
+        upstream_copy=_upstream_copy(status, body_text),
         retry_after=_retry_after_seconds(response),
     )
     return f"Error {status} {response.reason_phrase}: {hint}"
@@ -2491,7 +2744,7 @@ def _format_response(response: httpx.Response) -> str:
         # unsanitized — both a leak risk and the reason they never got the
         # quota upsell. Same classifier as the structured path now (#73); the
         # unredacted-but-sanitized body still reaches analytics for triage.
-        _raise_upstream_text_error(exc.response, exc.response.text[:1000])
+        _raise_upstream_text_error(exc.response, exc.response.text[:_MAX_ERROR_BODY])
         raise AssertionError("unreachable")  # pragma: no cover
     except Exception as exc:
         record_tool_error("ResponseFormatError", str(exc))
@@ -3707,6 +3960,11 @@ async def {{ func_name }}(
             _pg_val = query_params.get(_pg_key)
             if _pg_val is not None and int(_pg_val) < 1:
                 raise ToolInputError(f"{_pg_key} must be >= 1")
+        # Above the API's max_page_size is a 400 (71 in prod over 30 days,
+        # #132). Clamp rather than reject: the page still carries `count` and
+        # `next`, so nothing is hidden and the call does not fail.
+        if query_params.get("page_size") is not None:
+            query_params["page_size"] = min(int(query_params["page_size"]), _MAX_PAGE_SIZE)
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:
@@ -3843,7 +4101,7 @@ async def {{ func_name }}(
             if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
                 _raise_upstream_text_error(
-                    response, body[:1000].decode("utf-8", errors="replace")
+                    response, body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace")
                 )
 
             buf = bytearray()
@@ -3873,7 +4131,8 @@ async def {{ func_name }}(
             )
         if offset >= total_length:
             return (
-                f"--- MARKDOWN CONTENT (chars {offset} to {total_length} of {total_length}) ---\\n"
+                f"--- MARKDOWN CONTENT (offset {offset} is past the end; the "
+                f"document has {total_length} chars) ---\\n"
                 "(empty: offset is at or past the end of the document)"
             )
         def _prose(end):
@@ -3965,6 +4224,11 @@ async def {{ func_name }}(
             _pg_val = query_params.get(_pg_key)
             if _pg_val is not None and int(_pg_val) < 1:
                 raise ToolInputError(f"{_pg_key} must be >= 1")
+        # Above the API's max_page_size is a 400 (71 in prod over 30 days,
+        # #132). Clamp rather than reject: the page still carries `count` and
+        # `next`, so nothing is hidden and the call does not fail.
+        if query_params.get("page_size") is not None:
+            query_params["page_size"] = min(int(query_params["page_size"]), _MAX_PAGE_SIZE)
         path_params: dict[str, str] = {}
         {%- for param in params if param.is_path %}
         if {{ param.name }} is not None:
@@ -4061,9 +4325,9 @@ def _resource_filing_types() -> str:
         "FinancialFilings taxonomy category.\\n\\n"
         "## SEC form names are NOT codes — translate first\\n\\n"
         "These codes are a cross-jurisdiction taxonomy, not SEC form names. "
-        "`type=10-Q` matches nothing and returns an EMPTY LIST, not an error "
-        "(the filter is an exact `code IN (...)`), so a wrong code looks like "
-        "\\"this company filed nothing\\". Shares below measured on SEC "
+        "`type=10-Q` is not a code: an unknown code is rejected with a 400 "
+        "that names it and, where one exists, suggests the replacement (the "
+        "filter is an exact `code IN (...)`). Shares below measured on SEC "
         "over the 180 days to 2026-09-17.\\n\\n"
         "| You want (SEC form) | Use | Note |\\n"
         "|---|---|---|\\n"
@@ -4382,7 +4646,7 @@ async def filings_markdown_search(
             if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
                 _raise_upstream_text_error(
-                    response, body[:1000].decode("utf-8", errors="replace")
+                    response, body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace")
                 )
             buf = bytearray()
             async for _chunk in response.aiter_bytes():
@@ -4899,6 +5163,42 @@ def extract_response_schema(operation: dict, full_schema: dict) -> dict | None:
     return schema
 
 
+# Longest parameter description kept (#132). The /filings/ `types` text is 297
+# chars and is the one that matters most ("taxonomy codes, not regulator form
+# names"), so the cap sits just above it; anything longer is cut, not dropped.
+_MAX_PARAM_DESCRIPTION = 320
+
+# Which parameters carry their schema description into the tool's input schema
+# (#132). An ALLOWLIST, because every character here is sent on every session:
+# emitting all of them measured +2,774 tokens on `tools/list` (4,995 -> 7,769,
+# filings_list alone 927 -> 2,467), mostly text that restates the name ("Filter
+# by internal Company ID."). These are the parameters behind measured failures in
+# 30 days of prod traffic (2026-08-29 -> 09-28): form names passed as
+# `type`/`types` (83 400s) where `source_filing_type` belongs, invented KPI
+# codes in `line_items` (165), and period names like `Q3` passed as a type
+# (web#4185 redirects those to `fiscal_period`). Widen it here.
+_DESCRIBED_PARAMS = frozenset(
+    {"type", "types", "source_filing_type", "line_items", "fiscal_period"}
+)
+
+
+def describe_param(py_type: str, description, name: str = "") -> str:
+    """Wrap a param type in Annotated[..., Field(description=...)] (#132).
+
+    The generator used to emit bare `type: str | None`, so the parameter carried
+    no guidance even where the schema had some. Emitted via repr() so any quote
+    or backslash in the schema text stays a valid Python literal.
+    """
+    if name not in _DESCRIBED_PARAMS or not isinstance(description, str):
+        return py_type
+    text = " ".join(description.split())
+    if not text:
+        return py_type
+    if len(text) > _MAX_PARAM_DESCRIPTION:
+        text = text[: _MAX_PARAM_DESCRIPTION - 1].rstrip() + "…"
+    return f"Annotated[{py_type}, Field(description={text!r})]"
+
+
 def get_python_type(
     schema_type,
     schema_format=None,
@@ -5032,7 +5332,11 @@ def extract_path_params(operation: dict) -> list:
         params.append({
             "name": snake_case(name),
             "original_name": name,
-            "py_type": py_type,
+            "py_type": describe_param(
+                py_type,
+                param.get("description") or param_schema.get("description"),
+                name,
+            ),
             "default_val": default_val,
             "is_path": True,
             "is_query": False,
@@ -5070,7 +5374,7 @@ def extract_body_params(operation: dict, full_schema: dict) -> list:
         params.append({
             "name": snake_case(prop_name),
             "original_name": prop_name,
-            "py_type": py_type,
+            "py_type": describe_param(py_type, prop_schema.get("description"), prop_name),
             "default_val": default_val,
             "is_path": False,
             "is_query": False,
@@ -5097,7 +5401,11 @@ def extract_query_params(operation: dict) -> list:
         params.append({
             "name": snake_case(name),
             "original_name": name,
-            "py_type": py_type,
+            "py_type": describe_param(
+                py_type,
+                param.get("description") or param_schema.get("description"),
+                name,
+            ),
             "default_val": default_val,
             "is_path": False,
             "is_query": True,
