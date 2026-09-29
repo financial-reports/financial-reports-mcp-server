@@ -446,7 +446,13 @@ async def test_markdown_404_without_text_says_do_not_retry(
     )
     msg = str(exc)
     assert exc.error_kind == kind
-    assert "retrying will not change that" in msg and "raw document" in msg
+    assert "raw document" in msg and "does not exist upstream" not in msg
+    if kind == "markdown_not_scheduled":
+        # not "never": the filing may be scheduled later (#135 review round 3)
+        assert "do not retry now" in msg and "later" in msg
+        assert "retrying will not change that" not in msg
+    else:
+        assert "retrying will not change that" in msg
 
 
 @pytest.mark.asyncio

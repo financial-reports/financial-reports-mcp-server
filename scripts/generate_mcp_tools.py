@@ -2469,11 +2469,21 @@ def _upstream_hint(
             f"is not a missing filing. Retry {wait}. Meanwhile a human can open "
             "the filing's raw document."
         )
-    if status == 404 and error_kind in ("markdown_not_scheduled", "markdown_no_content"):
+    if status == 404 and error_kind == "markdown_not_scheduled":
+        # retryable=false here means "stop polling now", not "never": the
+        # filing may be scheduled later, which makes markdown_url non-null.
         return (
-            "This filing exists but has no Markdown text, and retrying will not "
-            "change that. Use the filing's raw document (`document` / "
-            "`document_url`) or choose a different filing."
+            "This filing exists but its Markdown is not scheduled for "
+            "conversion yet, so do not retry now. It may become available "
+            "later (its `markdown_url` becomes non-null). For now use the "
+            "filing's raw document (`document` / `document_url`) or a "
+            "different filing."
+        )
+    if status == 404 and error_kind == "markdown_no_content":
+        return (
+            "This filing exists but has no narrative text to convert, and "
+            "retrying will not change that. Use the filing's raw document "
+            "(`document` / `document_url`) or choose a different filing."
         )
     if status == 404:
         base = "The requested resource does not exist upstream — check the id/arguments."
