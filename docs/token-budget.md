@@ -4,11 +4,11 @@ Total tools registered: **16**
 
 | Tool | Description chars | Schema chars | Approx tokens |
 |---|---:|---:|---:|
-| `filings_list` | 1763 | 4295 | 1513 |
-| `companies_financials_retrieve` | 4571 | 980 | 1387 |
+| `filings_list` | 1668 | 4295 | 1490 |
+| `companies_financials_retrieve` | 4558 | 980 | 1384 |
 | `companies_resolve_create` | 2770 | 87 | 713 |
 | `companies_list` | 1035 | 1426 | 614 |
-| `filings_markdown_retrieve` | 1876 | 171 | 511 |
+| `filings_markdown_retrieve` | 1784 | 171 | 488 |
 | `filings_retrieve` | 1111 | 74 | 295 |
 | `filing_types_list` | 364 | 318 | 170 |
 | `companies_retrieve` | 559 | 74 | 157 |
@@ -21,7 +21,7 @@ Total tools registered: **16**
 | `get_fr_markdown_fetch_strategy` | 187 | 33 | 54 |
 | `companies_next_annual_report_retrieve` | 102 | 74 | 43 |
 
-**Total approx tokens for `tools/list`: 6049**
+**Total approx tokens for `tools/list`: 6000**
 
 > **Methodology**: token count is approximated as `len(chars) // 4`
 > (per-tool description + JSON-serialized parameter schema). The actual

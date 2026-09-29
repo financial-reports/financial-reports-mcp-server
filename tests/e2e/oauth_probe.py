@@ -88,11 +88,14 @@ ERROR_CONTRACT_CALLS: list[tuple[str, dict]] = [
 ]
 
 
-# #106, against prod: `view="full"` rows must carry a real `processing_status`
-# (web#4192 exposed it; before, full rows returned null). Filtered by company so
-# the call does not depend on the unfiltered-list count timeout (web#4208).
+# #106, against prod: `view="full"` rows and the `filings_retrieve` response must
+# carry a real `processing_status` (web#4192 exposed it; before, both lacked the
+# key). Filtered by company so the list call does not depend on the
+# unfiltered-list count timeout (web#4208). 60573187 is an adidas (company 14)
+# filing that has been in prod since before this check was written.
 VIEW_FULL_CALLS: list[tuple[str, dict]] = [
     ("filings_list", {"view": "full", "company": 14, "page_size": 3}),
+    ("filings_retrieve", {"id": 60573187}),
 ]
 
 _PROCESSING_STATUS_RE = re.compile(r'"processing_status":\s*("[A-Za-z_]+"|null)')
