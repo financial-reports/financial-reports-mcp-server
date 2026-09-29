@@ -28,13 +28,14 @@
 --   conversation_matched  both events carry the same openai session id
 --   user_window           no stable id: same user within 30 min (can include
 --                         an unrelated conversation, so it is looser)
--- Only successful, non-empty filing-body reads count. IDs are length-guarded
+-- Only successful, non-empty filing-body reads count, minus those with a
+-- known positive offset. IDs are length-guarded
 -- before the bigint cast (logged arguments are not range-checked).
 --
--- Measured 2026-09-28, 30-day window (financials_ok / same-company / other):
---   all clients           2,608 / 419 (16.1%) / 247 (9.5%)
---   conversation_matched  1,417 / 197 (13.9%) / 114 (8.0%)
---   user_window           1,191 / 222 (18.6%) / 133 (11.2%); fr-e2e-probe 0 / 0
+-- Measured 2026-09-29, 30-day window (financials_ok / same-company / other):
+--   all clients           2,600 / 353 (13.6%) / 216 (8.3%)
+--   conversation_matched  1,417 / 172 (12.1%) / 105 (7.4%)
+--   user_window           1,183 / 181 (15.3%) / 111 (9.4%); fr-e2e-probe 0 / 0
 with f as (
   select user_id, timestamp ts, (arguments->>'id')::bigint company_id, mcp_client_name,
          case when correlation_source in ('meta:openai/session', 'header:x-openai-session') then correlation_id end conv
@@ -50,6 +51,12 @@ with f as (
   where e.name = 'filings_markdown_retrieve' and e.status = 'ok' and e.has_data
     and e.timestamp > now() - interval '30 days'
     and (e.arguments->>'filing_id') ~ '^[0-9]{1,18}$'
+    -- drop reads with a KNOWN positive offset: an offset past EOF returns a
+    -- non-empty notice that analytics logs as has_data. Many rows log the offset
+    -- as '<redacted>' (2,942 of 5,774 ok reads in 30 days); those cannot be
+    -- checked and are kept, so the count stays an upper bound.
+    and not coalesce((e.arguments->>'offset') ~ '^[0-9]{1,18}$'
+                     and (e.arguments->>'offset')::bigint > 0, false)
 ), j as (
   select f.*, case when f.conv is not null then 'conversation_matched' else 'user_window' end cohort,
     exists (select 1 from m where m.user_id = f.user_id and m.company_id = f.company_id
