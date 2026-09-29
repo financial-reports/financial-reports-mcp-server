@@ -33,8 +33,9 @@
 -- returns a non-empty notice that analytics also logs as has_data, and it
 -- cannot be told apart here (the offset is often logged as '<redacted>'), so
 -- both columns are UPPER BOUNDS; the notice inflates them alike, so the gap
--- stays comparable. IDs are length-guarded before the bigint cast (logged
--- arguments are not range-checked).
+-- stays comparable. IDs are cast only inside a CASE on the regex, because Postgres does not
+-- promise to apply the WHERE filter before a join condition (logged arguments
+-- are not range-checked).
 --
 -- Measured 2026-09-29 05:0xZ, 30-day window (financials_ok / same-company / other):
 --   all clients           2,600 / 421 (16.2%) / 247 (9.5%)
@@ -42,7 +43,8 @@
 --   user_window           1,185 / 224 (18.9%) / 133 (11.2%)
 --   fr-e2e-probe (control)   77 / 0 / 0
 with f as (
-  select user_id, timestamp ts, (arguments->>'id')::bigint company_id, mcp_client_name,
+  select user_id, timestamp ts,
+         case when (arguments->>'id') ~ '^[0-9]{1,18}$' then (arguments->>'id')::bigint end company_id, mcp_client_name,
          case when correlation_source in ('meta:openai/session', 'header:x-openai-session') then correlation_id end conv
   from users_mcptoolevent
   where name = 'companies_financials_retrieve' and status = 'ok' and has_data
@@ -52,7 +54,8 @@ with f as (
   select e.user_id, e.timestamp ts, fl.company_id,
          case when e.correlation_source in ('meta:openai/session', 'header:x-openai-session') then e.correlation_id end conv
   from users_mcptoolevent e
-  join filings_filing fl on fl.id = (e.arguments->>'filing_id')::bigint
+  join filings_filing fl on fl.id = case when (e.arguments->>'filing_id') ~ '^[0-9]{1,18}$'
+                                        then (e.arguments->>'filing_id')::bigint end
   where e.name = 'filings_markdown_retrieve' and e.status = 'ok' and e.has_data
     and e.timestamp > now() - interval '30 days'
     and (e.arguments->>'filing_id') ~ '^[0-9]{1,18}$'
