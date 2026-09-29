@@ -78,6 +78,15 @@ STRUCTURED_TOOLS: list[tuple[str, dict]] = [
     ("companies_financials_retrieve", {"id": 14}),
 ]
 
+# #132 error contract, against prod: a rejected argument must reach the model
+# with the API's own explanation, and an over-limit page_size must be clamped
+# rather than 400. Kept separate from STRUCTURED_TOOLS, whose contract is
+# "data or reconnect".
+ERROR_CONTRACT_CALLS: list[tuple[str, dict]] = [
+    ("filings_list", {"types": "10-Q", "page_size": 1}),
+    ("filings_list", {"page_size": 500}),
+]
+
 
 def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
@@ -397,7 +406,7 @@ def run_probe(
                 "tool": name,
                 "args": args,
                 "classification": classify(text, bool(res.get("isError")) or "error" in (resp or {})),
-                "detail": text[:240],
+                "detail": text[:1200],
                 "bytes": len(json.dumps(res)),
             }
         )
