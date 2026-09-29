@@ -152,6 +152,7 @@ from mcp.types import Icon, ToolAnnotations
 from pydantic import Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from src.session_id import McpSessionIdMiddleware
 from src.usage_analytics import (
     UsageAnalyticsMiddleware,
     build_emitter_from_env,
@@ -3237,6 +3238,10 @@ class _RegisterErrorLogger(BaseHTTPMiddleware):
         return response
 
 
+# Issue an Mcp-Session-Id on `initialize` so one connection's calls can be
+# grouped in usage analytics (stateless: random, never stored or validated).
+# Innermost of the HTTP middlewares; see src/session_id.py for why.
+app.add_middleware(McpSessionIdMiddleware)
 app.add_middleware(_RegisterErrorLogger)
 app.add_middleware(_OriginAndProtocolMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
