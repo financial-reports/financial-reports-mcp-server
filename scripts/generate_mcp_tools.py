@@ -4707,6 +4707,176 @@ async def filings_markdown_search(
 '''
 
 
+# Hidden un-standardised facts tools (web#4964). Hand-written because the four
+# REST endpoints are excluded from the public OpenAPI schema (staff-only, not
+# billed), so the schema loop never sees them. 1:1 with the endpoints: same
+# params, same shapes, nothing MCP-only. Always EMITTED (the generated module is
+# the same whatever the flag), but REGISTERED only when MCP_UNSTD_FACTS_TOOLS=1
+# at runtime, so with the default (unset) they are in no tools/list anywhere and
+# out of docs/token-budget.md. The real gate stays upstream: the endpoints 403
+# any non-staff caller even with the flag on.
+UNSTD_FACTS_TOOLS_BLOCK = '''
+
+MCP_UNSTD_FACTS_TOOLS = os.environ.get("MCP_UNSTD_FACTS_TOOLS", "0").strip() == "1"
+_SERIES_KEY_RE = re.compile(r"^[xl]_[0-9a-f]{16}$")
+
+_UnstdStatement = Annotated[
+    str | None,
+    Field(description="Comma list of BS,IS,CI,CF,EQ,NOTE,OTHER."),
+]
+_UnstdMethod = Annotated[
+    Literal["xbrl", "llm"] | None,
+    Field(description="Only facts from this extraction method."),
+]
+_UnstdPeriod = Annotated[
+    Literal["annual", "quarterly"] | None,
+    Field(description="Duration series of this length; instants always kept."),
+]
+_UnstdAsOf = Annotated[
+    str | None,
+    Field(description="YYYY-MM-DD: only what was published by that day."),
+]
+
+
+async def _unstd_facts_get(func_name: str, url: str, params: dict[str, Any]) -> str:
+    """GET a hidden facts endpoint, return its JSON compact (no indent).
+
+    The Django body is already compact and omits nulls, so this is a
+    pass-through re-serialisation. Errors follow the text-tool contract (#104):
+    an upstream 4xx/5xx raises with the forwarded field message.
+    """
+    try:
+        _require_auth_context()
+        for _pg_key in ("page", "page_size"):
+            _pg_val = params.get(_pg_key)
+            if _pg_val is not None and int(_pg_val) < 1:
+                raise ToolInputError(f"{_pg_key} must be >= 1")
+        query = {k: v for k, v in params.items() if v is not None}
+        if "page_size" in query:
+            query = {**query, "page_size": min(int(query["page_size"]), _MAX_PAGE_SIZE)}
+        response = await _api_get(url, params=query)
+        if response.is_error:
+            _raise_upstream_text_error(response, response.text[:_MAX_ERROR_BODY])
+        data = _scrub_response(response.json())
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            record_result_count(len(data["results"]))
+        return _json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
+    except ToolInputError as exc:
+        return _safe_error(func_name, exc)
+    except Exception as exc:
+        logger.exception("%s failed", func_name)
+        return _safe_error(func_name, exc)
+
+
+_UNSTD_ANNOTATIONS = dict(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
+)
+
+if MCP_UNSTD_FACTS_TOOLS:
+
+    @mcp.tool(
+        tags={"Facts"},
+        annotations=ToolAnnotations(title="Filing Facts", **_UNSTD_ANNOTATIONS),
+    )
+    @subscription_required
+    async def filings_facts(
+        id: int,
+        statement: _UnstdStatement = None,
+        method: _UnstdMethod = None,
+        status: Annotated[
+            Literal["accepted", "all"] | None,
+            Field(description="Default accepted; all adds LLM facts under review."),
+        ] = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> str:
+        """Every as-reported numeric fact of one filing, paginated (max 100).
+        `value` is a decimal string, fully scaled (`as_printed` is audit only).
+        method=xbrl is issuer-tagged; method=llm is machine-extracted, carries
+        `confidence`/`status` and is not authoritative."""
+        return await _unstd_facts_get(
+            "filings_facts",
+            f"/filings/{_validate_path_param('id', id)}/facts/",
+            {"statement": statement, "method": method, "status": status,
+             "page": page, "page_size": page_size},
+        )
+
+    @mcp.tool(
+        tags={"Facts"},
+        annotations=ToolAnnotations(title="Filing Statements", **_UNSTD_ANNOTATIONS),
+    )
+    @subscription_required
+    async def filings_statements(
+        id: int,
+        statement: _UnstdStatement = None,
+        method: _UnstdMethod = None,
+    ) -> str:
+        """One filing's statements as printed, as row trees (default
+        BS,IS,CI,CF,EQ; unpaginated). Each row's `values`/`refs` align by index
+        with the statement's `periods`; values are decimal strings, fully
+        scaled. XBRL when present; method=llm is not authoritative."""
+        return await _unstd_facts_get(
+            "filings_statements",
+            f"/filings/{_validate_path_param('id', id)}/statements/",
+            {"statement": statement, "method": method},
+        )
+
+    @mcp.tool(
+        tags={"Facts"},
+        annotations=ToolAnnotations(title="Company Series", **_UNSTD_ANNOTATIONS),
+    )
+    @subscription_required
+    async def companies_series(
+        id: int,
+        period: _UnstdPeriod = None,
+        as_of: _UnstdAsOf = None,
+        search: Annotated[
+            str | None, Field(description="Substring of label or concept.")
+        ] = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> str:
+        """A company's as-reported time series, one summary each (latest
+        value, period count, `continuity`), most periods first, paginated.
+        Pass a `key` to companies_series_retrieve for the full history.
+        key_kind=llm series are often fragmented; values are decimal strings."""
+        return await _unstd_facts_get(
+            "companies_series",
+            f"/companies/{_validate_path_param('id', id)}/series/",
+            {"period": period, "as_of": as_of, "search": search,
+             "page": page, "page_size": page_size},
+        )
+
+    @mcp.tool(
+        tags={"Facts"},
+        annotations=ToolAnnotations(title="Company Series History", **_UNSTD_ANNOTATIONS),
+    )
+    @subscription_required
+    async def companies_series_retrieve(
+        id: int,
+        key: Annotated[str, Field(description="From companies_series: x_ or l_ + 16 hex.")],
+        period: _UnstdPeriod = None,
+        as_of: _UnstdAsOf = None,
+    ) -> str:
+        """Full history of one company series: `observations` (decimal
+        strings, fully scaled, each with method/status; llm ones not
+        authoritative) and `members` (keys merged into the series)."""
+        if not isinstance(key, str) or not _SERIES_KEY_RE.fullmatch(key):
+            return _safe_error(
+                "companies_series_retrieve",
+                ToolInputError("key must be x_ or l_ followed by 16 hex chars"),
+            )
+        return await _unstd_facts_get(
+            "companies_series_retrieve",
+            f"/companies/{_validate_path_param('id', id)}/series/{key}/",
+            {"period": period, "as_of": as_of},
+        )
+'''
+
+
 # Guide TOOLS — the fr://guide/* resource content exposed ALSO as tools, for
 # tool-only MCP clients that can't read MCP resources. Emitted on the pruned
 # default surface (they stand in for the dropped ISIC/reference tools).
@@ -5781,6 +5951,10 @@ def main() -> None:
     # Huge-filing search tool (synthetic) — emitted on every surface; pairs with
     # the in-result pointer filings_markdown_retrieve adds on big (>120k) filings.
     generated_code.append(MARKDOWN_SEARCH_TOOL_BLOCK)
+    # Hidden facts tools (web#4964) — emitted on every surface, registered only
+    # when MCP_UNSTD_FACTS_TOOLS=1 at runtime. Deliberately NOT added to
+    # generated_tools, so the README tool table never lists them.
+    generated_code.append(UNSTD_FACTS_TOOLS_BLOCK)
     generated_code.append(PROMPTS_BLOCK)
     generated_code.append(FILE_FOOTER)
 
