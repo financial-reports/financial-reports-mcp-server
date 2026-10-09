@@ -153,6 +153,7 @@ from pydantic import Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.session_id import McpSessionIdMiddleware
+from src.token_basic_auth import TokenBasicAuthClientIdMiddleware
 from src.usage_analytics import (
     UsageAnalyticsMiddleware,
     build_emitter_from_env,
@@ -3242,6 +3243,9 @@ class _RegisterErrorLogger(BaseHTTPMiddleware):
 # grouped in usage analytics (stateless: random, never stored or validated).
 # Innermost of the HTTP middlewares; see src/session_id.py for why.
 app.add_middleware(McpSessionIdMiddleware)
+# Let Basic-auth clients (Glama) omit client_id from the /token body, which
+# the MCP SDK wrongly requires; see src/token_basic_auth.py.
+app.add_middleware(TokenBasicAuthClientIdMiddleware)
 app.add_middleware(_RegisterErrorLogger)
 app.add_middleware(_OriginAndProtocolMiddleware)
 app.add_middleware(_SecurityHeadersMiddleware)
