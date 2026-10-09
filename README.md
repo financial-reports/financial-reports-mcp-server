@@ -14,13 +14,13 @@
 
 If you're an analyst, researcher, or anyone who wants to ask Claude about public-company filings:
 
-1. **Create a free account** at [financialreports.eu](https://financialreports.eu/) — the MCP connector is free for any FinancialReports user. No paid plan required.
+1. **Create a free account** at [financialfilings.com](https://financialfilings.com/) — the MCP connector is free for any FinancialFilings user. No paid plan required.
 2. **Add the connector** in your MCP client — pick yours under [Connect your client](#connect-your-client) below. The two most common:
    - **Claude.ai / Claude Desktop**: Settings → Connectors → Add custom connector → URL: `https://mcp.financialfilings.com/mcp`
    - **Claude Code**: `claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp`
 3. **Sign in** with your FinancialFilings account when prompted. That's it.
 
-Full setup walkthrough with screenshots: [financialreports.eu/integrations/claude/](https://financialreports.eu/integrations/claude/).
+Full setup walkthrough with screenshots: [financialfilings.com/integrations/claude/](https://financialfilings.com/integrations/claude/).
 
 ---
 
@@ -180,7 +180,7 @@ Two things the error page itself doesn't tell you:
 
 Set `MCP_FULL_SURFACE=1` to restore the full **46-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, webhook subscriptions, the company-merge audit feed, and per-exchange security listings.
 
-The shipped surface is generated from a committed, reviewed snapshot of the [FinancialReports OpenAPI schema](https://financialreports.eu/api/schema/) (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build), so it's deterministic and never drifts silently on a rebuild.
+The shipped surface is generated from a committed, reviewed snapshot of the [FinancialFilings OpenAPI schema](https://financialreports.eu/api/schema/) (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build), so it's deterministic and never drifts silently on a rebuild.
 
 ### Companion skill
 

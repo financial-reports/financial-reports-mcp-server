@@ -263,3 +263,25 @@ for the platform-level picture.
 
 If you have a change that needs one of those values, you need access to that repo; do not
 work around it by adding the value here.
+
+## Official MCP Registry listing
+
+The server is listed in the official MCP Registry as `eu.financialreports/mcp-server`
+(`https://registry.modelcontextprotocol.io/v0.1/servers?search=financialreports`). The entry is
+`server.json` at the repo root. Merging or deploying does **not** update it; the registry only
+changes when someone publishes. The namespace is proven by a DNS TXT record
+(`v=MCPv1; k=ed25519; …`) on the `financialreports.eu` apex; the matching private key is a Secret Manager
+secret (`$REGISTRY_KEY_SECRET`, named in the internal runbook). To publish a new version (versions are immutable, so bump
+`version` in `server.json` first):
+
+```bash
+# mcp-publisher: https://github.com/modelcontextprotocol/registry/releases
+# Ed25519 needs OpenSSL 3 (macOS: /opt/homebrew/opt/openssl@3/bin/openssl)
+gcloud secrets versions access latest --project "$PROJECT_ID" --secret "$REGISTRY_KEY_SECRET" > /tmp/key.pem
+PRIV="$(openssl pkey -in /tmp/key.pem -noout -text | grep -A3 'priv:' | tail -n +2 | tr -d ' :\n')"
+mcp-publisher login dns --domain financialreports.eu --private-key "$PRIV" && mcp-publisher publish
+rm /tmp/key.pem
+```
+
+If the key is rotated, remove the old TXT record from the apex: the registry tries a stale record
+first and fails.
