@@ -10,7 +10,10 @@ import base64
 
 import httpx
 import pytest
-from mcp.server.auth.middleware.client_auth import AuthenticationError, ClientAuthenticator
+from mcp.server.auth.middleware.client_auth import (
+    AuthenticationError,
+    ClientAuthenticator,
+)
 from mcp.shared.auth import OAuthClientInformationFull
 from starlette.applications import Starlette
 from starlette.requests import Request
