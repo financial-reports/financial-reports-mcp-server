@@ -277,10 +277,14 @@ secret (`$REGISTRY_KEY_SECRET`, named in the internal runbook). To publish a new
 ```bash
 # mcp-publisher: https://github.com/modelcontextprotocol/registry/releases
 # Ed25519 needs OpenSSL 3 (macOS: /opt/homebrew/opt/openssl@3/bin/openssl)
-gcloud secrets versions access latest --project "$PROJECT_ID" --secret "$REGISTRY_KEY_SECRET" > /tmp/key.pem
-PRIV="$(openssl pkey -in /tmp/key.pem -noout -text | grep -A3 'priv:' | tail -n +2 | tr -d ' :\n')"
-mcp-publisher login dns --domain financialreports.eu --private-key "$PRIV" && mcp-publisher publish
-rm /tmp/key.pem
+(
+  umask 077                                   # key file is 0600, scoped to this subshell
+  KEY="$(mktemp)"; trap 'rm -f "$KEY"' EXIT   # removed even if login/publish fails
+  gcloud secrets versions access latest --project "$PROJECT_ID" --secret "$REGISTRY_KEY_SECRET" > "$KEY"
+  PRIV="$(openssl pkey -in "$KEY" -noout -text | grep -A3 'priv:' | tail -n +2 | tr -d ' :\n')"
+  mcp-publisher login dns --domain financialreports.eu --private-key "$PRIV" && mcp-publisher publish
+)
+mcp-publisher logout                          # drop the cached registry token
 ```
 
 If the key is rotated, remove the old TXT record from the apex: the registry tries a stale record
