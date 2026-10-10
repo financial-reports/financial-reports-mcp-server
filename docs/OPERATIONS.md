@@ -266,11 +266,11 @@ work around it by adding the value here.
 
 ## Official MCP Registry listing
 
-The server is listed in the official MCP Registry as `eu.financialreports/mcp-server`
-(`https://registry.modelcontextprotocol.io/v0.1/servers?search=financialreports`). The entry is
+The server is listed in the official MCP Registry as `com.financialfilings/mcp-server`
+(`https://registry.modelcontextprotocol.io/v0.1/servers?search=financialfilings`). The entry is
 `server.json` at the repo root. Merging or deploying does **not** update it; the registry only
 changes when someone publishes. The namespace is proven by a DNS TXT record
-(`v=MCPv1; k=ed25519; …`) on the `financialreports.eu` apex; the matching private key is a Secret Manager
+(`v=MCPv1; k=ed25519; …`) on the `financialfilings.com` apex; the matching private key is a Secret Manager
 secret (`$REGISTRY_KEY_SECRET`, named in the internal runbook). To publish a new version (versions are immutable, so bump
 `version` in `server.json` first):
 
@@ -282,10 +282,15 @@ secret (`$REGISTRY_KEY_SECRET`, named in the internal runbook). To publish a new
   KEY="$(mktemp)"; trap 'rm -f "$KEY"' EXIT   # removed even if login/publish fails
   gcloud secrets versions access latest --project "$PROJECT_ID" --secret "$REGISTRY_KEY_SECRET" > "$KEY"
   PRIV="$(openssl pkey -in "$KEY" -noout -text | grep -A3 'priv:' | tail -n +2 | tr -d ' :\n')"
-  mcp-publisher login dns --domain financialreports.eu --private-key "$PRIV" && mcp-publisher publish
+  mcp-publisher login dns --domain financialfilings.com --private-key "$PRIV" && mcp-publisher publish
 )
 mcp-publisher logout                          # drop the cached registry token
 ```
 
 If the key is rotated, remove the old TXT record from the apex: the registry tries a stale record
 first and fails.
+
+Until 2026-10-10 the entry was published as `eu.financialreports/mcp-server`, proven by the same
+key on the `financialreports.eu` apex. That entry is now `deprecated` with a message pointing here.
+Managing it (for example restoring it) needs `login dns --domain financialreports.eu`, so the
+TXT record on that apex stays.
