@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "eu.financialreports/mcp-server",
+  "name": "com.financialfilings/mcp-server",
   "title": "FinancialFilings",
   "description": "Regulatory filings, XBRL financials and company data from securities regulators worldwide",
   "version": "1.4.105",
