@@ -6,7 +6,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialFilings](https://financialfilings.com) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **16 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 46-tool surface). **Free for any FinancialFilings account.** Sourced from official regulators.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **16 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 52-tool surface). **Free for any FinancialFilings account.** Sourced from official regulators.
 
 ---
 
@@ -178,7 +178,7 @@ Two things the error page itself doesn't tell you:
 | Reference taxonomy | 2 | Filing categories and filing types |
 | Guides | 3 | Filing-type taxonomy, ISIC industry classification, and markdown-fetch strategy — callable references for tool-only clients that can't read MCP resources |
 
-Set `MCP_FULL_SURFACE=1` to restore the full **46-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, webhook subscriptions, the company-merge audit feed, and per-exchange security listings.
+Set `MCP_FULL_SURFACE=1` to restore the full **52-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, webhook subscriptions, the company-merge audit feed, per-exchange security listings, the agent account-onboarding endpoints (sign-up, key rotation, checkout link, owner confirmation, status), and the raw `filings_markdown_search_retrieve` endpoint behind `filings_markdown_search`.
 
 The shipped surface is generated from a committed, reviewed snapshot of the [FinancialFilings OpenAPI schema](https://financialreports.eu/api/schema/) (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build), so it's deterministic and never drifts silently on a rebuild.
 

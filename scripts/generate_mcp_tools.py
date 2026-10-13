@@ -56,7 +56,7 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # The default generated surface drops cold per-item reference singletons, the
 # ISIC hierarchy family (folded into the get_fr_industry_classification guide
 # tool), and webhooks/watchlist (real features, off the default surface per the
-# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full ~46-tool surface.
+# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full ~52-tool surface.
 #
 # THIS IS A DENYLIST, NOT AN ALLOWLIST. Every operation the OpenAPI schema gains
 # joins the curated default surface automatically the next time the snapshot is
@@ -90,6 +90,14 @@ _PRUNED_EXCLUDE = {
     # companies_retrieve already returns. `MCP_FULL_SURFACE=1` still emits them.
     "companies_merges_retrieve",
     "security_listings_list", "security_listings_retrieve",
+    # Added with the 2026-10 refresh (#149). The agent_* family is account
+    # onboarding and billing (sign-up, key rotation, Stripe checkout links,
+    # owner-confirmation email) — mutating actions a research agent should not
+    # be offered on the default surface. `filings_markdown_search_retrieve`
+    # duplicates the hand-built `filings_markdown_search` tool.
+    "agent_signup", "agent_key_rotate", "agent_checkout_link",
+    "agent_owner_confirmation", "agent_status",
+    "filings_markdown_search_retrieve",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 
@@ -2349,10 +2357,38 @@ def _upstream_4xx_copy(body_text: str) -> str:
     return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_4XX_COPY) if text else ""
 
 
+def _history_window_copy(body_text: str) -> str:
+    """Cutoff plus the API's explanation for an out-of-window 404, or ""."""
+    payload = _parse_upstream_json(body_text) or {}
+    window = payload.get("history_window")
+    if not isinstance(window, dict):
+        return ""
+    parts = []
+    cutoff = window.get("cutoff")
+    if isinstance(cutoff, str) and cutoff.strip():
+        days = window.get("max_history_days")
+        span = (
+            f" (a rolling {days}-day window)"
+            if isinstance(days, int) and not isinstance(days, bool) and days > 0
+            else ""
+        )
+        parts.append(
+            f"Only filings released on or after {cutoff.strip()[:10]} are "
+            f"retrievable on this plan{span}."
+        )
+    detail = window.get("detail") or payload.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        parts.append(f"The API said: {' '.join(detail.split())}")
+    text = " ".join(parts)
+    return sanitize_error_detail(text, max_len=_MAX_UPSTREAM_4XX_COPY) if text else ""
+
+
 def _upstream_copy(status: int, body_text: str) -> str:
     """The upstream's own words to forward for this status, or ""."""
     if status == 429:
         return _upstream_429_copy(body_text)
+    if status == 404 and _classify_upstream_404(body_text) == "history_window":
+        return _history_window_copy(body_text)
     if status == 401 or status >= 500 or status < 400:
         return ""
     return _upstream_4xx_copy(body_text)
@@ -2389,9 +2425,14 @@ def _classify_upstream_404(body_text: str) -> str:
 
     A conversion still queued is retryable and is not a missing filing; telling
     the model "does not exist" made it give up on a filing that would have been
-    readable minutes later (#135 review). Any other 404 stays "unknown".
+    readable minutes later (#135 review). A body carrying `history_window` is
+    an existing filing outside the plan's history window (#149). Any other 404
+    stays "unknown".
     """
     payload = _parse_upstream_json(body_text) or {}
+    if isinstance(payload.get("history_window"), dict):
+        # The filing exists but is older than the account's plan window (#149).
+        return "history_window"
     reason = payload.get("reason")
     if reason == "not_processed":
         if payload.get("retryable") is True:
@@ -2487,6 +2528,12 @@ def _upstream_hint(
             "retrying will not change that. Use the filing's raw document "
             "(`document` / `document_url`) or choose a different filing."
         )
+    if status == 404 and error_kind == "history_window":
+        base = (
+            "This filing exists but is outside the account's plan history "
+            "window, so it is not missing and retrying will not help."
+        )
+        return f"{base} {upstream_copy}" if upstream_copy else base
     if status == 404:
         base = "The requested resource does not exist upstream — check the id/arguments."
         return f"{base} The API said: {upstream_copy}" if upstream_copy else base
