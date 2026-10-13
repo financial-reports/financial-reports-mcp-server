@@ -2,7 +2,7 @@
 the huge-filing search tool, and the sourcing/anti-fabrication guidance.
 
 These assert the default (pruned) surface. MCP_FULL_SURFACE=1 restores the full
-46-tool surface; that path is exercised by generating with the env var set.
+53-tool surface; that path is exercised by generating with the env var set.
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ def test_pruned_default_surface(mcp_module) -> None:
     for kept in (
         "companies_list", "companies_financials_retrieve",
         "filings_list", "filings_markdown_retrieve", "filing_types_list",
+        "usage_retrieve",
     ):
         assert kept in tools, f"{kept} must stay on the default surface"
 

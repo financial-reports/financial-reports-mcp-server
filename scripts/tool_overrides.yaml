@@ -237,3 +237,18 @@ webhooks_create:
     - user_says: "Alert me when any company files a 10-K"
       parameters: 'url="https://example.com/webhook", trigger_on_filing_processed=true'
       notes: "Follow up with webhooks_test_create to verify the endpoint"
+
+usage_retrieve:
+  when_to_use: >
+    Use when the user asks what their API or MCP usage has cost, how much
+    of their credits or spend cap is left, or why calls are being refused
+    for spend. Returns this billing cycle's spend and credits by category,
+    the daily cap and today's spend, and the free credit pool or request
+    quota. Free: never billed, and it works after a spending cap is hit.
+  when_not_to_use: >
+    Don't call it before every data request to "check budget" — call it
+    when the user asks about cost or a call was refused.
+  examples:
+    - user_says: "How much have I spent this month?"
+      parameters: ""
+      notes: "Report payg.total_usd and payg.daily_cap"
