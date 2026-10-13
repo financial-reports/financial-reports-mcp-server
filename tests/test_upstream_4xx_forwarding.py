@@ -466,6 +466,56 @@ async def test_plain_404_keeps_the_missing_resource_hint(
     assert "does not exist upstream" in str(exc)
 
 
+_OUT_OF_WINDOW = {
+    "detail": (
+        "This filing is outside your plan history window. It exists in the "
+        "FinancialFilings archive but your plan cannot retrieve it."
+    ),
+    "history_window": {
+        "limited": True,
+        "max_history_days": 7305,
+        "cutoff": "2006-10-18T09:12:33.123456+00:00",
+        "detail": (
+            "Your pay-as-you-go plan covers filings released on or after "
+            "2006-10-18 (a rolling 7305-day window). Older filings do exist in "
+            "the FinancialFilings archive — this is a plan boundary, not a gap "
+            "in coverage. Full history is available on enterprise plans."
+        ),
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_out_of_history_window_404_says_exists_not_missing(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    # #149: an out-of-window 404 led with "does not exist upstream", which
+    # contradicted the API's own explanation that the filing exists.
+    exc = await _markdown_404(
+        mcp_module, monkeypatch, fake_access_token, respx_router, _OUT_OF_WINDOW
+    )
+    msg = str(exc)
+    assert exc.error_kind == "history_window"
+    assert "does not exist upstream" not in msg
+    assert "exists but is outside" in msg and "retrying will not help" in msg
+    assert "on or after 2006-10-18" in msg and "7305-day" in msg
+    assert "plan boundary, not a gap in coverage" in msg
+
+
+@pytest.mark.asyncio
+async def test_out_of_history_window_404_without_cutoff_still_classified(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    exc = await _markdown_404(
+        mcp_module, monkeypatch, fake_access_token, respx_router,
+        {"detail": _OUT_OF_WINDOW["detail"], "history_window": {"limited": True}},
+    )
+    msg = str(exc)
+    assert exc.error_kind == "history_window"
+    assert "exists but is outside" in msg and "does not exist upstream" not in msg
+    assert "on or after" not in msg
+
+
 @pytest.mark.asyncio
 async def test_long_field_errors_leave_room_for_the_suggestion(
     mcp_module, monkeypatch, fake_access_token, respx_router
