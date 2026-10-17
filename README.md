@@ -61,12 +61,12 @@ codex mcp login financialreports
 
 ### Cursor
 
-`~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per project):
+One-click install from [Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp), or add it by hand to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (per project):
 
 ```json
 {
   "mcpServers": {
-    "financialreports": { "url": "https://mcp.financialfilings.com/mcp" }
+    "financialfilings": { "url": "https://mcp.financialfilings.com/mcp" }
   }
 }
 ```
@@ -345,8 +345,9 @@ For iterating on the generator, tools, or prompts against a real backend **witho
    ```
 3. Point Claude Code at the local instance:
    ```bash
-   claude mcp add --transport http financialreports-local http://localhost:8000/mcp
+   claude mcp add --transport http financialfilings-local http://localhost:8000/mcp
    ```
+   Add it per developer like this rather than to the repo's `.mcp.json`: that file lists the production server only, because directories that scan this repo (e.g. Cursor Directory) advertise every entry in it as a public install.
 
 Production headless / API-key auth (parallel `/mcp/apikey` endpoint with per-request `X-API-Key`) is tracked in [#28](https://github.com/financial-reports/financial-reports-mcp-server/issues/28) and is a separate feature from this dev-mode shortcut.
 
@@ -396,7 +397,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development se
 ## Project status
 
 - **Production**: live at `https://mcp.financialfilings.com/mcp`
-- **MCP Directory**: submitted for inclusion (May 2026)
+- **Listed on**: [Claude connector directory](https://claude.ai/directory/financialreports-eu), [Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp)
 - **Spec compliance**: MCP 2025-11-25
 - **Tested with**: Claude.ai, Claude Code, Claude Desktop, Cursor, Windsurf. Config snippets also provided for Codex, Kilo Code, opencode, Gemini CLI, and Hermes (see [Connect your client](#connect-your-client)).
 
@@ -404,7 +405,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development se
 
 ## License
 
-[MIT](LICENSE) — © FinancialReports.
+[MIT](LICENSE) — © FINANCIALREPORTS PTE. LTD.
 
 ---
 

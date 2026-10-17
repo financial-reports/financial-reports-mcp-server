@@ -1,0 +1,22 @@
+{
+  "name": "financialfilings-mcp",
+  "displayName": "FinancialFilings",
+  "description": "Official FinancialFilings MCP server: regulatory filings, XBRL financials and company data straight from securities regulators. 53 million+ filings from 92,000+ companies across 60 markets — annual and quarterly reports, 10-K/20-F, insider transactions and standardised financial statements. Remote server with OAuth sign-in; free for any FinancialFilings account.",
+  "author": {
+    "name": "FinancialFilings",
+    "url": "https://financialfilings.com"
+  },
+  "homepage": "https://financialfilings.com/integrations/cursor/",
+  "repository": "https://github.com/financial-reports/financial-reports-mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "financial-data",
+    "sec-filings",
+    "xbrl",
+    "annual-reports",
+    "earnings",
+    "regulatory-filings",
+    "mcp"
+  ],
+  "logo": "https://cdn.financialreports.eu/financialreports/static/assets/favicon/new/android-chrome-512x512.png"
+}
