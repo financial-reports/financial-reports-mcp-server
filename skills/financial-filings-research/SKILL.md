@@ -1,11 +1,11 @@
 ---
 name: financial-filings-research
-description: Use for questions about a public company's regulatory filings or financials — revenue, EBITDA, net income, debt, cash flow, 10-K/20-F/annual reports, insider transactions, peer or industry screening, or resolving a company by name, ticker, ISIN or LEI via the FinancialReports MCP connector. Carries the workflows plus the data-quality checks that the tool schemas do not express: masked provenance, as-reported vs computed figures, and the currency and magnitude checks that catch a wrong source document.
+description: Use for questions about a public company's regulatory filings or financials — revenue, EBITDA, net income, debt, cash flow, 10-K/20-F/annual reports, insider transactions, peer or industry screening, or resolving a company by name, ticker, ISIN or LEI via the FinancialFilings MCP connector. Carries the workflows plus the data-quality checks that the tool schemas do not express: masked provenance, as-reported vs computed figures, and the currency and magnitude checks that catch a wrong source document.
 ---
 
 # Financial Filings Research
 
-Workflows for the FinancialReports MCP connector: company lookup, filings
+Workflows for the FinancialFilings MCP connector: company lookup, filings
 retrieval, financial comparison, industry screening.
 
 The connector is the data layer. This skill is the workflow layer.
@@ -164,7 +164,7 @@ belongs on `source_filing_type`, not `type`.
 - **Markdown size.** `filings_markdown_retrieve` caps at 150k characters; long
   filings truncate. `filings_retrieve` returns the original document URL.
 - **Account status.** If a tool returns a gate response pointing at the
-  FinancialReports site, the account needs attention — surface the link and stop.
+  FinancialFilings site, the account needs attention — surface the link and stop.
   Don't retry-loop.
 
 ## Out of scope

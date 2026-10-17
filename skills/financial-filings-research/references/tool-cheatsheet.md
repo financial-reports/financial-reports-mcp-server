@@ -1,4 +1,4 @@
-# FinancialReports MCP — Tool Cheatsheet
+# FinancialFilings MCP — Tool Cheatsheet
 
 46 tools across 9 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
 
@@ -210,7 +210,7 @@ Pitfall: `event_types` is restrictive (e.g., `filing.published`, `watchlist.chan
 
 - 35 tools have `readOnlyHint=true` (safe to call without confirmation).
 - 5 tools have `destructiveHint=true` (mutations: watchlist add/remove, webhook create, secret rotation).
-- 2 tools are non-destructive probes (`webhooks_test_create`, `webhooks_deliveries_replay_create`) — they hit the user's external endpoint but don't mutate FinancialReports state.
+- 2 tools are non-destructive probes (`webhooks_test_create`, `webhooks_deliveries_replay_create`) — they hit the user's external endpoint but don't mutate FinancialFilings state.
 - 6 tools advertise `outputSchema` for structured rendering: `companies_list`, `companies_retrieve`, `companies_financials_retrieve`, `filings_list`, `filings_retrieve`, `isins_list`.
 
 ## Authentication

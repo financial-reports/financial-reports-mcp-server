@@ -1,6 +1,6 @@
-# Skills for the FinancialReports MCP
+# Skills for the FinancialFilings MCP
 
-Agent Skills that pair with the [FinancialReports MCP server](https://github.com/financial-reports/financial-reports-mcp-server). The hosted connector exposes **16** tools for regulatory-filings research — administrative, reference and webhook-management endpoints are not part of the research surface; these skills teach Claude how to compose those tools into the workflows analysts actually run.
+Agent Skills that pair with the [FinancialFilings MCP server](https://github.com/financial-reports/financial-reports-mcp-server). The hosted connector exposes **16** tools for regulatory-filings research — administrative, reference and webhook-management endpoints are not part of the research surface; these skills teach Claude how to compose those tools into the workflows analysts actually run.
 
 **New here? Start with [GETTING-STARTED.md](./GETTING-STARTED.md)** — connector setup, install, and four worked examples with real output.
 
@@ -28,7 +28,7 @@ The frontmatter `description` is what Claude scans to decide whether to activate
 
 You need two things:
 
-1. **The FinancialReports MCP connector enabled** — `https://mcp.financialfilings.com/mcp`
+1. **The FinancialFilings MCP connector enabled** — `https://mcp.financialfilings.com/mcp`
 2. **The skill registered:**
    - **Claude Code** — copy the skill folder into `~/.claude/skills/` (all projects) or `<project>/.claude/skills/` (one project):
      ```bash
@@ -53,11 +53,11 @@ In Claude Code, invoke it with the slash command:
 Or name it in the request — *"Using the financial-filings-research skill, compare
 net debt for Iberdrola and Engie for the latest fiscal year."*
 
-To apply it to every FinancialReports question in a project, add a line to that
+To apply it to every FinancialFilings question in a project, add a line to that
 project's `CLAUDE.md`:
 
 ```
-For any FinancialReports question, load the financial-filings-research skill first.
+For any FinancialFilings question, load the financial-filings-research skill first.
 ```
 
 That last form is the one to give a team: set once, and every session picks it up.
