@@ -1,0 +1,28 @@
+{
+  "name": "financialfilings",
+  "displayName": "FinancialFilings",
+  "description": "Official FinancialFilings MCP server and research skill: search listed companies worldwide, read any regulatory filing as Markdown and pull normalised financials. Remote server with OAuth sign-in; free for any FinancialFilings account.",
+  "author": {
+    "name": "FinancialFilings",
+    "email": "support@financialfilings.com",
+    "url": "https://financialfilings.com"
+  },
+  "homepage": "https://financialfilings.com/integrations/claude-code/",
+  "repository": "https://github.com/financial-reports/financial-reports-mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "financial-data",
+    "regulatory-filings",
+    "annual-reports",
+    "xbrl",
+    "esef",
+    "company-data",
+    "earnings",
+    "mcp"
+  ],
+  "icon": "./assets/icon.png",
+  "documentationUrl": "https://financialfilings.com/mcp/",
+  "supportUrl": "mailto:support@financialfilings.com",
+  "privacyPolicyUrl": "https://financialfilings.com/data-privacy/",
+  "termsOfServiceUrl": "https://financialfilings.com/terms/"
+}

@@ -6,7 +6,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialFilings](https://financialfilings.com) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **16 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 52-tool surface). **Free for any FinancialFilings account.** Sourced from official regulators.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **17 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 53-tool surface). **Free for any FinancialFilings account.** Sourced from official regulators.
 
 ---
 
