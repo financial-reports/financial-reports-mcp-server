@@ -1,0 +1,10 @@
+{
+  "name": "financialfilings",
+  "version": "1.4.121",
+  "description": "Official FinancialFilings MCP server: regulatory filings, XBRL/ESEF financials and company data for listed companies worldwide. OAuth sign-in; free for any FinancialFilings account.",
+  "mcpServers": {
+    "financialfilings": {
+      "httpUrl": "https://mcp.financialfilings.com/mcp"
+    }
+  }
+}

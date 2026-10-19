@@ -3,7 +3,7 @@
   "name": "com.financialfilings/mcp-server",
   "title": "FinancialFilings",
   "description": "Regulatory filings, XBRL financials and company data from securities regulators worldwide",
-  "version": "1.4.105",
+  "version": "1.4.121",
   "websiteUrl": "https://financialfilings.com/mcp/",
   "repository": {
     "url": "https://github.com/financial-reports/financial-reports-mcp-server",
