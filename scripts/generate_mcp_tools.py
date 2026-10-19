@@ -98,6 +98,12 @@ _PRUNED_EXCLUDE = {
     "agent_signup", "agent_key_rotate", "agent_checkout_link",
     "agent_owner_confirmation", "agent_status",
     "filings_markdown_search_retrieve",
+    # Added with the 2026-10-19 refresh. `agent_key_claim` is the same
+    # onboarding family as above. `filings_document_retrieve`
+    # (financial-reports/web#7106) returns a file or a 302, not JSON, so the
+    # generic tool template would fail on every call.
+    "agent_key_claim",
+    "filings_document_retrieve",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 
