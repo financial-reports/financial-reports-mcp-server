@@ -763,6 +763,7 @@ _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
     "statement_type", "fiscal_year_from", "fiscal_year_to", "as_of",
     "company", "company_isin",
     "max_hits", "context_chars", "offset", "limit",
+    "as_known_at",
 })
 
 
@@ -801,7 +802,7 @@ def test_search_and_financials_intent_args_are_kept():
         "offset": 150000, "limit": 150000, "context_chars": 440,
         "type": "10-K", "types": "10-K,AR", "company": 42, "company_isin": "US0378331005",
         "statement_type": "IS", "fiscal_year_from": 2021, "fiscal_year_to": 2024,
-        "as_of": "2025-01-01",
+        "as_of": "2025-01-01", "as_known_at": "2026-10-20T12:00:00Z",
     }
     assert sanitize_mcp_arguments(args) == args
 

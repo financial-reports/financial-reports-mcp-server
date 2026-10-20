@@ -79,6 +79,10 @@ ALLOWED_ARG_KEYS = frozenset({
     "statement_type", "fiscal_year_from", "fiscal_year_to", "as_of",
     "company", "company_isin",
     "max_hits", "context_chars", "offset", "limit",
+    # The financials point-in-time read (financial-reports/web#6901): an ISO
+    # datetime, no PII, no deny substring. Allowlisted on the receiver in the
+    # same change.
+    "as_known_at",
 })
 
 DENY_ARG_SUBSTRINGS = (
