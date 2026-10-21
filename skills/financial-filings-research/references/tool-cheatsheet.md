@@ -65,7 +65,7 @@ Pitfall: `reversed_at` being set means the merge was undone — do not follow `c
 ### `filings_list`
 List filings across companies. **outputSchema-advertised**.
 
-Key params: `company`, `type` (one filing-type code) / `types` (comma-separated), `category` / `categories` (numeric FilingCategory ids), `countries` (comma-separated ISO2), `release_datetime_from`, `release_datetime_to`, `page_size`, `ordering`. `ordering` accepts ONLY `release_datetime`, `added_to_platform`, `id` (prefix `-` to reverse) — any other value is silently ignored and you get default order back.
+Key params: `company`, `type` (one filing-type code) / `types` (comma-separated), `category` / `categories` (numeric FilingCategory ids), `countries` (comma-separated ISO2), `release_datetime_from`, `release_datetime_to`, `page_size`, `ordering`. `ordering` accepts ONLY `release_datetime`, `added_to_platform`, `id`, `filing_type_confidence` (prefix `-` to reverse); any other value is silently ignored and you get default order back. `-filing_type_confidence` puts unscored filings (NULL, over a quarter of the corpus) FIRST; add `min_confidence=0` to rank only scored filings, most confident first.
 
 Returns (FilingSummary): `{id, title, release_datetime, document_url, proxy_url, viewer_url, company, filing_type, processing_status, file_extension, file_size}`. `processing_status` is also on `view='full'` rows and on `filings_retrieve`; it can be null, which means unknown.
 
@@ -86,20 +86,21 @@ Key params: `id`.
 Use case: "has this filing been amended?"
 
 ### `filings_markdown_retrieve`
-Filing content as markdown (capped at **150K characters**).
+Filing content as markdown, in pages.
 
-Key params: `id`.
+Key params: `filing_id`, `offset` (default 0), `limit` (default 50,000 characters; capped at 150,000 per call).
 
-Pitfall: long 10-Ks (300+ pages) get truncated. For the raw file, use `document` from `filings_retrieve` (there is no pdf_url field).
+Pitfall: a long filing (300-page 10-K, ESEF annual report) does not fit in one call. When the response contains the truncation marker, call again with the `offset` it gives you. Stop as soon as you have the section you need (or use `filings_markdown_search` to jump to it) rather than paging the whole document. For the raw file, use `document` from `filings_retrieve` (there is no pdf_url field).
 
 ## ISIC Classifications (8)
 
 ISIC = International Standard Industrial Classification (UN). Hierarchy: section (letter) → division (2-digit) → group (3-digit) → class (4-digit).
 
-> **None of the ISIC hierarchy endpoints below are exposed as tools on this MCP
-> server** — they are all in the generator's prune list, so calling them returns
-> "unknown tool". They are listed for reference only. To obtain a code, resolve a
-> company you know sits in the target industry and read its `sub_industry_code`.
+> **On the default surface, none of the ISIC hierarchy endpoints below are tools**:
+> they are in the generator's prune list, so calling them returns "unknown tool".
+> A server run with `MCP_FULL_SURFACE=1` does expose them; check your `tools/list`.
+> Without them, resolve a company you know sits in the target industry and read
+> its `sub_industry_code`.
 
 | API endpoint (NOT an MCP tool here) | Level | `companies_list` param |
 |---|---|---|
@@ -200,11 +201,11 @@ For programmatic alerts. Per-user, requires authenticated session.
 
 ### Webhook setup pattern
 
-1. `webhooks_create` with `target_url`, `event_types`, `filters`. Capture the returned `secret`.
+1. `webhooks_create` with `url` (required), the triggers you want (`trigger_on_filing_received` for a filing's arrival, `trigger_on_filing_processed` once its content is ready, `trigger_on_filing_updated`), and the scope: `subscribed_filing_types` (filing-type codes) and/or `track_all_companies`. Optional: `include_markdown`, `include_isins`, `deliver_late_filings`. Capture the returned `secret_key`.
 2. Immediately `webhooks_test_create` to verify the user's endpoint accepts and signs requests.
 3. Tell the user the secret value once — we don't store it cleartext server-side.
 
-Pitfall: `event_types` is restrictive (e.g., `filing.published`, `watchlist.changed`). Don't invent event names — call `webhooks_list` on an existing webhook to see valid values, or check the docs at https://financialfilings.com/integrations/claude/.
+Pitfall: there are no free-form event names: a webhook fires on the three `trigger_on_*` booleans only. Pick received vs processed deliberately: received fires on arrival, processed waits until the filing's content is ready. Don't invent fields; `webhooks_list` shows the shape of existing webhooks.
 
 ## Tool annotation summary
 

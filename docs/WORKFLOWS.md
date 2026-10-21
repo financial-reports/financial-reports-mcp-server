@@ -93,7 +93,7 @@ on a schedule the user runs, comparing against the last `release_datetime` seen.
 - **Dual listings.** Some companies have multiple ISINs; `companies_retrieve` returns the canonical entity.
 - **Period types.** `companies_financials_retrieve` takes `fiscal_period` (`FY`, `H1`, `H2`, `Q1`–`Q4`, `9M`) plus `fiscal_year` / `fiscal_year_from` / `fiscal_year_to`. There is no period-type parameter — annual is `fiscal_period='FY'`, quarterly is `Q1`-`Q4`. If the user asked for "Q3", pass `fiscal_period='Q3'`; don't return the annual figure.
 - **Pagination.** List endpoints cap at 100/page. For screening, tell the user the total (`count`) and that you took the top N.
-- **Markdown size.** `filings_markdown_retrieve` caps at 150K chars; long 10-Ks may truncate — `filings_retrieve` returns the original PDF URL for full fidelity.
+- **Markdown size.** `filings_markdown_retrieve` returns pages: `limit` defaults to 50K chars, capped at 150K per call. When the response carries the truncation marker, call again with the `offset` it gives, and stop once you have the section you need. `filings_retrieve` returns the original document URL for full fidelity.
 - **Account soft-gate.** If a tool returns a markdown gate response pointing at the FinancialReports site, the account needs attention — surface the link to the user and stop, don't retry-loop.
 
 ## Output formatting

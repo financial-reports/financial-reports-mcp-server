@@ -161,8 +161,10 @@ belongs on `source_filing_type`, not `type`.
   `fiscal_year` / `_from` / `_to`. There is no period-type parameter — annual is
   `FY`. If asked for Q3, pass `Q3`.
 - **Pagination.** List endpoints cap at 100/page. State the `count` and how many you took.
-- **Markdown size.** `filings_markdown_retrieve` caps at 150k characters; long
-  filings truncate. `filings_retrieve` returns the original document URL.
+- **Markdown size.** `filings_markdown_retrieve` returns pages (`limit` default
+  50k characters, at most 150k per call). On the truncation marker, call again
+  with the `offset` it gives; stop once you have the section you need.
+  `filings_retrieve` returns the original document URL.
 - **Account status.** If a tool returns a gate response pointing at the
   FinancialFilings site, the account needs attention — surface the link and stop.
   Don't retry-loop.
