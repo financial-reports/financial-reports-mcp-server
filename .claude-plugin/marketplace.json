@@ -1,0 +1,19 @@
+{
+  "name": "financialfilings",
+  "owner": {
+    "name": "FinancialFilings",
+    "email": "support@financialfilings.com"
+  },
+  "metadata": {
+    "description": "Official FinancialFilings plugins for Claude Code."
+  },
+  "plugins": [
+    {
+      "name": "financialfilings",
+      "source": "./",
+      "description": "Official FinancialFilings MCP server and research skill: search listed companies worldwide, read any regulatory filing as Markdown and pull normalised financials. Remote server with OAuth sign-in; free for any FinancialFilings account.",
+      "category": "finance",
+      "homepage": "https://financialfilings.com/integrations/claude-code/"
+    }
+  ]
+}

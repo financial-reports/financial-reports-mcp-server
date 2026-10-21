@@ -44,6 +44,14 @@ claude mcp add --transport http financialreports https://mcp.financialfilings.co
 
 Run `/mcp` in-session to complete the browser sign-in.
 
+**Or install the plugin**, which adds the same server plus the `financial-filings-research` skill (tool cheat-sheet and research workflows):
+
+```
+/plugin install financialfilings --marketplace financial-reports/financial-reports-mcp-server
+```
+
+On Claude Code before 2.1.275, add the marketplace first: `/plugin marketplace add financial-reports/financial-reports-mcp-server`, then `/plugin install financialfilings@financialfilings`. Either way, run `/mcp` once to sign in.
+
 ### Codex (OpenAI)
 
 Codex uses TOML. Add to `~/.codex/config.toml` (or a project `.codex/config.toml`):
