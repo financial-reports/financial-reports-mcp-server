@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import http.server
 import json
 import os
@@ -293,7 +294,8 @@ def mint_token_headless(
             raise RuntimeError(
                 f"password login did not yield an authorization code (last status "
                 f"{posted.status_code}). Check the probe account is password-based "
-                f"(not the passwordless OTP signup) and has MFA disabled."
+                f"(not the passwordless OTP signup) and has MFA disabled, and that "
+                f"the AS still hands back by 302 or meta refresh (#161)."
             )
 
         tok = client.post(
@@ -323,12 +325,34 @@ def _scrape_csrf(html: str) -> str:
     return match.group(1) if match else ""
 
 
+_META_REFRESH = re.compile(
+    r"""<meta[^>]+http-equiv=["']refresh["'][^>]*content=["'][^"']*?url=([^"']+)["']""",
+    re.IGNORECASE,
+)
+
+
+def _next_hop(resp: httpx.Response) -> str:
+    """Where a browser goes next: the Location header, else a meta-refresh target.
+
+    Since web #5379 a successful form POST to the AS answers 200 with a "Returning
+    you to your AI assistant" page that forwards by meta refresh, because Chrome's
+    CSP form-action blocks a 302 chain ending on an unlisted AI-client host. A 200
+    without that tag (the login form re-rendered on a wrong password) has no hop."""
+    location = resp.headers.get("location", "")
+    if location:
+        return location
+    if resp.status_code != 200:
+        return ""
+    match = _META_REFRESH.search(resp.text)
+    return html.unescape(match.group(1)) if match else ""
+
+
 def _follow_to_code(
     client: httpx.Client, resp: httpx.Response, redirect: str, max_hops: int = 6
 ) -> str:
     """Walk the post-login redirect chain until a code lands on our redirect_uri."""
     for _ in range(max_hops):
-        location = resp.headers.get("location", "")
+        location = _next_hop(resp)
         if not location:
             return ""
         target = urllib.parse.urljoin(str(resp.url), location)
@@ -338,8 +362,6 @@ def _follow_to_code(
         if target.startswith(redirect) and "code" in query:
             return query["code"][0]
         resp = client.get(target)
-        if resp.status_code not in (301, 302, 303, 307, 308):
-            return ""
     return ""
 
 

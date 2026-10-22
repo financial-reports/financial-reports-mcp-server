@@ -80,6 +80,9 @@ jobs:
           FR_E2E_USERNAME: ${{ secrets.FR_PROBE_USERNAME }}
           FR_E2E_PASSWORD: ${{ secrets.FR_PROBE_PASSWORD }}
           FR_E2E_BASE_URL: ${{ vars.FR_PROBE_BASE_URL || 'https://mcp.financialfilings.com' }}
+        # Actions runs this as `bash -e`, so a bare failing `run_once` would end the
+        # step there and skip the retry and every alert step below (#161: two weeks
+        # red, no issue). Capture rc with `||` so errexit never sees the failure.
         run: |
           set -uo pipefail
           run_once() {
@@ -87,11 +90,11 @@ jobs:
             pytest tests/e2e/test_prod_oauth_probe.py -q --tb=short 2>&1 | tee probe.log
             return "${PIPESTATUS[0]}"
           }
-          run_once; rc=$?
+          rc=0; run_once || rc=$?
           if [ "$rc" -ne 0 ] && ! grep -q 'REGRESSION' probe.log; then
             echo "::warning::soft failure (rc=$rc) — retrying once in 60s"
             sleep 60
-            run_once; rc=$?
+            rc=0; run_once || rc=$?
           fi
           if grep -q 'REGRESSION' probe.log; then
             echo "regression=true" >> "$GITHUB_OUTPUT"
@@ -155,6 +158,9 @@ jobs:
               --label prod-probe --body "$body"
           fi
 
-      - name: Fail the run if we alerted
-        if: steps.decide.outputs.alert == 'true'
+      # Every failed probe turns the run red, not only the alerting one: the
+      # consecutive-failure gate above reads the previous run's conclusion, so a
+      # soft failure that ended green would make "two in a row" unreachable.
+      - name: Fail the run if the probe failed
+        if: steps.creds.outputs.ready == 'true' && steps.probe.outputs.rc != '0'
         run: exit 1
