@@ -61,11 +61,36 @@ class _StubResponse:
     """Minimal stand-in for httpx.Response's redirect surface."""
 
     def __init__(
-        self, location: str, url: str = "https://mcp.example.invalid/authorize"
+        self,
+        location: str,
+        url: str = "https://mcp.example.invalid/authorize",
+        text: str = "",
     ) -> None:
         self.headers = {"location": location} if location else {}
         self.url = url
         self.status_code = 302 if location else 200
+        self.text = text
+
+
+class _StubClient:
+    """Serves canned responses by URL, recording what was fetched."""
+
+    def __init__(self, routes: dict[str, _StubResponse]) -> None:
+        self.routes = routes
+        self.fetched: list[str] = []
+
+    def get(self, url: str) -> _StubResponse:
+        self.fetched.append(url)
+        return self.routes[url]
+
+
+def _handoff_page(url: str) -> str:
+    """The AS's post-login hand-off page (web #5379), HTML-escaped as Django renders it."""
+    escaped = url.replace("&", "&amp;")
+    return (
+        f'<html><head><meta http-equiv="refresh" content="0;url={escaped}"></head>'
+        f'<body><a href="{escaped}">Continue</a></body></html>'
+    )
 
 
 def test_scrape_csrf_finds_the_token_in_either_attribute_order() -> None:
@@ -101,3 +126,28 @@ def test_follow_to_code_returns_empty_without_a_location() -> None:
     must not be mistaken for a redirect chain."""
     resp = _StubResponse("")
     assert _follow_to_code(None, resp, "http://localhost:8765/callback") == ""
+
+
+def test_follow_to_code_follows_the_meta_refresh_hand_off_page() -> None:
+    """Since web #5379 a successful password POST answers 200 with a meta-refresh
+    page to the connector callback (CSP form-action blocks a 302 chain in Chrome).
+    The probe must follow it like a browser, unescaping `&amp;`, or #161 recurs."""
+    redirect = "http://localhost:8765/callback"
+    connector_cb = "https://mcp.example.invalid/auth/callback?code=as-code&state=st"
+    client = _StubClient(
+        {connector_cb: _StubResponse(f"{redirect}?code=the-code&state=st")}
+    )
+    posted = _StubResponse(
+        "", url="https://as.example.invalid/oauth/authorize", text=_handoff_page(connector_cb)
+    )
+    assert _follow_to_code(client, posted, redirect) == "the-code"
+    assert client.fetched == [connector_cb]
+
+
+def test_follow_to_code_reads_an_oauth_error_off_the_hand_off_page() -> None:
+    redirect = "http://localhost:8765/callback"
+    posted = _StubResponse(
+        "", text=_handoff_page(f"{redirect}?error=access_denied&state=st")
+    )
+    with pytest.raises(RuntimeError, match="access_denied"):
+        _follow_to_code(None, posted, redirect)
