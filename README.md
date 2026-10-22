@@ -1,3 +1,5 @@
+English | [简体中文](README.zh-CN.md)
+
 # FinancialFilings MCP Server
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
