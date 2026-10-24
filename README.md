@@ -19,7 +19,7 @@ If you're an analyst, researcher, or anyone who wants to ask Claude about public
 1. **Create a free account** at [financialfilings.com](https://financialfilings.com/) — the MCP connector is free for any FinancialFilings user. No paid plan required.
 2. **Add the connector** in your MCP client — pick yours under [Connect your client](#connect-your-client) below. The two most common:
    - **Claude.ai / Claude Desktop**: Settings → Connectors → Add custom connector → URL: `https://mcp.financialfilings.com/mcp`
-   - **Claude Code**: `claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp`
+   - **Claude Code**: `claude mcp add --transport http financialfilings https://mcp.financialfilings.com/mcp`
 3. **Sign in** with your FinancialFilings account when prompted. That's it.
 
 Full setup walkthrough with screenshots: [financialfilings.com/integrations/claude/](https://financialfilings.com/integrations/claude/).
@@ -41,7 +41,7 @@ Settings → Connectors → **Add custom connector** → URL: `https://mcp.finan
 ### Claude Code
 
 ```bash
-claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp
+claude mcp add --transport http financialfilings https://mcp.financialfilings.com/mcp
 ```
 
 Run `/mcp` in-session to complete the browser sign-in.
@@ -59,14 +59,14 @@ On Claude Code before 2.1.275, add the marketplace first: `/plugin marketplace a
 Codex uses TOML. Add to `~/.codex/config.toml` (or a project `.codex/config.toml`):
 
 ```toml
-[mcp_servers.financialreports]
+[mcp_servers.financialfilings]
 url = "https://mcp.financialfilings.com/mcp"
 ```
 
 Then authenticate — Codex runs the OAuth browser flow for servers that support it:
 
 ```bash
-codex mcp login financialreports
+codex mcp login financialfilings
 ```
 
 ### Cursor
@@ -90,7 +90,7 @@ Project `.kilocode/mcp.json` (or the global MCP settings file):
 ```json
 {
   "mcpServers": {
-    "financialreports": {
+    "financialfilings": {
       "type": "remote",
       "url": "https://mcp.financialfilings.com/mcp"
     }
@@ -106,7 +106,7 @@ Project `.kilocode/mcp.json` (or the global MCP settings file):
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "financialreports": {
+    "financialfilings": {
       "type": "remote",
       "url": "https://mcp.financialfilings.com/mcp",
       "enabled": true
@@ -122,7 +122,7 @@ Project `.kilocode/mcp.json` (or the global MCP settings file):
 ```json
 {
   "mcpServers": {
-    "financialreports": { "httpUrl": "https://mcp.financialfilings.com/mcp" }
+    "financialfilings": { "httpUrl": "https://mcp.financialfilings.com/mcp" }
   }
 }
 ```
@@ -133,7 +133,7 @@ Project `.kilocode/mcp.json` (or the global MCP settings file):
 
 ```yaml
 mcp_servers:
-  financialreports:
+  financialfilings:
     url: "https://mcp.financialfilings.com/mcp"
     auth: oauth
 ```
@@ -145,7 +145,7 @@ Most MCP-aware harnesses accept a `mcpServers` object. Point it at the endpoint 
 ```json
 {
   "mcpServers": {
-    "financialreports": {
+    "financialfilings": {
       "type": "streamable-http",
       "url": "https://mcp.financialfilings.com/mcp"
     }
