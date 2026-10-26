@@ -1,28 +1,30 @@
 # Token-budget audit
 
-Total tools registered: **17**
+Total tools registered: **19**
 
 | Tool | Description chars | Schema chars | Approx tokens |
 |---|---:|---:|---:|
-| `filings_list` | 1668 | 4463 | 1532 |
-| `companies_financials_retrieve` | 4558 | 1146 | 1425 |
-| `companies_list` | 1035 | 1888 | 730 |
-| `companies_resolve_create` | 2770 | 87 | 713 |
-| `filings_markdown_retrieve` | 2372 | 171 | 635 |
+| `filings_list` | 1705 | 4338 | 1510 |
+| `companies_financials_retrieve` | 4558 | 1191 | 1436 |
+| `companies_list` | 1068 | 1888 | 739 |
+| `companies_resolve_create` | 2727 | 87 | 702 |
+| `filings_markdown_retrieve` | 2436 | 171 | 651 |
+| `companies_segments_retrieve` | 1429 | 389 | 454 |
+| `filings_retrieve` | 1144 | 74 | 304 |
 | `usage_retrieve` | 1182 | 33 | 303 |
-| `filings_retrieve` | 1111 | 74 | 295 |
-| `filing_types_list` | 364 | 318 | 170 |
-| `companies_retrieve` | 559 | 74 | 157 |
-| `isins_list` | 88 | 529 | 154 |
+| `filings_markdown_search_batch` | 643 | 202 | 210 |
+| `filing_types_list` | 397 | 318 | 178 |
+| `companies_retrieve` | 592 | 74 | 166 |
+| `isins_list` | 121 | 529 | 162 |
+| `isins_retrieve` | 465 | 77 | 135 |
 | `filings_markdown_search` | 372 | 164 | 134 |
-| `isins_retrieve` | 432 | 77 | 127 |
 | `companies_next_annual_report_retrieve` | 235 | 74 | 76 |
-| `filing_categories_list` | 79 | 175 | 62 |
+| `filing_categories_list` | 112 | 175 | 71 |
 | `get_fr_filing_type_taxonomy` | 208 | 33 | 60 |
 | `get_fr_industry_classification_isic` | 190 | 33 | 55 |
 | `get_fr_markdown_fetch_strategy` | 187 | 33 | 54 |
 
-**Total approx tokens for `tools/list`: 6682**
+**Total approx tokens for `tools/list`: 7400**
 
 > **Methodology**: token count is approximated as `len(chars) // 4`
 > (per-tool description + JSON-serialized parameter schema). The actual

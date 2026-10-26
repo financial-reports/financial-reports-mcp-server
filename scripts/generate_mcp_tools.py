@@ -4674,6 +4674,55 @@ def _resource_markdown() -> str:
 # to a figure in a 200-page filing instead of paging the whole thing into context.
 MARKDOWN_SEARCH_TOOL_BLOCK = '''
 
+# Batch bounds. A model will happily pass 500 filing_ids; each fetch pulls the
+# WHOLE document (there is no server-side search endpoint — see
+# financial-reports/web#8000), so the batch is bounded three ways: how many
+# filings, how many bytes in total, and how long the whole call may take.
+_BATCH_MAX_FILINGS = 20
+_BATCH_MAX_FILING_BYTES = 4_000_000
+_BATCH_MAX_TOTAL_BYTES = 40_000_000
+_BATCH_CONCURRENCY = 5
+_BATCH_DEADLINE_SECONDS = 50.0
+
+
+def _md_candidates(raw: str) -> list:
+    """Query spellings to try, best first.
+
+    Filings render figures with thousands separators ("19,409"), so a query of
+    "19409" must also try the comma form or it misses every number in the
+    document.
+    """
+    bare = raw.replace(",", "")
+    if bare.isdigit() and len(bare) >= 4:
+        return [bare, format(int(bare), ",")]
+    return [raw]
+
+
+def _md_scan_hits(full_text: str, raw_query: str, cap: int) -> list:
+    """Case-insensitive substring scan -> [(offset, context), ...], document order.
+
+    Shared by `filings_markdown_search` and `filings_markdown_search_batch` so the
+    two cannot drift: a batch that matched differently from the single-filing tool
+    would make a miss impossible to interpret.
+    """
+    hay_l = full_text.lower()
+    hits = []
+    for cand in dict.fromkeys(_md_candidates(raw_query)):
+        cl = cand.lower()
+        start = 0
+        while len(hits) < cap:
+            i = hay_l.find(cl, start)
+            if i < 0:
+                break
+            lo = max(0, i - 200)
+            hi = min(len(full_text), i + len(cand) + 240)
+            hits.append((i, full_text[lo:hi]))
+            start = i + len(cand)
+        if hits:
+            break
+    return hits
+
+
 @mcp.tool(
     tags={"Filings"},
     annotations=ToolAnnotations(
@@ -4720,27 +4769,7 @@ async def filings_markdown_search(
             cap = max(1, min(int(max_hits), 10))
         except (TypeError, ValueError):
             raise ToolInputError("max_hits must be an integer between 1 and 10")
-        # Number queries: also try the thousands-comma form, since filings render
-        # figures as e.g. "19,409" — so a query of "19409" still finds it.
-        cands = [raw]
-        _bare = raw.replace(",", "")
-        if _bare.isdigit() and len(_bare) >= 4:
-            cands = [_bare, format(int(_bare), ",")]
-        hay_l = full_text.lower()
-        hits = []
-        for cand in dict.fromkeys(cands):
-            cl = cand.lower()
-            start = 0
-            while len(hits) < cap:
-                i = hay_l.find(cl, start)
-                if i < 0:
-                    break
-                lo = max(0, i - 200)
-                hi = min(len(full_text), i + len(cand) + 240)
-                hits.append((i, full_text[lo:hi]))
-                start = i + len(cand)
-            if hits:
-                break
+        hits = _md_scan_hits(full_text, raw, cap)
         record_result_count(len(hits))
         if not hits:
             return (
@@ -4761,6 +4790,128 @@ async def filings_markdown_search(
     except Exception as exc:
         logger.exception("filings_markdown_search failed")
         return _safe_error("filings_markdown_search", exc)
+
+
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="Search Many Filings at Once (Batch)",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+@subscription_required
+async def filings_markdown_search_batch(
+    filing_ids: list[int],
+    query: str,
+    max_hits_per_filing: int = 3,
+) -> str:
+    """Search ONE query across SEVERAL filings in a single call — use this instead of
+    calling filings_markdown_search once per filing when you are checking the same term
+    across a set (e.g. the same disclosure across a company's filings, or across peers).
+    Case-insensitive. Returns per-filing hits with character offsets you can pass to
+    filings_markdown_retrieve, and reports filings with NO match explicitly so you can
+    tell a real absence from a filing that was never searched. Max 20 filings per call.
+    This searches only the filings you name — it does NOT search the whole corpus, so a
+    'no match' result says nothing about filings outside your list."""
+    try:
+        _require_auth_context()
+        if not isinstance(filing_ids, list) or not filing_ids:
+            raise ToolInputError("filing_ids must be a non-empty list of positive integers")
+        if not query or not query.strip():
+            raise ToolInputError("query must be a non-empty string")
+        seen = {}
+        for fid in filing_ids:
+            if not isinstance(fid, int) or isinstance(fid, bool) or fid <= 0:
+                raise ToolInputError(f"filing_ids must be positive integers (got {fid!r})")
+            seen[fid] = None
+        ordered = list(seen)
+        dropped = max(0, len(ordered) - _BATCH_MAX_FILINGS)
+        ordered = ordered[:_BATCH_MAX_FILINGS]
+        try:
+            cap = max(1, min(int(max_hits_per_filing), 5))
+        except (TypeError, ValueError):
+            raise ToolInputError("max_hits_per_filing must be an integer between 1 and 5")
+
+        raw = query.strip()
+        deadline = time.monotonic() + _BATCH_DEADLINE_SECONDS
+        budget = {"bytes": _BATCH_MAX_TOTAL_BYTES}
+        sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
+
+        async def _one(fid):
+            # Bounds are checked INSIDE the worker, not just before the gather, so a
+            # slow batch stops spending as soon as either budget is gone rather than
+            # running every scheduled fetch to completion.
+            async with sem:
+                if time.monotonic() >= deadline:
+                    return (fid, None, "skipped: batch deadline reached")
+                if budget["bytes"] <= 0:
+                    return (fid, None, "skipped: batch byte budget spent")
+                try:
+                    allowance = min(_BATCH_MAX_FILING_BYTES, budget["bytes"])
+                    buf = bytearray()
+                    async with _api_stream_get(f"/filings/{fid}/markdown/") as response:
+                        if response.is_error:
+                            body = await response.aread()
+                            _raise_upstream_text_error(
+                                response,
+                                body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace"),
+                            )
+                        async for _chunk in response.aiter_bytes():
+                            if len(buf) + len(_chunk) > allowance:
+                                buf.extend(_chunk[: allowance - len(buf)])
+                                break
+                            buf.extend(_chunk)
+                    budget["bytes"] -= len(buf)
+                    text = buf.decode("utf-8", errors="replace")
+                    return (fid, _md_scan_hits(text, raw, cap), None)
+                except UpstreamHTTPError as exc:
+                    # One filing being gone must not fail the batch — the caller needs
+                    # the other 19 answers, and an explicit per-filing status is what
+                    # lets them tell "no match" from "never searched".
+                    return (fid, None, f"unavailable: {getattr(exc, 'status_code', 'upstream error')}")
+                except Exception:
+                    logger.exception("filings_markdown_search_batch: filing %s failed", fid)
+                    return (fid, None, "unavailable: read failed")
+
+        results = await asyncio.gather(*[_one(f) for f in ordered])
+
+        total_hits = sum(len(h) for _f, h, _e in results if h)
+        with_hits = [(f, h) for f, h, _e in results if h]
+        no_hits = [f for f, h, e in results if h == [] and e is None]
+        unavailable = [(f, e) for f, h, e in results if e]
+        record_result_count(total_hits)
+
+        parts = [
+            f"{total_hits} match(es) for {query!r} across {len(ordered)} filing(s): "
+            f"{len(with_hits)} with hits, {len(no_hits)} with none, "
+            f"{len(unavailable)} not searched."
+        ]
+        if dropped:
+            parts.append(
+                f"NOTE: {dropped} filing id(s) beyond the {_BATCH_MAX_FILINGS}-filing cap "
+                "were not searched — call again with the rest."
+            )
+        for fid, hits in with_hits:
+            parts.append(f"\\n=== filing {fid} — {len(hits)} match(es) ===")
+            for off, span in hits:
+                parts.append(f"--- near offset {off} ---\\n...{span}...")
+        if no_hits:
+            parts.append("\\nNo match in: " + ", ".join(str(f) for f in no_hits))
+        if unavailable:
+            parts.append(
+                "\\nNot searched (treat as UNKNOWN, not as 'no match'): "
+                + ", ".join(f"{f} ({e})" for f, e in unavailable)
+            )
+        return "\\n".join(parts)
+    except ToolInputError as exc:
+        return _safe_error("filings_markdown_search_batch", exc)
+    except Exception as exc:
+        logger.exception("filings_markdown_search_batch failed")
+        return _safe_error("filings_markdown_search_batch", exc)
+
 '''
 
 
