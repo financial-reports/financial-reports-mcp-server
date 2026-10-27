@@ -301,3 +301,64 @@ async def test_upstream_status_is_reported_not_swallowed(
         filing_ids=[1], query="revenue"
     )
     assert "429" in out, f"upstream status was swallowed: {out!r}"
+
+
+# --- 7. the SAME rule applied to the single-filing tool (the #1 tool by volume) ---
+# "empty + notice != empty" (ui-fr, web#7880): a restricted or partial result must
+# announce its restriction in a way the consumer acts on. ~46-58% of live calls to
+# filings_markdown_search land exactly ON the hit cap, so reporting the capped count
+# as a total was wrong about half the time.
+
+@pytest.mark.asyncio
+async def test_single_tool_announces_the_hit_cap(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, "revenue " * 6)
+    out = await _tool(mcp_module, "filings_markdown_search")(
+        filing_id=1, query="revenue", max_hits=3
+    )
+    assert "MORE MATCHES EXIST" in out
+    assert "3 match(es)" in out
+
+
+@pytest.mark.asyncio
+async def test_single_tool_exactly_at_cap_is_not_flagged(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Control: without this the fix marks every capped result uncertain and the
+    signal carries no information."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, "revenue " * 3)
+    out = await _tool(mcp_module, "filings_markdown_search")(
+        filing_id=1, query="revenue", max_hits=3
+    )
+    assert "MORE MATCHES EXIST" not in out
+
+
+@pytest.mark.asyncio
+async def test_single_tool_truncated_miss_is_unknown_not_absent(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """A document cut at the size cap was only partly searched. Reporting a bare
+    'No match' turns an unread tail into a confirmed absence."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_MAX_FILING_BYTES", 40)
+    _mock_md(respx_router, 1, ("x" * 400) + " total revenue was 19,409.")
+    out = await _tool(mcp_module, "filings_markdown_search")(
+        filing_id=1, query="total revenue"
+    )
+    assert "TRUNCATED" in out and "unknown" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_single_tool_untruncated_miss_stays_definite(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, OTHER)
+    out = await _tool(mcp_module, "filings_markdown_search")(
+        filing_id=1, query="total revenue"
+    )
+    assert "No match for" in out
+    assert "TRUNCATED" not in out

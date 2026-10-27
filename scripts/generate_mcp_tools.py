@@ -4758,9 +4758,11 @@ async def filings_markdown_search(
                     response, body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace")
                 )
             buf = bytearray()
+            doc_truncated = False
             async for _chunk in response.aiter_bytes():
                 if len(buf) + len(_chunk) > _MAX_FILING_BYTES:
                     buf.extend(_chunk[: _MAX_FILING_BYTES - len(buf)])
+                    doc_truncated = True
                     break
                 buf.extend(_chunk)
         full_text = buf.decode("utf-8", errors="replace")
@@ -4769,16 +4771,33 @@ async def filings_markdown_search(
             cap = max(1, min(int(max_hits), 10))
         except (TypeError, ValueError):
             raise ToolInputError("max_hits must be an integer between 1 and 10")
-        hits = _md_scan_hits(full_text, raw, cap)
+        # Scan one past the cap so we can say whether it hid anything. ~46-58% of
+        # live calls land exactly ON the cap, so reporting "N match(es)" as a total
+        # is wrong about half the time.
+        found = _md_scan_hits(full_text, raw, cap + 1)
+        more = len(found) > cap
+        hits = found[:cap]
         record_result_count(len(hits))
         if not hits:
+            if doc_truncated:
+                # The tail was never read, so this is UNKNOWN, not absent.
+                return (
+                    f"No match for {query!r} in the first {len(full_text)} chars of filing "
+                    f"{filing_id} — the document was TRUNCATED at the size cap and the rest "
+                    "was NOT searched. Treat this as unknown, not as an absence."
+                )
             return (
                 f"No match for {query!r} in filing {filing_id} ({len(full_text)} chars). "
                 "Try a shorter or different query (e.g. a single key term), or page the "
                 "document with filings_markdown_retrieve."
             )
+        suffix = ""
+        if more:
+            suffix += f" — hit cap reached, MORE MATCHES EXIST beyond these {len(hits)}"
+        if doc_truncated:
+            suffix += " (document truncated at the size cap — the tail was not searched)"
         parts = [f"{len(hits)} match(es) for {query!r} in filing {filing_id} "
-                 f"(document is {len(full_text)} chars):"]
+                 f"(document is {len(full_text)} chars){suffix}:"]
         for off, span in hits:
             parts.append(f"\\n--- match near offset {off} ---\\n...{span}...")
         return "\\n".join(parts)
