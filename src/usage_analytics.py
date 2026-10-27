@@ -68,11 +68,16 @@ ALLOWED_ARG_KEYS = frozenset({
     # pass through _scrub_token_shapes like every other allowlisted string.
     "code", "cik", "figi", "symbol", "exchange", "mic", "name",
     "type", "types",
-    # DELIBERATELY NOT HERE, although the receiver allowlists them: "query", "q".
-    # They are free text, and value-level scrubbing cannot recognise an arbitrary
-    # opaque credential (only JWT / Bearer shapes), so a pasted key would be
-    # stored durably. Whether raw in-text search terms may be logged is an open
-    # product/privacy decision, not an allowlist tweak — see #119.
+    # Free-text search intent. Allowlisted 2026-10-26 on Alex's product/privacy
+    # ruling, which closes the open question #119 left behind: raw in-text search
+    # terms MAY be logged. The known exposure is unchanged and accepted — value
+    # scrubbing recognises JWT / Bearer / opaque-run shapes but cannot enumerate
+    # every credential format, so a pasted key typed into a search box can still
+    # be stored. `_scrub_token_shapes` applies to these exactly as it does to the
+    # other free-text keys (`search` has been stored on both ends throughout).
+    # Rationale: document-search queries are the primary design input for
+    # cross-corpus search, and 100% of them were unreadable.
+    "query", "q",
     # New on both ends (the platform allowlist must add these too, or the
     # stricter receiver keeps redacting them). Enums, integers, dates and public
     # identifiers — none names a person or carries a credential.

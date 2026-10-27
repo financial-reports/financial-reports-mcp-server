@@ -775,22 +775,31 @@ def _opaque_key():
     return "K7m2Qp9x4Vb1Nc8Ld3Rf6Ty0Hs5Wj2Zg"
 
 
-# Free-text keys the receiver allows but this sender deliberately keeps
-# redacting: scrubbing cannot recognise an arbitrary opaque credential typed
-# into them. Removing a key from this set is a privacy decision, not a sync fix.
-_DELIBERATELY_REDACTED_FREE_TEXT = frozenset({"query", "q"})
+# "query"/"q" were the last sender-only exclusion: the receiver allowed them,
+# this sender did not, so they reached the table as <redacted> regardless.
+# Allowlisted 2026-10-26 on Alex's product/privacy ruling (closes the open
+# question in #119). The two lists are now plain equals — no exclusion set.
 
 
-def test_sender_allowlist_equals_receiver_allowlist_minus_free_text():
+def test_sender_allowlist_equals_receiver_allowlist():
     sender = usage_analytics.ALLOWED_ARG_KEYS
-    expected = _RECEIVER_ALLOWED_ARG_KEYS - _DELIBERATELY_REDACTED_FREE_TEXT
-    assert sorted(expected - sender) == [], "receiver-approved keys the sender still redacts"
-    assert sorted(sender - expected) == [], "sender keys the receiver redacts, or free text re-allowed"
+    assert sorted(_RECEIVER_ALLOWED_ARG_KEYS - sender) == [], \
+        "receiver-approved keys the sender still redacts"
+    assert sorted(sender - _RECEIVER_ALLOWED_ARG_KEYS) == [], \
+        "sender keys the receiver redacts"
 
 
-@pytest.mark.parametrize("key", sorted(_DELIBERATELY_REDACTED_FREE_TEXT))
-def test_free_text_query_values_stay_redacted(key):
-    assert sanitize_mcp_arguments({key: _opaque_key()}) == {key: REDACTED}
+@pytest.mark.parametrize("key", ["query", "q"])
+def test_free_text_query_values_are_kept(key):
+    """The ruling: raw in-text search terms are logged."""
+    assert sanitize_mcp_arguments({key: "revenue recognition"}) == {key: "revenue recognition"}
+
+
+@pytest.mark.parametrize("key", ["query", "q", "search"])
+def test_free_text_values_are_still_shape_scrubbed(key):
+    """Logging the text does NOT disable the best-effort credential scrub — the
+    precaution the ruling was taken on top of. Same gate `search` has always had."""
+    assert sanitize_mcp_arguments({key: _opaque_key()}) == {key: "<redacted-token>"}
 
 
 def test_search_and_financials_intent_args_are_kept():
