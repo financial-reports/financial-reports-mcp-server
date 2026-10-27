@@ -254,3 +254,50 @@ async def test_concurrent_workers_cannot_overspend_the_shared_byte_budget(
     # httpx hands whole mocked bodies over, so assert on what the batch ACCEPTED:
     # at most ceil(total/per-filing) workers may ever be admitted.
     assert served["bytes"] <= 5 * 1000
+
+
+# --- 6. SPECHT round 2: bounds that hide incompleteness -----------------------
+
+@pytest.mark.asyncio
+async def test_hit_cap_reached_is_announced(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """4 occurrences, cap of 3. Reporting '3 match(es)' silently lets a client read an
+    incomplete answer as a complete one — the same false-completeness class as the
+    truncation bug, one level down."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, "revenue " * 4)
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="revenue", max_hits_per_filing=3
+    )
+    assert "MORE MATCHES EXIST" in out
+    assert "3 match(es)" in out, "it should still return only the capped number"
+
+
+@pytest.mark.asyncio
+async def test_exactly_at_the_cap_is_not_announced_as_overflow(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Control: exactly 3 of 3 is complete. Without this, the fix could mark every
+    capped result as uncertain and the signal would carry no information."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, "revenue " * 3)
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="revenue", max_hits_per_filing=3
+    )
+    assert "MORE MATCHES EXIST" not in out
+
+
+@pytest.mark.asyncio
+async def test_upstream_status_is_reported_not_swallowed(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """UpstreamHTTPError carries `upstream_status`, NOT `status_code`. Reading the
+    wrong attribute made 404, 429 and 500 all render as a bare 'upstream error', so
+    the caller could not tell a missing filing from a rate limit."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, "nope", status=429)
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="revenue"
+    )
+    assert "429" in out, f"upstream status was swallowed: {out!r}"

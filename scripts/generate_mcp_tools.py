@@ -4856,15 +4856,17 @@ async def filings_markdown_search_batch(
             async with sem:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    return (fid, None, "skipped: batch deadline reached", False)
+                    return (fid, None, "skipped: batch deadline reached", False, False)
                 async with budget_lock:
                     if budget["bytes"] <= 0:
-                        return (fid, None, "skipped: batch byte budget spent", False)
+                        return (fid, None, "skipped: batch byte budget spent", False, False)
                     allowance = min(_BATCH_MAX_FILING_BYTES, budget["bytes"])
                     budget["bytes"] -= allowance          # reserve before any await
                 used = 0
+                buf = bytearray()   # defined BEFORE the try: a read that fails
+                                    # part-way has still spent those bytes, and the
+                                    # finally block must charge them to the budget
                 try:
-                    buf = bytearray()
                     truncated = False
                     async with asyncio.timeout(remaining):
                         async with _api_stream_get(f"/filings/{fid}/markdown/") as response:
@@ -4880,34 +4882,43 @@ async def filings_markdown_search_batch(
                                     truncated = True
                                     break
                                 buf.extend(_chunk)
-                    used = len(buf)
                     text = buf.decode("utf-8", errors="replace")
-                    return (fid, _md_scan_hits(text, raw, cap), None, truncated)
+                    # Scan for ONE more than we will show, so we can say whether the
+                    # hit cap hid anything. Reporting "3 match(es)" when there are
+                    # four lets a client read an incomplete answer as a complete one.
+                    found = _md_scan_hits(text, raw, cap + 1)
+                    overflow = len(found) > cap
+                    return (fid, found[:cap], None, truncated, overflow)
                 except (TimeoutError, asyncio.TimeoutError):
                     # An expired read is NOT an absence. Report it as not-searched.
-                    return (fid, None, "not searched: deadline reached mid-read", False)
+                    return (fid, None, "not searched: deadline reached mid-read", False, False)
                 except UpstreamHTTPError as exc:
                     # One filing being gone must not fail the batch — the caller needs
                     # the other answers, and an explicit per-filing status is what
                     # lets them tell "no match" from "never searched".
-                    return (fid, None, f"unavailable: {getattr(exc, 'status_code', 'upstream error')}", False)
+                    # UpstreamHTTPError carries `upstream_status`; there is no
+                    # `status_code` on it, so the old getattr fell back EVERY time
+                    # and 404 / 429 / 500 were indistinguishable to the caller.
+                    return (fid, None, f"unavailable: {exc.upstream_status or 'upstream error'}", False, False)
                 except Exception:
                     logger.exception("filings_markdown_search_batch: filing %s failed", fid)
-                    return (fid, None, "unavailable: read failed", False)
+                    return (fid, None, "unavailable: read failed", False, False)
                 finally:
+                    used = len(buf)        # charge what was actually downloaded,
+                                           # including on a failed partial read
                     async with budget_lock:
-                        budget["bytes"] += allowance - used   # refund the unused tail
+                        budget["bytes"] += allowance - used   # refund only the unread tail
 
         results = await asyncio.gather(*[_one(f) for f in ordered])
 
-        total_hits = sum(len(h) for _f, h, _e, _t in results if h)
-        with_hits = [(f, h, t) for f, h, _e, t in results if h]
+        total_hits = sum(len(h) for _f, h, _e, _t, _o in results if h)
+        with_hits = [(f, h, t, o) for f, h, _e, t, o in results if h]
         # A filing whose read was CUT OFF at the byte cap was only partly searched.
         # Reporting it as "no match" would manufacture exactly the false absence this
         # tool exists to reduce — the unsearched tail is unknown, not empty.
-        no_hits = [f for f, h, e, t in results if h == [] and e is None and not t]
-        partial = [f for f, h, e, t in results if h == [] and e is None and t]
-        unavailable = [(f, e) for f, h, e, _t in results if e]
+        no_hits = [f for f, h, e, t, _o in results if h == [] and e is None and not t]
+        partial = [f for f, h, e, t, _o in results if h == [] and e is None and t]
+        unavailable = [(f, e) for f, h, e, _t, _o in results if e]
         record_result_count(total_hits)
 
         parts = [
@@ -4920,8 +4931,12 @@ async def filings_markdown_search_batch(
                 f"NOTE: {dropped} filing id(s) beyond the {_BATCH_MAX_FILINGS}-filing cap "
                 "were not searched — call again with the rest."
             )
-        for fid, hits, was_cut in with_hits:
-            suffix = " (document truncated at the byte cap — there may be more below)" if was_cut else ""
+        for fid, hits, was_cut, more in with_hits:
+            suffix = ""
+            if more:
+                suffix += f" — hit cap reached, MORE MATCHES EXIST beyond these {len(hits)}"
+            if was_cut:
+                suffix += " (document truncated at the byte cap — there may be more below)"
             parts.append(f"\\n=== filing {fid} — {len(hits)} match(es){suffix} ===")
             for off, span in hits:
                 parts.append(f"--- near offset {off} ---\\n...{span}...")
