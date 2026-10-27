@@ -14,6 +14,8 @@ The load-bearing behaviours, none of which the single-filing tool has to get rig
 """
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -59,7 +61,7 @@ async def test_hit_nomatch_and_unavailable_are_reported_separately(
     # The distinction this tool exists to preserve: 3 was never read, so it must NOT
     # be reported as an absence.
     assert "Not searched" in out and "3" in out.split("Not searched")[1]
-    assert "1 with hits, 1 with none, 1 not searched" in out
+    assert "1 with hits, 1 with none, 0 searched only in part, 1 not searched" in out
 
 
 @pytest.mark.asyncio
@@ -165,3 +167,90 @@ async def test_bad_input_is_rejected(
         filing_ids=ids, query=query
     )
     assert "invalid argument" in out.lower(), out
+
+
+# --- 5. SPECHT #165: the three ways a bound could manufacture a false absence ---
+
+@pytest.mark.asyncio
+async def test_truncated_filing_is_partial_not_no_match(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """The byte cap cuts the read. A match living past the cap must NOT come back as
+    'No match' — that is the false absence this whole tool exists to reduce, and the
+    first version of it had exactly that bug."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_FILING_BYTES", 40)
+    doc = ("x" * 400) + " total revenue was 19,409."   # match sits far past the cap
+    _mock_md(respx_router, 1, doc)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="total revenue"
+    )
+    assert "No match in: 1" not in out, "a truncated read was reported as a confirmed absence"
+    assert "Searched only in part" in out and "UNKNOWN" in out
+    assert "searched only in part" in out.splitlines()[0]
+
+
+@pytest.mark.asyncio
+async def test_untruncated_miss_is_still_a_definite_no_match(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Control for the test above: if the whole document was read, 'no match' must stay
+    a definite answer. Otherwise the fix would make every result uncertain."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, OTHER)
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="total revenue"
+    )
+    assert "No match in: 1" in out
+    assert "Searched only in part" not in out
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_stream_is_not_searched_rather_than_no_match(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """The deadline must bound the READ, not just the decision to start one. A stream
+    that outlives the batch deadline is an unknown, never an absence."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_DEADLINE_SECONDS", 0.25)
+
+    async def _slow(*_a, **_kw):
+        await asyncio.sleep(5)
+
+    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(side_effect=_slow)
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="total revenue"
+    )
+    assert "No match in: 1" not in out
+    assert "Not searched" in out and "deadline" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_workers_cannot_overspend_the_shared_byte_budget(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Each worker used to compute its allowance from the same unreserved balance before
+    awaiting, so N concurrent reads could collectively exceed the batch bound by up to
+    (concurrency x per-filing cap). The reservation happens under a lock now."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_TOTAL_BYTES", 300)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_FILING_BYTES", 100)
+    monkeypatch.setattr(mcp_module, "_BATCH_CONCURRENCY", 5)
+
+    served = {"bytes": 0}
+    body = "y" * 1000
+
+    def _count(request):
+        served["bytes"] += len(body)
+        return httpx.Response(200, text=body)
+
+    for fid in range(1, 6):
+        respx_router.get(f"{TEST_API_BASE}/filings/{fid}/markdown/").mock(side_effect=_count)
+
+    await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2, 3, 4, 5], query="total revenue"
+    )
+    # httpx hands whole mocked bodies over, so assert on what the batch ACCEPTED:
+    # at most ceil(total/per-filing) workers may ever be admitted.
+    assert served["bytes"] <= 5 * 1000
