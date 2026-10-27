@@ -251,9 +251,16 @@ async def test_concurrent_workers_cannot_overspend_the_shared_byte_budget(
     await _tool(mcp_module, "filings_markdown_search_batch")(
         filing_ids=[1, 2, 3, 4, 5], query="total revenue"
     )
-    # httpx hands whole mocked bodies over, so assert on what the batch ACCEPTED:
-    # at most ceil(total/per-filing) workers may ever be admitted.
-    assert served["bytes"] <= 5 * 1000
+    # 300-byte budget / 100-byte per-filing cap => at most THREE workers are ever
+    # admitted; the fourth finds budget["bytes"] == 0 and is skipped.
+    # NB the earlier bound here was `<= 5 * 1000`, which only five registered
+    # responses can ever produce — it passed even with the budget ignored
+    # entirely, i.e. it could not fail for the reason it names. (SPECHT S4,
+    # head 651b3b3f.) Assumes the mock delivers each body as one 1,000-byte
+    # chunk; revisit if the stream mock changes.
+    assert served["bytes"] <= 3 * 1000, (
+        f"budget admitted more than 3 fetches: {served['bytes']} bytes served"
+    )
 
 
 # --- 6. SPECHT round 2: bounds that hide incompleteness -----------------------
