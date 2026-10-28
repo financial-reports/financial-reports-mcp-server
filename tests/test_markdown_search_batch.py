@@ -431,3 +431,38 @@ async def test_error_bodies_are_bounded_and_charged(
     # rather than each pulling a 100kB body.
     assert served["n"] < 5, f"error bodies were not charged: {served['n']} fetched"
     assert "budget" in out or "Not searched" in out
+
+
+@pytest.mark.asyncio
+async def test_429_body_is_bounded_inside_the_stream_helper(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """`_api_stream_get` reads the 429 body to classify it, INSIDE the helper and
+    before yielding — so no caller-side byte budget can see it, and a concurrent
+    caller buffers one body per in-flight request. Our own 429 is small; an
+    intermediary's (a CDN error page) is not bounded by us. Classification needs
+    only a prefix.
+    """
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_MAX_ERROR_BODY", 100)
+    huge = "Z" * 500_000
+    seen = {}
+
+    real_delay = mcp_module._retry_delay
+
+    def _spy(status, body_text, retry_after):
+        seen["len"] = len(body_text)
+        return real_delay(status, body_text, retry_after)
+
+    monkeypatch.setattr(mcp_module, "_retry_delay", _spy)
+    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
+        return_value=httpx.Response(429, text=huge)
+    )
+    try:
+        await _tool(mcp_module, "filings_markdown_search_batch")(
+            filing_ids=[1], query="revenue"
+        )
+    except Exception:
+        pass
+    assert seen.get("len") is not None, "classification never ran"
+    assert seen["len"] <= 100, f"429 body was not bounded: {seen['len']} chars buffered"

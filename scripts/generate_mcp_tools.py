@@ -1840,7 +1840,19 @@ async def _api_stream_get(url: str, **kwargs: Any) -> AsyncIterator[httpx.Respon
         async with _api_client.stream("GET", url, **kwargs) as response:
             body_text = ""
             if response.status_code == 429:
-                body_text = (await response.aread()).decode("utf-8", errors="replace")
+                # BOUNDED. `aread()` buffers the whole body, and this happens
+                # INSIDE the helper before the response is yielded — so no
+                # caller-side byte budget can see it, and a concurrent caller
+                # buffers one body per in-flight request. Our own 429 is small,
+                # but an intermediary's (a CDN error page) is not bounded by us.
+                # Classification only needs a prefix: `_retry_delay` looks for
+                # a quota/burst marker, which appears early in the payload.
+                chunks = bytearray()
+                async for _c in response.aiter_bytes():
+                    chunks.extend(_c[: _MAX_ERROR_BODY - len(chunks)])
+                    if len(chunks) >= _MAX_ERROR_BODY:
+                        break
+                body_text = bytes(chunks).decode("utf-8", errors="replace")
             delay = _retry_delay(
                 response.status_code, body_text, _retry_after_seconds(response)
             )
