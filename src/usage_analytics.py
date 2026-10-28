@@ -86,12 +86,23 @@ ALLOWED_ARG_KEYS = frozenset({
     # same change.
     "as_known_at",
     # The batch in-text search (filings_markdown_search_batch, mcp-server #165;
-    # receiver side web#8551 for web#8004). An integer hit cap, and a COUNT this
-    # sender DERIVES below — the raw `filing_ids` list is on neither allowlist.
-    # "queries" is on the receiver list but NOT here: it is free text, the same
-    # class as "query"/"q" above, so the same decision applies.
-    "filing_ids_count", "max_hits_per_filing",
+    # receiver side web#8551 for web#8004). An integer hit cap. "queries" is on
+    # the receiver list but NOT here: it is free text, the same class as
+    # "query"/"q" above, so the same decision applies. "filing_ids_count" is in
+    # DERIVED_ARG_KEYS below, deliberately NOT here — see that comment.
+    "max_hits_per_filing",
 })
+
+# Keys this sender SETS from other arguments and NEVER accepts from the caller.
+# A key must be in exactly one of these two sets: a derived key that is ALSO
+# allowlisted is written by the loop from whatever the client sent and only
+# *sometimes* overwritten by the derivation, which is precisely how round 10's
+# defect worked (`{"filing_ids_count": 99}` with no list was logged verbatim).
+# INVARIANT, pinned by test_no_derived_key_is_also_accepted_from_the_caller:
+#   DERIVED_ARG_KEYS & ALLOWED_ARG_KEYS == set()
+# The parity test adds this set to the sender side, because the receiver has to
+# allowlist a derived key like any other — it cannot tell who computed it.
+DERIVED_ARG_KEYS = frozenset({"filing_ids_count"})
 
 DENY_ARG_SUBSTRINGS = (
     "secret", "token", "password", "authorization", "auth",
@@ -345,10 +356,14 @@ def sanitize_mcp_arguments(arguments: Any) -> dict:
     # filings a call asks for is the number web#8000 is sized against — and it
     # cannot be reversed into the set.
     #
-    # Derived here rather than read off the wire, so a client cannot report a
-    # fan-out size that disagrees with the list it actually sent; this runs AFTER
-    # the loop precisely so it overwrites any `filing_ids_count` the caller
-    # supplied. It counts the ids AS REQUESTED, before the tool's own dedupe and
+    # Derived here, never read off the wire: `filing_ids_count` is in
+    # DERIVED_ARG_KEYS and NOT in ALLOWED_ARG_KEYS, so the loop above has already
+    # written <redacted> for any count the caller sent, and this block replaces
+    # it only when there is a real list to count. Both halves are needed, and the
+    # first version shipped only the second: a count sent WITHOUT a list was
+    # allowlisted and logged verbatim, so a client could post any fan-out number
+    # on a deliberately-invalid call — the middleware emits from a `finally`, so
+    # an argument rejected by validation is still recorded (SPECHT round 10). It counts the ids AS REQUESTED, before the tool's own dedupe and
     # 20-filing cap — demand, not work done. Scanning the same capped slice keeps
     # MAX_ARG_KEYS meaningful; the derived key can take the output one past that
     # cap, which is deliberate, since dropping the count to stay exactly at it

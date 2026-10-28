@@ -787,7 +787,11 @@ _DELIBERATELY_REDACTED_FREE_TEXT = frozenset({"query", "q", "queries"})
 
 
 def test_sender_allowlist_equals_receiver_allowlist_minus_free_text():
-    sender = usage_analytics.ALLOWED_ARG_KEYS
+    # DERIVED_ARG_KEYS counts as sender-side coverage: the receiver must allowlist
+    # a derived key like any other, because it cannot tell who computed the value.
+    # What the sender must NOT do is also ACCEPT it — that invariant is pinned
+    # separately by test_no_derived_key_is_also_accepted_from_the_caller.
+    sender = usage_analytics.ALLOWED_ARG_KEYS | usage_analytics.DERIVED_ARG_KEYS
     expected = _RECEIVER_ALLOWED_ARG_KEYS - _DELIBERATELY_REDACTED_FREE_TEXT
     assert sorted(expected - sender) == [], "receiver-approved keys the sender still redacts"
     assert sorted(sender - expected) == [], "sender keys the receiver redacts, or free text re-allowed"
@@ -1013,3 +1017,49 @@ def test_no_count_is_invented_when_there_is_no_list():
     passed a list, nor for one that passed something that is not a list."""
     assert "filing_ids_count" not in sanitize_mcp_arguments({"filing_id": 7})
     assert sanitize_mcp_arguments({"filing_ids": "11,22"}) == {"filing_ids": REDACTED}
+
+
+def test_a_count_sent_without_a_list_is_redacted_not_logged():
+    """SPECHT round 10, 3/3 passes. `filing_ids_count` was on ALLOWED_ARG_KEYS, so a
+    count arriving WITHOUT a `filing_ids` list sailed through the loop untouched —
+    the derivation only overwrites when a list is present. The middleware's `finally`
+    emits even when `call_next` raises, so a call rejected by argument validation
+    still logs its raw arguments: a client could post any fan-out number it liked on
+    a deliberately-invalid call and pollute the metric.
+
+    My own control for this (`test_no_count_is_invented_when_there_is_no_list`) tried
+    `filing_id` and a non-list `filing_ids`, and never the key itself — blind to the
+    one case it existed to guard."""
+    assert sanitize_mcp_arguments({"filing_ids_count": 99}) == {
+        "filing_ids_count": REDACTED
+    }
+    assert sanitize_mcp_arguments({"filing_ids_count": 99, "max_hits_per_filing": 3}) == {
+        "filing_ids_count": REDACTED,
+        "max_hits_per_filing": 3,
+    }
+
+
+def test_the_derivation_still_fires_though_the_key_is_no_longer_accepted():
+    """Control for the fix: removing the key from the allowlist must not disable the
+    derived value, which is the only reason the argument is logged at all."""
+    assert sanitize_mcp_arguments({"filing_ids": [1, 2, 3]}) == {
+        "filing_ids": REDACTED,
+        "filing_ids_count": 3,
+    }
+
+
+def test_no_derived_key_is_also_accepted_from_the_caller():
+    """INVARIANT, and the one that would have caught round 10 before SPECHT did: a
+    key this sender SETS must never also be a key it ACCEPTS. The overlap is exactly
+    the defect — the loop writes the caller's value and the derivation only sometimes
+    overwrites it."""
+    overlap = sorted(usage_analytics.DERIVED_ARG_KEYS & usage_analytics.ALLOWED_ARG_KEYS)
+    assert not overlap, overlap
+
+
+def test_derived_keys_never_trip_the_deny_list():
+    tripping = sorted(
+        k for k in usage_analytics.DERIVED_ARG_KEYS
+        if any(bad in k for bad in usage_analytics.DENY_ARG_SUBSTRINGS)
+    )
+    assert not tripping, tripping
