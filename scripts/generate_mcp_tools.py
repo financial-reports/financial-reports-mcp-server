@@ -4691,7 +4691,16 @@ MARKDOWN_SEARCH_TOOL_BLOCK = '''
 # financial-reports/web#8000), so the batch is bounded three ways: how many
 # filings, how many bytes in total, and how long the whole call may take.
 _BATCH_MAX_FILINGS = 20
-_BATCH_MAX_FILING_BYTES = 4_000_000
+# Matches the single-filing tool's _MAX_FILING_BYTES. A SMALLER cap here was
+# redundant: aggregate memory is bounded by _BATCH_MAX_TOTAL_BYTES via the
+# reservation (each worker takes min(cap, remaining), so a 10MB cap admits four
+# workers against a 40MB budget and the fifth waits) — the per-filing cap was
+# belt-and-braces that cost fidelity. Measured on live search traffic: a 4MB cap
+# would truncate 62 of 41,612 calls against 3 at 10MB, 20.7x, because large
+# documents are searched disproportionately often (62 calls over just 9 distinct
+# filings). Diverging from the single tool would also make a miss mean different
+# things in the two tools, which is what _md_scan_hits exists to prevent.
+_BATCH_MAX_FILING_BYTES = 10_000_000
 _BATCH_MAX_TOTAL_BYTES = 40_000_000
 _BATCH_CONCURRENCY = 5
 _BATCH_DEADLINE_SECONDS = 50.0

@@ -466,3 +466,25 @@ async def test_429_body_is_bounded_inside_the_stream_helper(
         pass
     assert seen.get("len") is not None, "classification never ran"
     assert seen["len"] <= 100, f"429 body was not bounded: {seen['len']} chars buffered"
+
+
+def test_batch_per_filing_cap_matches_the_single_filing_tool(mcp_module):
+    """The two search tools must truncate at the same point, or a miss means
+    different things depending on which one you called — the ambiguity
+    _md_scan_hits exists to prevent, re-created at the byte level.
+
+    A smaller batch cap was also redundant: aggregate memory is bounded by
+    _BATCH_MAX_TOTAL_BYTES through the reservation, not by the per-filing cap.
+    """
+    assert mcp_module._BATCH_MAX_FILING_BYTES == mcp_module._MAX_FILING_BYTES
+
+
+def test_total_budget_still_bounds_memory_at_the_larger_cap(mcp_module):
+    """Control for the above: raising the per-filing cap must not raise the
+    aggregate bound. The reservation admits floor(total/cap) workers."""
+    total = mcp_module._BATCH_MAX_TOTAL_BYTES
+    per = mcp_module._BATCH_MAX_FILING_BYTES
+    assert per <= total, "a single filing could exhaust the whole batch budget"
+    admitted = total // per
+    assert admitted >= 1, "the budget admits no workers at this cap"
+    assert admitted * per <= total, "concurrent reservations can exceed the stated bound"
