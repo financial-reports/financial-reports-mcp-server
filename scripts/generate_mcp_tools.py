@@ -2565,8 +2565,8 @@ def _upstream_hint(
             else:
                 until = "the user has raised the limit or it resets"
             link = (
-                " Show the user the exact URL from that message as a clickable "
-                "link, character for character; do not shorten or rewrite it."
+                " Show the user every URL in that message as a clickable link, "
+                "exactly as written; do not shorten or rewrite it."
                 if "https://" in upstream_copy
                 else ""
             )

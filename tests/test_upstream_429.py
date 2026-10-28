@@ -290,7 +290,7 @@ async def test_free_tier_cap_tells_the_agent_to_show_the_link_and_stop_calling(
         mcp_module, monkeypatch, fake_access_token, respx_router, json=FREE_QUOTA_BODY
     )
     msg = str(exc)
-    assert "exact URL" in msg and "clickable link" in msg
+    assert "every URL in that message as a clickable link, exactly as written" in msg
     assert "in one sentence" in msg
     assert "Do not call any FinancialFilings tool again until the user has added a card" in msg
     # The whole upstream sentence survives the 400-char cap, link and reset date.
@@ -312,6 +312,29 @@ async def test_spend_cap_without_a_link_gets_no_link_instruction(
     assert "clickable link" not in msg
     assert "added a card" not in msg
     assert "until the user has raised the limit or it resets" in msg
+
+
+@pytest.mark.asyncio
+async def test_spend_cap_with_links_gets_the_link_instruction_but_no_card_wording(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """The default daily-cap copy carries two absolute URLs (spend dashboard and
+    contact form, `_add_spend_limit_links` in the monolith). Both are shown;
+    the user already has a card, so the wait condition must not mention one."""
+    body = dict(
+        DAILY_CAP_BODY,
+        resolution=(
+            "See your current spend at https://financialfilings.com/api/dashboard/. "
+            "To raise the limit, talk to us at https://financialfilings.com/contact/."
+        ),
+    )
+    exc = await _raise_on_429(
+        mcp_module, monkeypatch, fake_access_token, respx_router, json=body
+    )
+    msg = str(exc)
+    assert "every URL in that message as a clickable link" in msg
+    assert "added a card" not in msg
+    assert "https://financialfilings.com/contact/" in msg
 
 
 @pytest.mark.asyncio
