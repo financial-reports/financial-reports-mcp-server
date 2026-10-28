@@ -216,7 +216,11 @@ async def test_a_stalled_stream_is_not_searched_rather_than_no_match(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
     """The deadline must bound the READ, not just the decision to start one. A stream
-    that outlives the batch deadline is an unknown, never an absence."""
+    that outlives the batch deadline is an unknown, never an absence.
+
+    Filing 2 is a SURVIVOR, added in SPECHT r8: a batch in which NOTHING could be
+    searched now raises (it is not an empty result), so a one-filing batch would
+    exercise that path instead of the per-filing reporting this test is about."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
     monkeypatch.setattr(mcp_module, "_BATCH_DEADLINE_SECONDS", 0.25)
 
@@ -224,8 +228,9 @@ async def test_a_stalled_stream_is_not_searched_rather_than_no_match(
         await asyncio.sleep(5)
 
     respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(side_effect=_slow)
+    _mock_md(respx_router, 2, DOC)
     out = await _tool(mcp_module, "filings_markdown_search_batch")(
-        filing_ids=[1], query="total revenue"
+        filing_ids=[1, 2], query="total revenue"
     )
     assert "No match in: 1" not in out
     assert "Not searched" in out and "deadline" in out.lower()
@@ -306,11 +311,17 @@ async def test_upstream_status_is_reported_not_swallowed(
 ):
     """UpstreamHTTPError carries `upstream_status`, NOT `status_code`. Reading the
     wrong attribute made 404, 429 and 500 all render as a bare 'upstream error', so
-    the caller could not tell a missing filing from a rate limit."""
+    the caller could not tell a missing filing from a rate limit.
+
+    Filing 2 is a SURVIVOR (SPECHT r8) — see the stalled-stream test. Note the 429
+    here is a BURST limit by classification (`nope` is not a JSON prefix, so it
+    falls through to `rate_limited`), which is why it still degrades per-filing
+    rather than ending the batch."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
     _mock_md(respx_router, 1, "nope", status=429)
+    _mock_md(respx_router, 2, DOC)
     out = await _tool(mcp_module, "filings_markdown_search_batch")(
-        filing_ids=[1], query="revenue"
+        filing_ids=[1, 2], query="revenue"
     )
     assert "429" in out, f"upstream status was swallowed: {out!r}"
 
@@ -429,13 +440,18 @@ async def test_error_bodies_are_bounded_and_charged(
     for fid in range(1, 6):
         respx_router.get(f"{TEST_API_BASE}/filings/{fid}/markdown/").mock(side_effect=_big)
 
-    out = await _tool(mcp_module, "filings_markdown_search_batch")(
-        filing_ids=[1, 2, 3, 4, 5], query="revenue"
-    )
+    # Every filing fails here, which since SPECHT r8 is an error rather than a
+    # successful "0 match(es)" — the charging this test is about happens either way.
+    with pytest.raises(mcp_module.UpstreamHTTPError) as exc:
+        await _tool(mcp_module, "filings_markdown_search_batch")(
+            filing_ids=[1, 2, 3, 4, 5], query="revenue"
+        )
     # Error bytes are charged, so the budget runs out and later filings are skipped
     # rather than each pulling a 100kB body.
     assert served["n"] < 5, f"error bodies were not charged: {served['n']} fetched"
-    assert "budget" in out or "Not searched" in out
+    # The per-filing reasons move into the error message, so the skip is still
+    # stated rather than silently dropped.
+    assert "budget" in str(exc.value) or "Not searched" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -647,3 +663,124 @@ async def test_a_budget_reduced_allowance_still_gets_the_retry_advice(
 
     assert "re-run with a narrower filing set" in out
     assert "retrying will not change" not in out.lower()
+
+
+# --- 11. SPECHT round 8 ------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_batch_where_nothing_was_searched_is_an_error(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Per-filing degradation exists to protect answers the batch DID get. With
+    zero successes there is no answer to protect, and "0 match(es) across 2
+    filing(s)" tells a client branching on error status that the corpus was
+    searched and is empty — the false absence this tool exists to reduce, at the
+    batch boundary instead of the filing boundary (#104).
+
+    The per-filing reasons are carried into the error message, so nothing the
+    successful-looking string would have said is lost."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    for fid in (1, 2):
+        _mock_md(respx_router, fid, "gone", status=404)
+    with pytest.raises(mcp_module.UpstreamHTTPError) as exc:
+        await _tool(mcp_module, "filings_markdown_search_batch")(
+            filing_ids=[1, 2], query="revenue"
+        )
+    assert "1" in str(exc.value) and "2" in str(exc.value), "per-filing reasons lost"
+
+    # The one-filing shape too — it is where "0 match(es)" is least defensible, and
+    # it is what three pre-existing tests in this file were relying on. The
+    # single-filing tool already raises on a 404 (#104); this makes the batch agree.
+    _mock_md(respx_router, 9, "gone", status=404)
+    with pytest.raises(mcp_module.UpstreamHTTPError):
+        await _tool(mcp_module, "filings_markdown_search_batch")(
+            filing_ids=[9], query="revenue"
+        )
+
+
+@pytest.mark.asyncio
+async def test_one_survivor_still_returns_the_partial_answer(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """CONTROL for the above, and the line the fix must not cross: ONE readable
+    filing is an answer, so the other nineteen failing must not cost the caller
+    it."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, DOC)
+    for fid in (2, 3):
+        _mock_md(respx_router, fid, "gone", status=404)
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2, 3], query="total revenue"
+    )
+    assert "filing 1" in out and "Not searched" in out
+
+
+@pytest.mark.asyncio
+async def test_every_filing_searched_with_no_match_is_not_an_error(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """SECOND CONTROL, and the one that matters most: a definite "searched it all,
+    it isn't there" is a RESULT. Keying the new error on "no hits" instead of on
+    "nothing was searched" would turn every honest negative answer into an error —
+    a far worse bug than the one being fixed."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    for fid in (1, 2):
+        _mock_md(respx_router, fid, OTHER)
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2], query="total revenue"
+    )
+    assert "0 match(es)" in out and "No match in: 1, 2" in out
+
+
+@pytest.mark.asyncio
+async def test_an_account_wide_failure_cancels_the_queued_workers(
+    mcp_module, monkeypatch, fake_access_token
+):
+    """`asyncio.gather` propagates the first exception but does NOT cancel its
+    siblings, so an account-wide 429 left queued workers fetching filings that
+    cannot succeed — each with its own retry, on the account that just told us it
+    is out of allowance.
+
+    Asserted on leftover TASKS rather than on request counts, which would make the
+    test a race: with cancellation the call leaves nothing pending behind it.
+
+    ⚠ The leak assertion ALONE is vacuous against a half-fix, and mutation testing
+    is what showed it: dropping the `cancel()` while keeping the `await gather(...)`
+    left the test GREEN, because the blocked workers are then waited out until the
+    batch DEADLINE and no task leaks either way. It only took 52s instead of 3s to
+    say so. Hence the elapsed-time bound below — promptness is the thing
+    cancellation actually buys, so it is the thing to assert."""
+    import contextlib
+    import time as _time
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_DEADLINE_SECONDS", 5.0)
+    never = asyncio.Event()
+
+    class _Quota(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"type": "quota_limit_exceeded", "detail": "monthly limit"}'
+
+    @contextlib.asynccontextmanager
+    async def _fake_stream(method, url, **kw):
+        if "/filings/1/" in str(url):
+            yield httpx.Response(429, stream=_Quota(), request=httpx.Request(method, url))
+        else:
+            await never.wait()          # a filing that never answers
+            yield httpx.Response(200, text=DOC, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(mcp_module._api_client, "stream", _fake_stream)
+
+    before = {t for t in asyncio.all_tasks() if not t.done()}
+    started = _time.monotonic()
+    with pytest.raises(mcp_module.UpstreamHTTPError):
+        await _tool(mcp_module, "filings_markdown_search_batch")(
+            filing_ids=[1, 2, 3, 4, 5, 6, 7], query="revenue"
+        )
+    elapsed = _time.monotonic() - started
+    leaked = {t for t in asyncio.all_tasks() if not t.done()} - before
+    assert not leaked, f"{len(leaked)} worker(s) still running after the batch raised"
+    assert elapsed < 2.0, (
+        f"took {elapsed:.1f}s against a 5s deadline — the blocked workers were "
+        "waited out rather than cancelled"
+    )

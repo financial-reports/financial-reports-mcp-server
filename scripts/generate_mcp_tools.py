@@ -2205,7 +2205,25 @@ def _429_type_from_prefix(body_text: str) -> str:
 
     An unrecognised prefix still falls through to `rate_limited`: this recovers a
     discriminator that is present, it does not guess one that is absent.
+
+    ⚠ A body can also be unparseable because something WRAPPED or replaced it — a
+    proxy error page that echoes our JSON inside HTML. That is not a prefix, and
+    reading one of our four `type` tokens out of it would hand a burst-limited
+    caller "your allowance is gone until next month": the exact direction
+    `_classify_upstream_429`'s asymmetry exists to prevent. The first version of
+    this helper did that (SPECHT r8). So the body must LOOK like the start of a
+    JSON object — the upstream's DRF handler replaces a 429 body wholesale with
+    one, so a capped one always does, and a substituted page does not.
+
+    Keyed on the body's own shape rather than on a `truncated` flag threaded down
+    from the read: the flag is more precise, but it would have to be passed
+    correctly at every bounded read — `_api_stream_get`'s AND the batch worker's
+    error read — through `_retry_delay` and `_classify_upstream_error`, and a site
+    that forgot it would silently reinstate the bug this helper was added to fix.
+    This test cannot be forgotten at a call site, and it fails toward retry advice.
     """
+    if not body_text.lstrip().startswith("{"):
+        return "rate_limited"
     match = _429_TYPE_IN_PREFIX_RE.search(body_text)
     if match is None:
         return "rate_limited"
@@ -2215,11 +2233,16 @@ def _429_type_from_prefix(body_text: str) -> str:
 def _classify_upstream_429(body_text: str) -> str:
     """Map a raw 429 body to a stable `error_kind` token.
 
-    Unrecognized, malformed, and empty bodies all fall through to
-    `"rate_limited"`, which renders as retry advice. That asymmetry is
-    deliberate: telling a burst-limited caller their allowance is gone until
-    next month is a far worse failure than telling a quota-exhausted caller to
-    retry, and a `type` the monolith adds later must not be read as quota.
+    Unrecognized and empty bodies fall through to `"rate_limited"`, which renders
+    as retry advice. That asymmetry is deliberate: telling a burst-limited caller
+    their allowance is gone until next month is a far worse failure than telling a
+    quota-exhausted caller to retry, and a `type` the monolith adds later must not
+    be read as quota.
+
+    "Malformed" used to be in that list and no longer is: a body capped mid-JSON by
+    `_api_stream_get` is malformed but semantically intact, and `_429_type_from_prefix`
+    reads it rather than discarding it. A malformed body that is NOT a JSON prefix
+    still falls through here.
     """
     payload = _parse_upstream_json(body_text)
     if payload is None:
@@ -5029,6 +5052,10 @@ async def filings_markdown_search_batch(
                     # and 404 / 429 / 500 were indistinguishable to the caller.
                     return (fid, None, f"unavailable: {exc.upstream_status or 'upstream error'}", None, False)
                 except Exception:
+                    # `Exception`, deliberately not `BaseException`: CancelledError
+                    # is a BaseException, so a worker cancelled by the sibling
+                    # cleanup below propagates instead of being recorded as
+                    # "unavailable: read failed" on a filing nobody ever read.
                     logger.exception("filings_markdown_search_batch: filing %s failed", fid)
                     return (fid, None, "unavailable: read failed", None, False)
                 finally:
@@ -5038,7 +5065,21 @@ async def filings_markdown_search_batch(
                     async with budget_lock:
                         budget["bytes"] += allowance - used   # refund only the unread tail
 
-        results = await asyncio.gather(*[_one(f) for f in ordered])
+        # Explicit tasks, because `gather` propagates the first exception but does
+        # NOT cancel the others: an account-wide 429 would otherwise leave queued
+        # workers fetching filings that cannot succeed, each with its own retry, on
+        # the account that just said it is out of allowance.
+        tasks = [asyncio.ensure_future(_one(f)) for f in ordered]
+        try:
+            results = await asyncio.gather(*tasks)
+        except BaseException:
+            for _t in tasks:
+                _t.cancel()
+            # Await the cancellations so nothing outlives this call. A worker's
+            # budget-refund `finally` may itself be cut short (it awaits a lock),
+            # which is harmless: `budget` is per-call state that dies with the call.
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
         total_hits = sum(len(h) for _f, h, _e, _t, _o in results if h)
         with_hits = [(f, h, t, o) for f, h, _e, t, o in results if h]
@@ -5051,6 +5092,23 @@ async def filings_markdown_search_batch(
         partial_cap = [f for f, h, e, t, _o in results if h == [] and e is None and t == "filing"]
         partial = partial_budget + partial_cap
         unavailable = [(f, e) for f, h, e, _t, _o in results if e]
+        # Per-filing degradation exists to protect the answers the batch DID get.
+        # With ZERO successes there is no answer to protect, and "0 match(es) across
+        # N filing(s)" tells a client branching on error status that the corpus was
+        # searched and is empty. Same #104 false-absence class as the account-wide
+        # 429, one level up: at the batch boundary rather than the filing boundary.
+        # Keyed on "nothing was SEARCHED", never on "nothing was FOUND" — a definite
+        # "searched it all, it is not there" is a RESULT, and erroring on that would
+        # be a far worse bug than the one this prevents.
+        if results and len(unavailable) == len(results):
+            raise UpstreamHTTPError(
+                "No filing in this batch could be read, so nothing was searched "
+                "for " + repr(raw) + " — this is not an empty result. Per filing: "
+                + "; ".join(f"{f} ({e})" for f, e in unavailable),
+                # The reasons above are our own short tokens, never upstream text.
+                # upstream_status stays unset: the failures need not share one.
+                error_kind="unknown",
+            )
         record_result_count(total_hits)
 
         parts = [
@@ -5097,11 +5155,11 @@ async def filings_markdown_search_batch(
             )
         return "\\n".join(parts)
     except UpstreamHTTPError:
-        # A whole-batch failure (401/403 or an account-wide 429, re-raised by the
-        # worker) must stay an
-        # ERROR. Without this the outer handler below turns it back into a
-        # successful string and the worker's re-raise is inert — which is what
-        # the first version of this fix did. Mirrors the single-filing tool (#104).
+        # A whole-batch failure must stay an ERROR. Three things reach here:
+        # 401/403 and an account-wide 429 re-raised by a worker, and the
+        # nothing-was-searched raise above. Without this the outer handler below
+        # turns any of them back into a successful string and the re-raise is inert
+        # — which is what the first version of this fix did. Mirrors #104.
         raise
     except ToolInputError as exc:
         return _safe_error("filings_markdown_search_batch", exc)
