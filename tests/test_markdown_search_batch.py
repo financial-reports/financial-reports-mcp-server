@@ -1,9 +1,14 @@
 """`filings_markdown_search_batch` — one query across N filings in one call.
 
-Why the tool exists: 90.7% of `filings_markdown_search` calls in prod are the same
-query repeated across 2+ filings (53 episodes averaging 287 calls each, worst 1,401
-calls over 565 filings). See financial-reports/web#8000 for the measurements and for
-the server-side endpoint that would make this cheaper still.
+Why the tool exists: 90.7% of `filings_markdown_search` calls in prod sit in
+(user, hour) EPISODES spanning 2+ filings — 53 episodes averaging 287 calls each,
+worst 1,401 calls over 565 filings. See financial-reports/web#8000 for the
+measurements and for the server-side endpoint that would make this cheaper still.
+
+⚠ Not "the same query repeated": I first wrote that and withdrew it. It came from
+grouping on `arguments->>'query'`, which is 100% `<redacted>` in telemetry — a
+constant column groups nothing, so the grouping was (user, hour) ONLY. Query
+identity stays unmeasured until #163's text logging accumulates traffic.
 
 The load-bearing behaviours, none of which the single-filing tool has to get right:
   1. per-filing outcomes are distinct — HIT vs NO MATCH vs NOT SEARCHED. Collapsing
@@ -440,8 +445,11 @@ async def test_429_body_is_bounded_inside_the_stream_helper(
     """`_api_stream_get` reads the 429 body to classify it, INSIDE the helper and
     before yielding — so no caller-side byte budget can see it, and a concurrent
     caller buffers one body per in-flight request. Our own 429 is small; an
-    intermediary's (a CDN error page) is not bounded by us. Classification needs
-    only a prefix.
+    intermediary's (a CDN error page) is not bounded by us.
+
+    A prefix is enough only because `_429_type_from_prefix` recovers `type` from an
+    unparseable body — `_classify_upstream_429` itself parses the WHOLE document.
+    This docstring claimed the prefix sufficed before that was true (SPECHT r7).
     """
     _auth_as(mcp_module, monkeypatch, fake_access_token)
     monkeypatch.setattr(mcp_module, "_MAX_ERROR_BODY", 100)
@@ -544,3 +552,98 @@ def test_budget_admits_every_concurrent_worker_at_the_per_filing_cap(mcp_module)
         mcp_module._BATCH_MAX_TOTAL_BYTES
         >= mcp_module._BATCH_MAX_FILING_BYTES * mcp_module._BATCH_CONCURRENCY
     ), "a concurrent worker can be falsely skipped while reservations are outstanding"
+
+
+# --- 10. SPECHT round 7 ------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_account_wide_429_raises_rather_than_degrading(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """`quota_exhausted` / spend-cap / spend-ceiling are facts about the ACCOUNT,
+    not about a filing, so every filing in the batch gets the same 429. Degrading
+    them to per-filing "unavailable: 429" rows returned a SUCCESSFUL
+    "0 match(es) across N filing(s)" and discarded the one actionable sentence
+    the upstream sent (its own remediation copy).
+
+    Same class as the 401/403 fix two rounds earlier — and my own comment there,
+    "Anything else IS per-filing", is what made this read as already handled.
+    `quota_exhausted` is ~90% of all upstream errors on this surface.
+    """
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    for fid in (1, 2):
+        respx_router.get(f"{TEST_API_BASE}/filings/{fid}/markdown/").mock(
+            return_value=httpx.Response(
+                429, json={"type": "quota_limit_exceeded", "detail": "monthly limit"}
+            )
+        )
+    with pytest.raises(mcp_module.UpstreamHTTPError) as exc:
+        await _tool(mcp_module, "filings_markdown_search_batch")(
+            filing_ids=[1, 2], query="revenue"
+        )
+    assert exc.value.error_kind == "quota_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_a_burst_429_still_degrades_per_filing(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """CONTROL for the above, and the reason the fix keys on `error_kind` rather
+    than on the 429 status: a burst limit DOES clear, `_api_stream_get` has
+    already spent its single retry on it, and one throttled filing must not cost
+    the caller the other answers."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, DOC)
+    respx_router.get(f"{TEST_API_BASE}/filings/2/markdown/").mock(
+        return_value=httpx.Response(
+            429, json={"type": "burst_limit_exceeded", "detail": "slow down"}
+        )
+    )
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2], query="total revenue"
+    )
+    assert "filing 1" in out and "Not searched" in out
+
+
+@pytest.mark.asyncio
+async def test_a_filing_over_the_per_filing_cap_is_not_told_to_retry(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """A filing larger than `_BATCH_MAX_FILING_BYTES` cannot be searched to its end
+    by a narrower batch (the allowance is already the full per-filing cap) nor by
+    `filings_markdown_search` (same cap, asserted elsewhere in this file). Offering
+    both buys the client nothing but repeat calls, which is what this tool exists
+    to reduce."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_FILING_BYTES", 50)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_TOTAL_BYTES", 50 * mcp_module._BATCH_CONCURRENCY)
+    _mock_md(respx_router, 1, "nothing here. " * 200)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="total revenue"
+    )
+
+    assert "searched only in part" in out.lower()
+    assert "re-run with a narrower filing set" not in out
+    assert "filings_markdown_search on these" not in out
+    assert "retrying will not change" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_budget_reduced_allowance_still_gets_the_retry_advice(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """CONTROL for the above: when the SHARED budget — not the filing's size — is
+    what cut the read short, a narrower filing set really does help, so that
+    advice must survive. One truncation symptom, two causes, two remedies."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_FILING_BYTES", 10_000)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_TOTAL_BYTES", 50)
+    _mock_md(respx_router, 1, "nothing here. " * 200)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="total revenue"
+    )
+
+    assert "re-run with a narrower filing set" in out
+    assert "retrying will not change" not in out.lower()

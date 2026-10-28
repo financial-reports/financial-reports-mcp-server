@@ -414,3 +414,39 @@ async def test_text_tool_429_records_error_kind_for_analytics(
     assert recorded is not None
     assert recorded["upstream_status"] == 429
     assert recorded["error_kind"] == "quota_exhausted"
+
+
+# --- SPECHT round 7: a CAPPED 429 body is a prefix, not a malformed body -----
+
+def test_a_truncated_quota_body_still_classifies_as_quota(mcp_module) -> None:
+    """`_api_stream_get` caps its classification read at `_MAX_ERROR_BODY`, and a
+    capped valid JSON document no longer parses. Inheriting the malformed-body
+    fallback would route an ACCOUNT-WIDE quota error to "wait a moment and retry"
+    — advice that cannot work, for ~90% of all upstream errors.
+
+    The comment this replaces claimed classification "only needs a prefix". It
+    did not: `_classify_upstream_429` parses the WHOLE document, so the prefix was
+    treated as garbage. Now the prefix really is enough.
+    """
+    truncated = '{"type": "quota_limit_exceeded", "detail": "' + "x" * 200
+    assert mcp_module._parse_upstream_json(truncated) is None, "must be unparseable"
+    assert mcp_module._classify_upstream_429(truncated) == "quota_exhausted"
+
+
+def test_a_truncated_burst_body_still_classifies_as_burst(mcp_module) -> None:
+    """Both directions, or the fix would just move which 429 is misread: a burst
+    limit must stay retryable even when its body is capped."""
+    truncated = '{"type": "burst_limit_exceeded", "detail": "' + "x" * 200
+    assert mcp_module._classify_upstream_429(truncated) == "burst_limit"
+
+
+def test_a_truncated_body_with_no_known_type_still_falls_back_to_retry(
+    mcp_module,
+) -> None:
+    """NEGATIVE CONTROL for the two above. The deliberate asymmetry survives:
+    telling a burst-limited caller their allowance is gone until next month is
+    worse than telling a quota-exhausted caller to retry, so an unrecognised
+    prefix must still render as retry advice rather than guessing quota."""
+    assert mcp_module._classify_upstream_429('{"type": "something_new", ') == "rate_limited"
+    assert mcp_module._classify_upstream_429("<html>429 Too Many Requests") == "rate_limited"
+    assert mcp_module._classify_upstream_429("") == "rate_limited"

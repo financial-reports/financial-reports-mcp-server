@@ -1854,8 +1854,13 @@ async def _api_stream_get(url: str, **kwargs: Any) -> AsyncIterator[httpx.Respon
                 # caller-side byte budget can see it, and a concurrent caller
                 # buffers one body per in-flight request. Our own 429 is small,
                 # but an intermediary's (a CDN error page) is not bounded by us.
-                # Classification only needs a prefix: `_retry_delay` looks for
-                # a quota/burst marker, which appears early in the payload.
+                # A prefix is enough, but NOT for the reason an earlier version
+                # of this comment claimed: `_classify_upstream_429` parses the
+                # WHOLE document, so a capped body does not parse at all. What
+                # makes the cap safe is `_429_type_from_prefix`, which recovers
+                # `type` from the prefix. (Our own 429 is the DRF-replaced
+                # payload, a few hundred chars, so the cap is not reached by it;
+                # an intermediary's CDN page is not valid JSON at any length.)
                 chunks = bytearray()
                 async for _c in response.aiter_bytes():
                     chunks.extend(_c[: _MAX_ERROR_BODY - len(chunks)])
@@ -2184,6 +2189,29 @@ _NON_RETRYABLE_429 = frozenset(
 _MAX_UPSTREAM_COPY = 400
 
 
+# `type` as it appears in a body too truncated to parse. Anchored on the key so a
+# `detail` sentence quoting one of these tokens cannot be read as the type itself.
+_429_TYPE_IN_PREFIX_RE = re.compile(r'"type"\s*:\s*"([A-Za-z0-9_]+)"')
+
+
+def _429_type_from_prefix(body_text: str) -> str:
+    """`error_kind` from a 429 body that did not parse as a JSON object.
+
+    `_api_stream_get` caps its classification read at `_MAX_ERROR_BODY`, so a
+    capped valid document reaches the classifier as a PREFIX — syntactically
+    malformed, semantically intact. Inheriting the malformed-body fallback would
+    route an account-wide quota error to retry advice that cannot work, for the
+    error class that is ~90% of all upstream failures.
+
+    An unrecognised prefix still falls through to `rate_limited`: this recovers a
+    discriminator that is present, it does not guess one that is absent.
+    """
+    match = _429_TYPE_IN_PREFIX_RE.search(body_text)
+    if match is None:
+        return "rate_limited"
+    return _RATE_LIMIT_KINDS.get(match.group(1), "rate_limited")
+
+
 def _classify_upstream_429(body_text: str) -> str:
     """Map a raw 429 body to a stable `error_kind` token.
 
@@ -2195,7 +2223,7 @@ def _classify_upstream_429(body_text: str) -> str:
     """
     payload = _parse_upstream_json(body_text)
     if payload is None:
-        return "rate_limited"
+        return _429_type_from_prefix(body_text)
     raw_type = payload.get("type")
     if not isinstance(raw_type, str):
         return "rate_limited"
@@ -4916,10 +4944,10 @@ async def filings_markdown_search_batch(
             async with sem:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    return (fid, None, "skipped: batch deadline reached", False, False)
+                    return (fid, None, "skipped: batch deadline reached", None, False)
                 async with budget_lock:
                     if budget["bytes"] <= 0:
-                        return (fid, None, "skipped: batch byte budget spent", False, False)
+                        return (fid, None, "skipped: batch byte budget spent", None, False)
                     allowance = min(_BATCH_MAX_FILING_BYTES, budget["bytes"])
                     budget["bytes"] -= allowance          # reserve before any await
                 used = 0
@@ -4929,7 +4957,7 @@ async def filings_markdown_search_batch(
                 err_bytes = 0       # an error body is downloaded too — charge it,
                                     # or N failing filings bypass the batch bound
                 try:
-                    truncated = False
+                    truncated = None
                     async with asyncio.timeout(remaining):
                         async with _api_stream_get(f"/filings/{fid}/markdown/") as response:
                             if response.is_error:
@@ -4951,7 +4979,17 @@ async def filings_markdown_search_batch(
                             async for _chunk in response.aiter_bytes():
                                 if len(buf) + len(_chunk) > allowance:
                                     buf.extend(_chunk[: allowance - len(buf)])
-                                    truncated = True
+                                    # WHICH bound cut the read decides what advice
+                                    # can help: a shared-budget cut is fixable by a
+                                    # narrower call, a filing over the per-filing
+                                    # cap is not fixable by any call. Truthy either
+                                    # way, so every `not t` / `if was_cut` test
+                                    # below keeps its meaning.
+                                    truncated = (
+                                        "budget"
+                                        if allowance < _BATCH_MAX_FILING_BYTES
+                                        else "filing"
+                                    )
                                     break
                                 buf.extend(_chunk)
                     text = buf.decode("utf-8", errors="replace")
@@ -4963,15 +5001,25 @@ async def filings_markdown_search_batch(
                     return (fid, found[:cap], None, truncated, overflow)
                 except (TimeoutError, asyncio.TimeoutError):
                     # An expired read is NOT an absence. Report it as not-searched.
-                    return (fid, None, "not searched: deadline reached mid-read", False, False)
+                    return (fid, None, "not searched: deadline reached mid-read", None, False)
                 except UpstreamHTTPError as exc:
-                    # 401/403 is NOT a per-filing fact — a revoked or unauthorised
-                    # token fails every filing in the batch. Degrading it to 20
-                    # "unavailable" rows reports the call as SUCCESSFUL and hides an
-                    # auth failure from any client branching on MCP error status.
-                    # Re-raise, matching the single-filing tool's #104 contract that
-                    # an upstream failure must stay distinguishable from a result.
-                    if exc.upstream_status in (401, 403):
+                    # An ACCOUNT-WIDE failure is not a per-filing fact — it fails
+                    # every filing in the batch, so degrading it to 20 "unavailable"
+                    # rows reports the call as SUCCESSFUL and hides it from any
+                    # client branching on MCP error status. Re-raise, matching the
+                    # single-filing tool's #104 contract that an upstream failure
+                    # must stay distinguishable from a result.
+                    #   401/403      — a revoked or unauthorised token.
+                    #   _NON_RETRYABLE_429 — quota_exhausted / spend_cap_daily /
+                    #     spend_ceiling_monthly are facts about the ACCOUNT, and
+                    #     "0 match(es) across 20 filing(s)" is then a false absence
+                    #     that also discards the upstream's own remediation copy —
+                    #     the one actionable sentence it sent. quota_exhausted is
+                    #     ~90% of all upstream errors on this surface.
+                    # Keyed on `error_kind`, not on the 429 status: a burst limit
+                    # DOES clear, and _api_stream_get has already spent its single
+                    # retry on it, so it stays per-filing below.
+                    if exc.upstream_status in (401, 403) or exc.error_kind in _NON_RETRYABLE_429:
                         raise
                     # Anything else IS per-filing: one missing filing must not cost
                     # the caller the other answers, and an explicit status is what
@@ -4979,10 +5027,10 @@ async def filings_markdown_search_batch(
                     # UpstreamHTTPError carries `upstream_status`; there is no
                     # `status_code` on it, so the old getattr fell back EVERY time
                     # and 404 / 429 / 500 were indistinguishable to the caller.
-                    return (fid, None, f"unavailable: {exc.upstream_status or 'upstream error'}", False, False)
+                    return (fid, None, f"unavailable: {exc.upstream_status or 'upstream error'}", None, False)
                 except Exception:
                     logger.exception("filings_markdown_search_batch: filing %s failed", fid)
-                    return (fid, None, "unavailable: read failed", False, False)
+                    return (fid, None, "unavailable: read failed", None, False)
                 finally:
                     used = len(buf) + err_bytes   # charge what was actually
                                                   # downloaded, including a partial
@@ -4998,7 +5046,10 @@ async def filings_markdown_search_batch(
         # Reporting it as "no match" would manufacture exactly the false absence this
         # tool exists to reduce — the unsearched tail is unknown, not empty.
         no_hits = [f for f, h, e, t, _o in results if h == [] and e is None and not t]
-        partial = [f for f, h, e, t, _o in results if h == [] and e is None and t]
+        # One symptom, two causes: see the worker's `truncated` assignment.
+        partial_budget = [f for f, h, e, t, _o in results if h == [] and e is None and t == "budget"]
+        partial_cap = [f for f, h, e, t, _o in results if h == [] and e is None and t == "filing"]
+        partial = partial_budget + partial_cap
         unavailable = [(f, e) for f, h, e, _t, _o in results if e]
         record_result_count(total_hits)
 
@@ -5023,12 +5074,21 @@ async def filings_markdown_search_batch(
                 parts.append(f"--- near offset {off} ---\\n...{span}...")
         if no_hits:
             parts.append("\\nNo match in: " + ", ".join(str(f) for f in no_hits))
-        if partial:
+        if partial_budget:
             parts.append(
                 "\\nSearched only in part — no match in the portion read, the rest is UNKNOWN "
-                "(hit the per-filing byte cap; re-run with a narrower filing set, or use "
+                "(the batch's shared byte budget left these filings less than the full "
+                "per-filing allowance; re-run with a narrower filing set, or use "
                 "filings_markdown_search on these directly): "
-                + ", ".join(str(f) for f in partial)
+                + ", ".join(str(f) for f in partial_budget)
+            )
+        if partial_cap:
+            parts.append(
+                "\\nSearched only in part — no match in the portion read, the rest is UNKNOWN "
+                "(these filings are larger than the per-filing byte cap, which "
+                "filings_markdown_search shares — so neither a narrower batch nor that "
+                "tool can read the tail, and retrying will not change this answer): "
+                + ", ".join(str(f) for f in partial_cap)
             )
         if unavailable:
             parts.append(
@@ -5037,7 +5097,8 @@ async def filings_markdown_search_batch(
             )
         return "\\n".join(parts)
     except UpstreamHTTPError:
-        # A whole-batch failure (401/403, re-raised by the worker) must stay an
+        # A whole-batch failure (401/403 or an account-wide 429, re-raised by the
+        # worker) must stay an
         # ERROR. Without this the outer handler below turns it back into a
         # successful string and the worker's re-raise is inert — which is what
         # the first version of this fix did. Mirrors the single-filing tool (#104).
