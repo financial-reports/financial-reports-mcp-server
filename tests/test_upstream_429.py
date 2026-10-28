@@ -285,17 +285,37 @@ async def test_free_tier_cap_tells_the_agent_to_show_the_link_and_stop_calling(
     """web#8459: 575 of 582 capped free users who never added a card came
     through MCP, and the old copy never asked the assistant to SHOW the link.
     The instruction must name the link, the one-sentence relay, and the
-    no-more-calls rule tied to adding a card."""
+    no-more-calls rule, which points at the upstream copy (it names the card)."""
     exc = await _raise_on_429(
         mcp_module, monkeypatch, fake_access_token, respx_router, json=FREE_QUOTA_BODY
     )
     msg = str(exc)
     assert "every URL in that message as a clickable link, exactly as written" in msg
     assert "in one sentence" in msg
-    assert "Do not call any FinancialFilings tool again until the user has added a card" in msg
+    assert (
+        "Do not call any tool that fetches FinancialFilings data again until the "
+        "user has followed the message below or the limit resets." in msg
+    )
+    # The card is named by the upstream copy, not invented by the wrapper.
+    assert "adding a card" in FREE_QUOTA_BODY["resolution"]
     # The whole upstream sentence survives the 400-char cap, link and reset date.
     assert msg.endswith(FREE_QUOTA_BODY["message"] + " " + FREE_QUOTA_BODY["resolution"])
     assert msg.index("clickable link") < msg.index(PAYG_URL)
+
+
+@pytest.mark.asyncio
+async def test_paid_quota_cap_is_not_told_to_add_a_card(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """`quota_limit_exceeded` also covers paid plans, whose remedy is a plan
+    change or the reset (specht on #169). The wrapper must not name a card."""
+    exc = await _raise_on_429(
+        mcp_module, monkeypatch, fake_access_token, respx_router, json=PAID_QUOTA_BODY
+    )
+    msg = str(exc)
+    assert exc.error_kind == "quota_exhausted"
+    assert "card" not in msg
+    assert "stop and tell the user" in msg.lower()
 
 
 @pytest.mark.asyncio
@@ -310,8 +330,8 @@ async def test_spend_cap_without_a_link_gets_no_link_instruction(
     )
     msg = str(exc)
     assert "clickable link" not in msg
-    assert "added a card" not in msg
-    assert "until the user has raised the limit or it resets" in msg
+    assert "card" not in msg
+    assert "until the user has followed the message below or the limit resets" in msg
 
 
 @pytest.mark.asyncio
@@ -333,7 +353,7 @@ async def test_spend_cap_with_links_gets_the_link_instruction_but_no_card_wordin
     )
     msg = str(exc)
     assert "every URL in that message as a clickable link" in msg
-    assert "added a card" not in msg
+    assert "card" not in msg
     assert "https://financialfilings.com/contact/" in msg
 
 

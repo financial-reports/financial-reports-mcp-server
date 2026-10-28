@@ -2560,10 +2560,10 @@ def _upstream_hint(
             # #8459 (web): 575 of 582 capped free users who never added a card
             # were MCP users, and the old copy never asked the assistant to
             # SHOW the link, so say that in as many words.
-            if error_kind == "quota_exhausted":
-                until = "the user has added a card or changed plan, or the allowance resets"
-            else:
-                until = "the user has raised the limit or it resets"
+            # The wait condition points at the upstream copy rather than naming
+            # a remedy: `quota_exhausted` also covers paid plans (change plan,
+            # not add a card) and spend caps belong to users who have a card.
+            # Local guide tools fetch nothing, so they stay callable.
             link = (
                 " Show the user every URL in that message as a clickable link, "
                 "exactly as written; do not shorten or rewrite it."
@@ -2573,7 +2573,9 @@ def _upstream_hint(
             return (
                 "This is an account usage limit, not a temporary error: retrying, "
                 "or calling other tools that fetch FinancialFilings data, will fail "
-                f"the same way. Do not call any FinancialFilings tool again until {until}. "
+                "the same way. Do not call any tool that fetches FinancialFilings "
+                "data again until the user has followed the message below or the "
+                "limit resets. "
                 "Stop and tell the user in one sentence what happened, using the "
                 f"message below.{link} Message for the user: " + upstream_copy
             )
