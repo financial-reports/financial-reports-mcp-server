@@ -25,29 +25,31 @@ import pytest
 
 from .conftest import TEST_API_BASE, TEST_CLIENT_ID
 
-PAYG_URL = "https://financialreports.eu/accounts/payg/"
+PAYG_URL = "https://financialfilings.com/accounts/payg/?src=mcp"
 
 # --- upstream body fixtures (shapes verified against monolith origin/master) --
 
+# Free tier, credits mode, as the monolith builds it since web#8459.
 FREE_QUOTA_BODY = {
     "error": "Too Many Requests",
     "detail": (
-        "You have used all 500 API credits included with your plan this month. "
-        "Your free allowance resets at the start of next month. To keep going "
-        f"today, enable pay-as-you-go billing at {PAYG_URL} — you only pay for "
-        "what you use."
+        "You've used this month's 500 free credits. Continue now: adding a card "
+        "takes about a minute, then you pay only for what you use at "
+        f"$0.01/credit: {PAYG_URL} Or wait for the reset on 2026-11-01 (UTC)."
     ),
     "retry_after_seconds": 1209600,
+    "scope": "quota",
     "type": "quota_limit_exceeded",
-    "upgrade_url": "/pricing/",
+    "upgrade_url": PAYG_URL,
+    "resets_on": "2026-11-01",
     "limit": 500,
     "interval": "monthly",
-    "message": "You have used all 500 API credits included with your plan this month.",
+    "message": "You've used this month's 500 free credits.",
     "payg_url": PAYG_URL,
     "resolution": (
-        "Your free allowance resets at the start of next month. To keep going "
-        f"today, enable pay-as-you-go billing at {PAYG_URL} — you only pay for "
-        "what you use."
+        "Continue now: adding a card takes about a minute, then you pay only for "
+        f"what you use at $0.01/credit: {PAYG_URL} Or wait for the reset on "
+        "2026-11-01 (UTC)."
     ),
 }
 
@@ -141,7 +143,7 @@ async def test_free_tier_quota_429_forwards_payg_upsell(
     msg = str(exc)
     assert exc.error_kind == "quota_exhausted"
     assert PAYG_URL in msg
-    assert "pay-as-you-go" in msg.lower()
+    assert "adding a card" in msg.lower()
     # The old, actively-wrong advice must be gone for this case.
     assert "wait a moment" not in msg.lower()
 
@@ -274,6 +276,42 @@ async def test_free_tier_stop_instruction_still_carries_the_payg_link(
     msg = str(exc)
     # The relay sentence must come AFTER the instruction, whole, with the link.
     assert msg.index("Stop and tell the user") < msg.index(PAYG_URL)
+
+
+@pytest.mark.asyncio
+async def test_free_tier_cap_tells_the_agent_to_show_the_link_and_stop_calling(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """web#8459: 575 of 582 capped free users who never added a card came
+    through MCP, and the old copy never asked the assistant to SHOW the link.
+    The instruction must name the link, the one-sentence relay, and the
+    no-more-calls rule tied to adding a card."""
+    exc = await _raise_on_429(
+        mcp_module, monkeypatch, fake_access_token, respx_router, json=FREE_QUOTA_BODY
+    )
+    msg = str(exc)
+    assert "exact URL" in msg and "clickable link" in msg
+    assert "in one sentence" in msg
+    assert "Do not call any FinancialFilings tool again until the user has added a card" in msg
+    # The whole upstream sentence survives the 400-char cap, link and reset date.
+    assert msg.endswith(FREE_QUOTA_BODY["message"] + " " + FREE_QUOTA_BODY["resolution"])
+    assert msg.index("clickable link") < msg.index(PAYG_URL)
+
+
+@pytest.mark.asyncio
+async def test_spend_cap_without_a_link_gets_no_link_instruction(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """A daily spend cap belongs to a user who already has a card, and its copy
+    carries no URL: asking the assistant to show 'the exact URL' would make it
+    invent one."""
+    exc = await _raise_on_429(
+        mcp_module, monkeypatch, fake_access_token, respx_router, json=DAILY_CAP_BODY
+    )
+    msg = str(exc)
+    assert "clickable link" not in msg
+    assert "added a card" not in msg
+    assert "until the user has raised the limit or it resets" in msg
 
 
 @pytest.mark.asyncio
