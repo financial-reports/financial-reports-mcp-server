@@ -68,7 +68,9 @@ ALLOWED_ARG_KEYS = frozenset({
     # pass through _scrub_token_shapes like every other allowlisted string.
     "code", "cik", "figi", "symbol", "exchange", "mic", "name",
     "type", "types",
-    # DELIBERATELY NOT HERE, although the receiver allowlists them: "query", "q".
+    # DELIBERATELY NOT HERE, although the receiver allowlists them: "query", "q",
+    # and "queries" (the batch tool's list form, added 2026-10-28 — same class,
+    # same decision; see the batch block at the end of this set).
     # They are free text, and value-level scrubbing cannot recognise an arbitrary
     # opaque credential (only JWT / Bearer shapes), so a pasted key would be
     # stored durably. Whether raw in-text search terms may be logged is an open
@@ -83,6 +85,12 @@ ALLOWED_ARG_KEYS = frozenset({
     # datetime, no PII, no deny substring. Allowlisted on the receiver in the
     # same change.
     "as_known_at",
+    # The batch in-text search (filings_markdown_search_batch, mcp-server #165;
+    # receiver side web#8551 for web#8004). An integer hit cap, and a COUNT this
+    # sender DERIVES below — the raw `filing_ids` list is on neither allowlist.
+    # "queries" is on the receiver list but NOT here: it is free text, the same
+    # class as "query"/"q" above, so the same decision applies.
+    "filing_ids_count", "max_hits_per_filing",
 })
 
 DENY_ARG_SUBSTRINGS = (
@@ -331,6 +339,24 @@ def sanitize_mcp_arguments(arguments: Any) -> dict:
             clean[key] = _apply_grammar(value, grammar) if grammar else _truncate(value)
         else:
             clean[key] = REDACTED
+    # `filing_ids` is allowlisted on NEITHER end, so it stays <redacted> above: a
+    # 20-filing id list is a user's research set, not one public identifier like
+    # `filing_id`. The COUNT is what makes batch fan-out observable — how many
+    # filings a call asks for is the number web#8000 is sized against — and it
+    # cannot be reversed into the set.
+    #
+    # Derived here rather than read off the wire, so a client cannot report a
+    # fan-out size that disagrees with the list it actually sent; this runs AFTER
+    # the loop precisely so it overwrites any `filing_ids_count` the caller
+    # supplied. It counts the ids AS REQUESTED, before the tool's own dedupe and
+    # 20-filing cap — demand, not work done. Scanning the same capped slice keeps
+    # MAX_ARG_KEYS meaningful; the derived key can take the output one past that
+    # cap, which is deliberate, since dropping the count to stay exactly at it
+    # would lose the only reason to log the argument at all.
+    for raw_key, value in list(arguments.items())[:MAX_ARG_KEYS]:
+        if str(raw_key).lower() == "filing_ids" and isinstance(value, (list, tuple)):
+            clean["filing_ids_count"] = len(value)
+            break
     return clean
 
 

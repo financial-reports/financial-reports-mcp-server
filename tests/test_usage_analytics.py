@@ -764,6 +764,11 @@ _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
     "company", "company_isin",
     "max_hits", "context_chars", "offset", "limit",
     "as_known_at",
+    # web#8551 (head 0d59b292, for web#8004), verified by reading the receiver
+    # file at that ref rather than by relay: the batch tool's query list, a
+    # COUNT of the filing ids (the raw list is deliberately on NEITHER end) and
+    # the per-filing hit cap.
+    "queries", "filing_ids_count", "max_hits_per_filing",
 })
 
 
@@ -778,7 +783,7 @@ def _opaque_key():
 # Free-text keys the receiver allows but this sender deliberately keeps
 # redacting: scrubbing cannot recognise an arbitrary opaque credential typed
 # into them. Removing a key from this set is a privacy decision, not a sync fix.
-_DELIBERATELY_REDACTED_FREE_TEXT = frozenset({"query", "q"})
+_DELIBERATELY_REDACTED_FREE_TEXT = frozenset({"query", "q", "queries"})
 
 
 def test_sender_allowlist_equals_receiver_allowlist_minus_free_text():
@@ -975,3 +980,36 @@ def test_bool_is_not_a_cik():
 def test_free_text_keys_still_use_the_best_effort_scrub(key):
     """No closed grammar exists for these; they keep the #119 scrub (residual)."""
     assert sanitize_mcp_arguments({key: "Apple Inc"}) == {key: "Apple Inc"}
+
+
+# --- M1: the batch tool's arguments (web#8551 receiver, mcp-server #165) ------
+
+def test_batch_filing_ids_become_a_count_and_the_raw_list_stays_redacted():
+    """`filing_ids` is on NEITHER allowlist: a 20-filing id list is a user's
+    research set, not one public identifier like `filing_id`. The COUNT is the
+    part that makes batch fan-out observable, and it cannot be reversed into the
+    set. `query` keeps its free-text redaction, as in the single-filing tool."""
+    out = sanitize_mcp_arguments(
+        {"filing_ids": [11, 22, 33], "query": "going concern", "max_hits_per_filing": 3}
+    )
+    assert out == {
+        "filing_ids": REDACTED,
+        "filing_ids_count": 3,
+        "query": REDACTED,
+        "max_hits_per_filing": 3,
+    }
+
+
+def test_a_caller_supplied_count_cannot_outvote_the_real_list():
+    """Derived from the list, never read off the wire — otherwise a client could
+    log any fan-out size it liked while the real list stayed redacted and
+    unauditable."""
+    out = sanitize_mcp_arguments({"filing_ids": [1, 2], "filing_ids_count": 99})
+    assert out["filing_ids_count"] == 2
+
+
+def test_no_count_is_invented_when_there_is_no_list():
+    """Control: the derivation must not manufacture a count for a call that never
+    passed a list, nor for one that passed something that is not a list."""
+    assert "filing_ids_count" not in sanitize_mcp_arguments({"filing_id": 7})
+    assert sanitize_mcp_arguments({"filing_ids": "11,22"}) == {"filing_ids": REDACTED}
