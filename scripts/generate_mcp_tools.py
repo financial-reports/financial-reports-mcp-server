@@ -1831,8 +1831,17 @@ async def _api_stream_get(url: str, **kwargs: Any) -> AsyncIterator[httpx.Respon
     the caller's own `aiter_bytes()` loop surfaces here, and re-raising is the
     only correct response.
 
-    Classifying a 429 needs the body, so it is read here. httpx caches after
-    `aread()`, so the caller's own `aread()` still works.
+    Classifying a 429 needs the body, so it is read here — BOUNDED, because an
+    unbounded `aread()` happens before any caller-side budget exists and a
+    concurrent caller buffers one body per in-flight request.
+
+    The bounded read CONSUMES the stream, unlike the `aread()` it replaced,
+    which cached. So a 429 that will NOT be retried can no longer be yielded:
+    the caller's `aread()`/`.text` would raise `StreamConsumed`, and
+    `quota_exhausted` is non-retryable and ~90% of all upstream errors. Such a
+    429 is raised HERE instead, from the buffered prefix, which is what the
+    caller would have done with it anyway (#104: an upstream failure must stay
+    an error, never a successful string).
     """
     delay: Optional[float] = None
     handed_off = False
@@ -1857,6 +1866,11 @@ async def _api_stream_get(url: str, **kwargs: Any) -> AsyncIterator[httpx.Respon
                 response.status_code, body_text, _retry_after_seconds(response)
             )
             if delay is None:
+                if response.status_code == 429:
+                    # Stream already consumed by the bounded classification read
+                    # above — yielding it hands the caller a response whose body
+                    # cannot be read. Raise from the prefix we buffered.
+                    _raise_upstream_text_error(response, body_text)
                 handed_off = True
                 yield response
                 return
@@ -4701,8 +4715,14 @@ _BATCH_MAX_FILINGS = 20
 # filings). Diverging from the single tool would also make a miss mean different
 # things in the two tools, which is what _md_scan_hits exists to prevent.
 _BATCH_MAX_FILING_BYTES = 10_000_000
-_BATCH_MAX_TOTAL_BYTES = 40_000_000
 _BATCH_CONCURRENCY = 5
+# INVARIANT: total >= per-filing x concurrency. Reservation is up-front, so with
+# a smaller total the first workers reserve everything and a later one is told
+# "budget spent" while the earlier reads refund almost all of it moments later —
+# a filing silently missing from the answer despite ample real budget. Keeping
+# the product as the floor makes a false skip impossible rather than unlikely,
+# and the aggregate bound stays explicit at 50 MB.
+_BATCH_MAX_TOTAL_BYTES = _BATCH_MAX_FILING_BYTES * _BATCH_CONCURRENCY
 _BATCH_DEADLINE_SECONDS = 50.0
 
 

@@ -488,3 +488,59 @@ def test_total_budget_still_bounds_memory_at_the_larger_cap(mcp_module):
     admitted = total // per
     assert admitted >= 1, "the budget admits no workers at this cap"
     assert admitted * per <= total, "concurrent reservations can exceed the stated bound"
+
+
+# --- 9. SPECHT round 6: two regressions I introduced in the two prior commits ---
+
+@pytest.mark.asyncio
+async def test_non_retryable_429_raises_rather_than_yielding_a_consumed_stream(
+    mcp_module, monkeypatch
+):
+    """Bounding the 429 classification read replaced `aread()` (which CACHES) with
+    `aiter_bytes()` (which CONSUMES), so a non-retryable 429 could be yielded with
+    a body the caller can no longer read. `quota_exhausted` is non-retryable and
+    ~90% of all upstream errors, so this was the most common error path.
+
+    ⚠ This test took three attempts and both failures are worth keeping:
+      1. a respx mock — its body is already buffered, so `.text` kept working and
+         the test passed with the fix REVERTED. Vacuous. SPECHT's own second pass
+         had warned: "verify with a real streamed 429, not an already-buffered
+         mock response".
+      2. asserting on `r.text` of a yielded response — the RETRY path opens a
+         FRESH stream, and `.text` on an unread streaming response raises
+         `ResponseNotRead` by design. That fails identically with or without the
+         fix, so it isolates nothing.
+    The body must therefore be one the classifier actually recognises: it keys on
+    `type`, not `error_kind`, and only `_NON_RETRYABLE_429` reaches `delay=None`.
+    """
+    import contextlib
+
+    class _Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"type": "quota_limit_exceeded", "detail": "monthly limit"}'
+
+    @contextlib.asynccontextmanager
+    async def _fake_stream(method, url, **kw):
+        yield httpx.Response(429, stream=_Stream(), request=httpx.Request(method, url))
+
+    monkeypatch.setattr(mcp_module._api_client, "stream", _fake_stream)
+
+    with pytest.raises(mcp_module.UpstreamHTTPError) as exc:
+        async with mcp_module._api_stream_get("/filings/1/markdown/"):
+            pass
+    assert exc.value.upstream_status == 429, "the quota status must survive"
+
+
+def test_budget_admits_every_concurrent_worker_at_the_per_filing_cap(mcp_module):
+    """Reservation is up-front, so a total below per-filing x concurrency lets the
+    first workers reserve everything and a later one be told "budget spent" while
+    the earlier reads refund almost all of it moments later — a filing silently
+    missing from the answer despite ample real budget.
+
+    Raising the per-filing cap to 10MB against a 40MB total created exactly that:
+    four workers reserved the lot and the fifth skipped immediately.
+    """
+    assert (
+        mcp_module._BATCH_MAX_TOTAL_BYTES
+        >= mcp_module._BATCH_MAX_FILING_BYTES * mcp_module._BATCH_CONCURRENCY
+    ), "a concurrent worker can be falsely skipped while reservations are outstanding"
