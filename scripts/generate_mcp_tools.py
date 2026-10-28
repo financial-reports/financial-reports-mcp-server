@@ -4885,15 +4885,27 @@ async def filings_markdown_search_batch(
                 buf = bytearray()   # defined BEFORE the try: a read that fails
                                     # part-way has still spent those bytes, and the
                                     # finally block must charge them to the budget
+                err_bytes = 0       # an error body is downloaded too — charge it,
+                                    # or N failing filings bypass the batch bound
                 try:
                     truncated = False
                     async with asyncio.timeout(remaining):
                         async with _api_stream_get(f"/filings/{fid}/markdown/") as response:
                             if response.is_error:
-                                body = await response.aread()
+                                # BOUNDED read. `aread()` buffers the whole body, and
+                                # the budget charged len(buf) == 0 on this path, so a
+                                # large 5xx body was unbounded AND free. Only the
+                                # first _MAX_ERROR_BODY bytes are ever used for the
+                                # message, so reading past them bought nothing.
+                                err = bytearray()
+                                async for _chunk in response.aiter_bytes():
+                                    err.extend(_chunk[: _MAX_ERROR_BODY - len(err)])
+                                    if len(err) >= _MAX_ERROR_BODY:
+                                        break
+                                err_bytes = len(err)
                                 _raise_upstream_text_error(
                                     response,
-                                    body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace"),
+                                    bytes(err).decode("utf-8", errors="replace"),
                                 )
                             async for _chunk in response.aiter_bytes():
                                 if len(buf) + len(_chunk) > allowance:
@@ -4912,8 +4924,16 @@ async def filings_markdown_search_batch(
                     # An expired read is NOT an absence. Report it as not-searched.
                     return (fid, None, "not searched: deadline reached mid-read", False, False)
                 except UpstreamHTTPError as exc:
-                    # One filing being gone must not fail the batch — the caller needs
-                    # the other answers, and an explicit per-filing status is what
+                    # 401/403 is NOT a per-filing fact — a revoked or unauthorised
+                    # token fails every filing in the batch. Degrading it to 20
+                    # "unavailable" rows reports the call as SUCCESSFUL and hides an
+                    # auth failure from any client branching on MCP error status.
+                    # Re-raise, matching the single-filing tool's #104 contract that
+                    # an upstream failure must stay distinguishable from a result.
+                    if exc.upstream_status in (401, 403):
+                        raise
+                    # Anything else IS per-filing: one missing filing must not cost
+                    # the caller the other answers, and an explicit status is what
                     # lets them tell "no match" from "never searched".
                     # UpstreamHTTPError carries `upstream_status`; there is no
                     # `status_code` on it, so the old getattr fell back EVERY time
@@ -4923,8 +4943,9 @@ async def filings_markdown_search_batch(
                     logger.exception("filings_markdown_search_batch: filing %s failed", fid)
                     return (fid, None, "unavailable: read failed", False, False)
                 finally:
-                    used = len(buf)        # charge what was actually downloaded,
-                                           # including on a failed partial read
+                    used = len(buf) + err_bytes   # charge what was actually
+                                                  # downloaded, including a partial
+                                                  # read and any error body
                     async with budget_lock:
                         budget["bytes"] += allowance - used   # refund only the unread tail
 
@@ -4974,6 +4995,12 @@ async def filings_markdown_search_batch(
                 + ", ".join(f"{f} ({e})" for f, e in unavailable)
             )
         return "\\n".join(parts)
+    except UpstreamHTTPError:
+        # A whole-batch failure (401/403, re-raised by the worker) must stay an
+        # ERROR. Without this the outer handler below turns it back into a
+        # successful string and the worker's re-raise is inert — which is what
+        # the first version of this fix did. Mirrors the single-filing tool (#104).
+        raise
     except ToolInputError as exc:
         return _safe_error("filings_markdown_search_batch", exc)
     except Exception as exc:

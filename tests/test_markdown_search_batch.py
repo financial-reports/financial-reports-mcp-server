@@ -369,3 +369,65 @@ async def test_single_tool_untruncated_miss_stays_definite(
     )
     assert "No match for" in out
     assert "TRUNCATED" not in out
+
+
+# --- 8. SPECHT round 4: a whole-batch failure must not read as 20 per-filing ones ---
+
+@pytest.mark.asyncio
+async def test_auth_failure_raises_rather_than_degrading(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """A revoked token 403s every filing. Degrading that to 20 'unavailable' rows
+    reports the CALL as successful and hides an auth failure from any client that
+    branches on MCP error status. Matches the single-filing tool's #104 contract."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    for fid in (1, 2):
+        _mock_md(respx_router, fid, "forbidden", status=403)
+    with pytest.raises(mcp_module.UpstreamHTTPError):
+        await _tool(mcp_module, "filings_markdown_search_batch")(
+            filing_ids=[1, 2], query="revenue"
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_missing_filing_still_degrades_per_filing(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Control for the above: 404 is a per-filing fact and must NOT end the batch,
+    or the fix would trade one failure mode for a worse one."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, DOC)
+    _mock_md(respx_router, 2, "gone", status=404)
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2], query="total revenue"
+    )
+    assert "filing 1" in out and "Not searched" in out
+
+
+@pytest.mark.asyncio
+async def test_error_bodies_are_bounded_and_charged(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """`aread()` buffered the whole 5xx body while the budget charged len(buf)==0,
+    so N failing filings downloaded unbounded data for free. The read is capped at
+    _MAX_ERROR_BODY and the bytes are charged to the batch budget."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_MAX_ERROR_BODY", 50)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_TOTAL_BYTES", 120)
+    monkeypatch.setattr(mcp_module, "_BATCH_CONCURRENCY", 1)
+    served = {"n": 0}
+
+    def _big(request):
+        served["n"] += 1
+        return httpx.Response(500, text="E" * 100_000)
+
+    for fid in range(1, 6):
+        respx_router.get(f"{TEST_API_BASE}/filings/{fid}/markdown/").mock(side_effect=_big)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2, 3, 4, 5], query="revenue"
+    )
+    # Error bytes are charged, so the budget runs out and later filings are skipped
+    # rather than each pulling a 100kB body.
+    assert served["n"] < 5, f"error bodies were not charged: {served['n']} fetched"
+    assert "budget" in out or "Not searched" in out
