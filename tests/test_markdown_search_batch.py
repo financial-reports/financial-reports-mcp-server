@@ -784,3 +784,169 @@ async def test_an_account_wide_failure_cancels_the_queued_workers(
         f"took {elapsed:.1f}s against a 5s deadline — the blocked workers were "
         "waited out rather than cancelled"
     )
+
+
+# --- 12. SPECHT round 9 ------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_truncated_filing_with_a_hit_is_also_counted_as_partial(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """A hit BEFORE the byte cap and an unread tail after it are both true of the
+    same filing. The summary counted it only under 'with hits', so the headline read
+    '0 searched only in part' — and the headline is what an LLM summarises from. The
+    per-filing detail line did say 'document truncated', which is exactly why this
+    survived nine rounds: the two halves of the same output disagreed."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_FILING_BYTES", 60)
+    doc = "Total revenue was 19,409. " + ("x" * 400) + " total revenue again."
+    _mock_md(respx_router, 1, doc)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="total revenue"
+    )
+    head = out.splitlines()[0]
+    assert "1 with hits" in head
+    assert "0 searched only in part" not in head, (
+        "a filing with an unread tail was summarised as fully searched"
+    )
+    assert "1 searched only in part" in head
+    # The per-filing detail must SURVIVE the fix, not be replaced by it.
+    assert "document truncated" in out
+    # And the overlap has to be named, or the four counts silently stop summing.
+    assert "counted BOTH" in out
+
+
+@pytest.mark.asyncio
+async def test_a_fully_read_filing_with_hits_is_not_counted_as_partial(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Control for the test above — the one that fails if the fix over-fires. A
+    filing read to the end is not partial, and the overlap note must stay absent."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, DOC)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="total revenue"
+    )
+    head = out.splitlines()[0]
+    assert "1 with hits" in head and "0 searched only in part" in head
+    assert "counted BOTH" not in out
+    assert "document truncated" not in out
+
+
+@pytest.mark.asyncio
+async def test_a_zero_balance_waits_for_outstanding_reservations_before_skipping(
+    mcp_module, monkeypatch, fake_access_token
+):
+    """A zero BALANCE is not a spent BUDGET.
+
+    The budget sits at its floor (per-filing x concurrency) and reservations are
+    up-front, so a worker that fills its WHOLE allowance refunds nothing. A later
+    worker then found `budget["bytes"] <= 0` and reported its filing as not
+    searched while the other reservations were still outstanding and about to
+    refund almost all of them — the exact failure the `_BATCH_MAX_TOTAL_BYTES`
+    comment claimed the floor made impossible.
+
+    Filing 1 fills its full allowance (refund 0). Filing 2 still holds its
+    reservation when filing 3 is admitted. Filing 3 must be SEARCHED."""
+    import contextlib
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_FILING_BYTES", 100)
+    monkeypatch.setattr(mcp_module, "_BATCH_CONCURRENCY", 2)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_TOTAL_BYTES", 200)
+    monkeypatch.setattr(mcp_module, "_BATCH_DEADLINE_SECONDS", 5.0)
+
+    @contextlib.asynccontextmanager
+    async def _fake_stream(method, url, **kw):
+        s = str(url)
+        if "/filings/1/" in s:
+            # 500 bytes against a 100-byte allowance: spends it all, refunds none.
+            yield httpx.Response(200, text="z" * 500, request=httpx.Request(method, url))
+        elif "/filings/2/" in s:
+            # Holds its 100-byte reservation open past filing 3's admission.
+            await asyncio.sleep(0.2)
+            yield httpx.Response(200, text=OTHER, request=httpx.Request(method, url))
+        else:
+            yield httpx.Response(200, text=DOC, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(mcp_module._api_client, "stream", _fake_stream)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2, 3], query="total revenue"
+    )
+    assert "budget spent" not in out, (
+        "filing 3 was called unsearchable while 100 bytes were still reserved by "
+        "a read that had not finished"
+    )
+    assert "=== filing 3" in out
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_filing_with_no_hits_is_not_double_counted(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """The other control on the partial count — the one that fails if the fix is
+    written as "every result with a truncation marker" without excluding the ones
+    the two advice lists already carry. That version counts a truncated miss twice
+    and fires the overlap note on a filing that has no hits to overlap with."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_FILING_BYTES", 40)
+    doc = ("x" * 400) + " total revenue was 19,409."   # match sits past the cap
+    _mock_md(respx_router, 1, doc)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="total revenue"
+    )
+    head = out.splitlines()[0]
+    assert "0 with hits" in head and "1 searched only in part" in head
+    assert "counted BOTH" not in out
+
+
+@pytest.mark.asyncio
+async def test_the_budget_wait_does_not_extend_the_batch_deadline(
+    mcp_module, monkeypatch, fake_access_token
+):
+    """Time spent waiting for a reservation is time spent. The read that follows
+    must be bounded by what is LEFT of the deadline, so `remaining` is re-read
+    after the wait — reusing the value measured before it lets a worker that
+    waited run a stream for the full original window and the call overruns its
+    advertised bound by up to the wait.
+
+    Filing 3 waits for filing 2's refund and then never answers; the whole call
+    must still end at the deadline, not at deadline + wait."""
+    import contextlib
+    import time as _time
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_FILING_BYTES", 100)
+    monkeypatch.setattr(mcp_module, "_BATCH_CONCURRENCY", 2)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_TOTAL_BYTES", 200)
+    monkeypatch.setattr(mcp_module, "_BATCH_DEADLINE_SECONDS", 1.0)
+    never = asyncio.Event()
+
+    @contextlib.asynccontextmanager
+    async def _fake_stream(method, url, **kw):
+        s = str(url)
+        if "/filings/1/" in s:
+            yield httpx.Response(200, text="z" * 500, request=httpx.Request(method, url))
+        elif "/filings/2/" in s:
+            await asyncio.sleep(0.6)
+            yield httpx.Response(200, text=OTHER, request=httpx.Request(method, url))
+        else:
+            await never.wait()
+            yield httpx.Response(200, text=DOC, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(mcp_module._api_client, "stream", _fake_stream)
+
+    started = _time.monotonic()
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2, 3], query="total revenue"
+    )
+    elapsed = _time.monotonic() - started
+    assert elapsed < 1.3, (
+        f"took {elapsed:.2f}s against a 1.0s deadline — the 0.6s budget wait was "
+        "added to the read window instead of taken out of it"
+    )
+    assert "Not searched" in out and "3" in out

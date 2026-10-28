@@ -4770,9 +4770,16 @@ _BATCH_CONCURRENCY = 5
 # INVARIANT: total >= per-filing x concurrency. Reservation is up-front, so with
 # a smaller total the first workers reserve everything and a later one is told
 # "budget spent" while the earlier reads refund almost all of it moments later —
-# a filing silently missing from the answer despite ample real budget. Keeping
-# the product as the floor makes a false skip impossible rather than unlikely,
-# and the aggregate bound stays explicit at 50 MB.
+# a filing silently missing from the answer despite ample real budget. The floor
+# keeps the aggregate bound explicit at 50 MB and lets every concurrent worker
+# take a FULL allowance.
+# It does NOT on its own make that false skip impossible — only rarer, which is
+# what this comment used to claim (SPECHT round 9, head aa407848). A worker that
+# fills its whole allowance refunds NOTHING, so a later worker can still find a
+# zero balance while the other reservations are outstanding and about to refund
+# almost everything. What rules the false skip out is the worker WAITING for an
+# outstanding reservation to settle before it calls a zero balance spent. Both
+# are load-bearing: the floor bounds the memory, the wait bounds the lie.
 _BATCH_MAX_TOTAL_BYTES = _BATCH_MAX_FILING_BYTES * _BATCH_CONCURRENCY
 _BATCH_DEADLINE_SECONDS = 50.0
 
@@ -4925,7 +4932,9 @@ async def filings_markdown_search_batch(
     Case-insensitive. Returns per-filing hits with character offsets you can pass to
     filings_markdown_retrieve. Outcomes are reported SEPARATELY — matched, no match,
     searched only in part, and not searched — so you can tell a real absence from a
-    filing that was truncated or never read. Max 20 filings per call.
+    filing that was truncated or never read. A filing can be BOTH matched and only
+    partly searched — hits found before the byte cap are real, the tail past it is
+    unknown. Max 20 filings per call.
     This searches only the filings you name — it does NOT search the whole corpus, so a
     'no match' result says nothing about filings outside your list."""
     try:
@@ -4949,14 +4958,17 @@ async def filings_markdown_search_batch(
 
         raw = query.strip()
         deadline = time.monotonic() + _BATCH_DEADLINE_SECONDS
-        budget = {"bytes": _BATCH_MAX_TOTAL_BYTES}
+        budget = {"bytes": _BATCH_MAX_TOTAL_BYTES, "inflight": 0}
         sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
         # The budget is read-modify-written across concurrent workers, so it needs
         # a lock: without one, N workers each compute an allowance from the SAME
         # balance before any of them subtracts, and the batch overruns its stated
         # bound by up to (concurrency x per-filing cap). Reserve up front, refund
         # the unused tail afterwards.
-        budget_lock = asyncio.Lock()
+        # A Condition rather than a bare Lock, and `inflight` alongside the
+        # balance, because a zero BALANCE is not a spent BUDGET while reservations
+        # are still outstanding — see the _BATCH_MAX_TOTAL_BYTES comment.
+        budget_cv = asyncio.Condition()
 
         async def _one(fid):
             # Bounds are checked INSIDE the worker, not just before the gather, so a
@@ -4968,11 +4980,30 @@ async def filings_markdown_search_batch(
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return (fid, None, "skipped: batch deadline reached", None, False)
-                async with budget_lock:
+                async with budget_cv:
+                    # Wait out the outstanding reservations before calling the
+                    # budget spent. A predecessor that filled its whole allowance
+                    # refunds nothing, so a zero balance with reads still in
+                    # flight means "not back yet", not "gone" — reporting this
+                    # filing as unsearched there is a false skip on a batch with
+                    # ample real budget. `inflight` is only ever decremented by a
+                    # worker that notifies, so the wait cannot outlast the reads;
+                    # the deadline bounds it regardless, and is re-read each pass
+                    # because waiting itself consumes it.
+                    while budget["bytes"] <= 0 and budget["inflight"] > 0:
+                        wait_for = deadline - time.monotonic()
+                        if wait_for <= 0:
+                            return (fid, None, "skipped: batch deadline reached", None, False)
+                        try:
+                            async with asyncio.timeout(wait_for):
+                                await budget_cv.wait()
+                        except (TimeoutError, asyncio.TimeoutError):
+                            return (fid, None, "skipped: batch deadline reached", None, False)
                     if budget["bytes"] <= 0:
                         return (fid, None, "skipped: batch byte budget spent", None, False)
                     allowance = min(_BATCH_MAX_FILING_BYTES, budget["bytes"])
                     budget["bytes"] -= allowance          # reserve before any await
+                    budget["inflight"] += 1
                 used = 0
                 buf = bytearray()   # defined BEFORE the try: a read that fails
                                     # part-way has still spent those bytes, and the
@@ -4981,6 +5012,12 @@ async def filings_markdown_search_batch(
                                     # or N failing filings bypass the batch bound
                 try:
                     truncated = None
+                    # Re-read, do NOT reuse the value measured before the budget
+                    # wait: a worker that waited there has already spent part of
+                    # the batch deadline, and the stream must be bounded by what
+                    # is LEFT. A non-positive value makes asyncio.timeout fire at
+                    # once, which the handler below reports as not-searched.
+                    remaining = deadline - time.monotonic()
                     async with asyncio.timeout(remaining):
                         async with _api_stream_get(f"/filings/{fid}/markdown/") as response:
                             if response.is_error:
@@ -5062,8 +5099,13 @@ async def filings_markdown_search_batch(
                     used = len(buf) + err_bytes   # charge what was actually
                                                   # downloaded, including a partial
                                                   # read and any error body
-                    async with budget_lock:
+                    async with budget_cv:
                         budget["bytes"] += allowance - used   # refund only the unread tail
+                        budget["inflight"] -= 1
+                        # Wake the waiters above: without this a worker parked on a
+                        # zero balance sleeps to the batch deadline and the fix
+                        # becomes the slower shape of the same false skip.
+                        budget_cv.notify_all()
 
         # Explicit tasks, because `gather` propagates the first exception but does
         # NOT cancel the others: an account-wide 429 would otherwise leave queued
@@ -5087,10 +5129,19 @@ async def filings_markdown_search_batch(
         # Reporting it as "no match" would manufacture exactly the false absence this
         # tool exists to reduce — the unsearched tail is unknown, not empty.
         no_hits = [f for f, h, e, t, _o in results if h == [] and e is None and not t]
-        # One symptom, two causes: see the worker's `truncated` assignment.
+        # One symptom, two causes: see the worker's `truncated` assignment. These two
+        # carry the ADVICE lines, which only hold for a filing whose read portion
+        # contained no match ("no match in the portion read") — hence `h == []`.
         partial_budget = [f for f, h, e, t, _o in results if h == [] and e is None and t == "budget"]
         partial_cap = [f for f, h, e, t, _o in results if h == [] and e is None and t == "filing"]
         partial = partial_budget + partial_cap
+        # A filing can be BOTH: a hit before the cut and an unread tail after it.
+        # Those used to fall out of the partial count entirely, because the two
+        # lists above require `h == []` — so a batch that truncated every filing it
+        # matched still summarised itself as "0 searched only in part" while the
+        # per-filing detail lines said "document truncated". The headline is the
+        # part a client summarises from, so the two halves have to agree.
+        cut_with_hits = [f for f, h, _e, t, _o in results if h and t]
         unavailable = [(f, e) for f, h, e, _t, _o in results if e]
         # Per-filing degradation exists to protect the answers the batch DID get.
         # With ZERO successes there is no answer to protect, and "0 match(es) across
@@ -5114,8 +5165,19 @@ async def filings_markdown_search_batch(
         parts = [
             f"{total_hits} match(es) for {query!r} across {len(ordered)} filing(s): "
             f"{len(with_hits)} with hits, {len(no_hits)} with none, "
-            f"{len(partial)} searched only in part, {len(unavailable)} not searched."
+            f"{len(partial) + len(cut_with_hits)} searched only in part, "
+            f"{len(unavailable)} not searched."
         ]
+        if cut_with_hits:
+            # Say the overlap out loud. The four counts above no longer sum to the
+            # filing count when it is non-empty, and an unexplained arithmetic
+            # mismatch reads as a bug in the tool rather than as the fact it is.
+            parts.append(
+                f"\\nNOTE: {len(cut_with_hits)} filing(s) are counted BOTH in "
+                "'with hits' and in 'searched only in part' — the hits reported for "
+                "them are real, and the tail past the byte cap is UNKNOWN, not "
+                "empty: " + ", ".join(str(f) for f in cut_with_hits)
+            )
         if dropped:
             parts.append(
                 f"NOTE: {dropped} filing id(s) beyond the {_BATCH_MAX_FILINGS}-filing cap "
