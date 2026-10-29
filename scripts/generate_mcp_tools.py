@@ -4837,6 +4837,34 @@ def _md_candidates(raw: str) -> list:
     return [raw]
 
 
+_QUERY_ECHO_CHARS = 200
+
+
+def _echo_query(raw: str) -> str:
+    """`repr()` of the query for display, BOUNDED.
+
+    Every result line that quotes the query back is otherwise unbounded in the
+    caller's own input: the schema is `query: str` with no maximum, so a
+    200,000-character query echoed in a headline passes the host's result
+    ceiling before a single hit is added — and host truncation then hides the
+    per-filing outcomes, which is the failure the batch's result budget exists
+    to prevent. The budget could not see it because the headline is emitted
+    unconditionally, and the comment on that budget called the headline "fixed
+    prose" (SPECHT round 13).
+
+    The SEARCH still uses the full term — only the echo is cut — so this cannot
+    change what matches. The real length is reported, because a silently
+    shortened echo would make two different long queries look identical in the
+    output.
+    """
+    if len(raw) <= _QUERY_ECHO_CHARS:
+        return repr(raw)
+    return (
+        repr(raw[:_QUERY_ECHO_CHARS])
+        + f" (query truncated for display; {len(raw)} chars total)"
+    )
+
+
 def _md_scan_hits(full_text: str, raw_query: str, cap: int) -> list:
     """Case-insensitive substring scan -> [(offset, context), ...], document order.
 
@@ -4921,12 +4949,12 @@ async def filings_markdown_search(
             if doc_truncated:
                 # The tail was never read, so this is UNKNOWN, not absent.
                 return (
-                    f"No match for {query!r} in the first {len(full_text)} chars of filing "
+                    f"No match for {_echo_query(query)} in the first {len(full_text)} chars of filing "
                     f"{filing_id} — the document was TRUNCATED at the size cap and the rest "
                     "was NOT searched. Treat this as unknown, not as an absence."
                 )
             return (
-                f"No match for {query!r} in filing {filing_id} ({len(full_text)} chars). "
+                f"No match for {_echo_query(query)} in filing {filing_id} ({len(full_text)} chars). "
                 "Try a shorter or different query (e.g. a single key term), or page the "
                 "document with filings_markdown_retrieve."
             )
@@ -4935,7 +4963,7 @@ async def filings_markdown_search(
             suffix += f" — hit cap reached, MORE MATCHES EXIST beyond these {len(hits)}"
         if doc_truncated:
             suffix += " (document truncated at the size cap — the tail was not searched)"
-        parts = [f"{len(hits)} match(es) for {query!r} in filing {filing_id} "
+        parts = [f"{len(hits)} match(es) for {_echo_query(query)} in filing {filing_id} "
                  f"(document is {len(full_text)} chars){suffix}:"]
         for off, span in hits:
             parts.append(f"\\n--- match near offset {off} ---\\n...{span}...")
@@ -5194,7 +5222,7 @@ async def filings_markdown_search_batch(
         if results and len(unavailable) == len(results):
             raise UpstreamHTTPError(
                 "No filing in this batch could be read, so nothing was searched "
-                "for " + repr(raw) + " — this is not an empty result. Per filing: "
+                "for " + _echo_query(raw) + " — this is not an empty result. Per filing: "
                 + "; ".join(f"{f} ({e})" for f, e in unavailable),
                 # The reasons above are our own short tokens, never upstream text.
                 # upstream_status stays unset: the failures need not share one.
@@ -5203,7 +5231,7 @@ async def filings_markdown_search_batch(
         record_result_count(total_hits)
 
         parts = [
-            f"{total_hits} match(es) for {query!r} across {len(ordered)} filing(s): "
+            f"{total_hits} match(es) for {_echo_query(query)} across {len(ordered)} filing(s): "
             f"{len(with_hits)} with hits, {len(no_hits)} with none, "
             f"{len(partial) + len(cut_with_hits)} searched only in part, "
             f"{len(unavailable)} not searched."
@@ -5247,10 +5275,13 @@ async def filings_markdown_search_batch(
                 + ", ".join(f"{f} ({e})" for f, e in unavailable)
             )
         # Everything above is the per-filing OUTCOME, which is what a caller must
-        # not lose: it is bounded by the filing cap (20 ids and some fixed prose),
-        # so it is emitted unconditionally and sits where a truncation from the
-        # end cannot reach it. Only the hit SPANS below are unbounded in the query
-        # length, so only they are budgeted.
+        # not lose: it is emitted unconditionally and sits where a truncation
+        # from the end cannot reach it. Its size is bounded by the filing cap
+        # (20 ids and fixed prose) AND by _echo_query — this comment used to
+        # claim the first alone, which was false, because the headline quotes the
+        # caller's query and nothing capped its length (SPECHT round 13). The hit
+        # SPANS below are the other term in the query length, and they are the
+        # only part a budget can drop.
         budget = _BATCH_MAX_RESULT_CHARS - sum(len(p) + 1 for p in parts)
         omitted = 0
         for i, (fid, hits, was_cut, more) in enumerate(with_hits):

@@ -1050,3 +1050,108 @@ def test_batch_result_ceiling_matches_the_single_filing_tool(mcp_module):
     assert mcp_module._MAX_RESULT_CHARS == 150_000, (
         "the documented Claude.ai tool-result ceiling; change both tools together"
     )
+
+
+# --- 14. SPECHT round 13 -----------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_huge_query_cannot_blow_the_result_ceiling_through_the_headline(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Round 12 budgeted the hit SPANS and left the headline, which echoes the
+    query with `!r` and is emitted unconditionally before the budget is computed.
+    The schema accepts `query: str` of any length, so the echo alone can pass the
+    ceiling — and then host truncation hides the filing outcomes, which is the
+    exact failure round 12 existed to prevent, re-entered through the one line
+    round 12's own comment called 'fixed prose'."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, DOC)
+    _mock_md(respx_router, 2, OTHER)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2], query="z" * 200_000
+    )
+    assert len(out) <= mcp_module._BATCH_MAX_RESULT_CHARS, f"result was {len(out)} chars"
+    assert "truncated for display" in out
+    assert "200000 chars total" in out, "the real length must still be reported"
+    # The outcome blocks are the thing the ceiling protects.
+    assert "No match in:" in out
+
+
+@pytest.mark.asyncio
+async def test_bounding_the_echo_does_not_change_what_matches(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """The control that matters: only the DISPLAY is cut. A long query that really
+    occurs must still be found, or the bound would have changed the search."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    phrase = "material adverse change in the business " * 8   # 320 chars
+    _mock_md(respx_router, 1, f"Intro. {phrase} Tail.")
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query=phrase
+    )
+    assert "1 match(es)" in out
+    assert "truncated for display" in out
+    assert "=== filing 1" in out
+
+
+@pytest.mark.asyncio
+async def test_the_single_filing_tool_bounds_its_echo_too(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """The same defect is in `filings_markdown_search`, which SPECHT did not flag
+    because it reviews the diff and that tool's echo is untouched by this PR. It
+    is the #1 tool by call volume, and ALL THREE of its result lines quote the
+    query back unbounded. Same rule, both tools — as with the hit cap and the
+    truncation disclosure before it.
+
+    All three lines are exercised, not one. The first version of this test used a
+    non-matching document, so it covered only the two no-match lines: reverting
+    the echo on the HIT line left it green, and the mutation pass is what said so
+    (R2). That is the fourth time in this PR a control probed only the inputs the
+    fix was already thinking about."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    long_q = "y" * 5_000
+    single = _tool(mcp_module, "filings_markdown_search")
+
+    # (a) the HIT line — the one R2 showed was uncovered.
+    phrase = "material adverse change in the business " * 8   # 320 chars
+    _mock_md(respx_router, 1, f"Intro. {phrase} Tail.")
+    hit = await single(filing_id=1, query=phrase)
+    head = hit.splitlines()[0]
+    assert "match(es) for" in head
+    assert "truncated for display" in head
+    # Asserted on the HEADLINE, not the whole result: the hit's context span is
+    # SUPPOSED to contain the matched phrase, so `phrase not in hit` would fail
+    # on correct code. The echo is the only thing under test here.
+    assert phrase not in head, "the full query was echoed back on the hit line"
+
+    # (b) the untruncated NO-MATCH line.
+    _mock_md(respx_router, 2, OTHER)
+    miss = await single(filing_id=2, query=long_q)
+    assert "truncated for display" in miss
+    assert "y" * 1_000 not in miss, "the full query was echoed back on the miss line"
+
+    # (c) the TRUNCATED no-match line, which carries its own echo.
+    monkeypatch.setattr(mcp_module, "_MAX_FILING_BYTES", 40)
+    _mock_md(respx_router, 3, "x" * 400)
+    cut = await single(filing_id=3, query=long_q)
+    assert "truncated for display" in cut
+    assert "y" * 1_000 not in cut, "the full query was echoed back on the cut-miss line"
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_query_is_echoed_verbatim(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Control: a normal query must still appear exactly, with no marker. A bound
+    that rewrote every echo would be a worse regression than the one it fixes."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    _mock_md(respx_router, 1, DOC)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="total revenue"
+    )
+    assert "'total revenue'" in out
+    assert "truncated for display" not in out
