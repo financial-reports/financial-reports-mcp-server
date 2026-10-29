@@ -453,6 +453,12 @@ if DEV_MODE_API_KEY:
 # balloons replica memory. The user-facing `limit` is far below this; this
 # is a defence-in-depth cap against runaway/malformed upstream responses.
 _MAX_FILING_BYTES = 10_000_000
+# Claude.ai's documented tool-result ceiling, covering the WHOLE result. One
+# constant for both reading tools: filings_markdown_retrieve clamps `limit` to
+# it, and the batch search budgets its hit detail against it. It was a bare
+# literal inside the retrieve body, so the batch's copy agreed with it only by
+# coincidence — and a mutation that moved the batch's value broke nothing.
+_MAX_RESULT_CHARS = 150_000
 
 _CDN_BASE = (
     "https://cdn.financialreports.eu/financialreports/static/"
@@ -4245,8 +4251,7 @@ async def {{ func_name }}(
         # Claude Desktop documented tool-result ceiling — anything larger
         # gets truncated by the host anyway. The ceiling covers the WHOLE
         # result, so the prose below is budgeted out of it before slicing (#122).
-        result_ceiling = 150000
-        limit = max(1, min(int(limit), result_ceiling))
+        limit = max(1, min(int(limit), _MAX_RESULT_CHARS))
 
         url = f"/filings/{filing_id}/markdown/"
 
@@ -4314,7 +4319,7 @@ async def {{ func_name }}(
         # converges — two passes in practice, three is slack.
         end_index = min(offset + limit, total_length)
         for _ in range(3):
-            budget = result_ceiling - len(_prose(end_index))
+            budget = _MAX_RESULT_CHARS - len(_prose(end_index))
             capped = min(end_index, offset + max(1, budget))
             if capped == end_index:
                 break
@@ -4798,6 +4803,25 @@ _BATCH_CONCURRENCY = 5
 # are load-bearing: the floor bounds the memory, the wait bounds the lie.
 _BATCH_MAX_TOTAL_BYTES = _BATCH_MAX_FILING_BYTES * _BATCH_CONCURRENCY
 _BATCH_DEADLINE_SECONDS = 50.0
+# A FOURTH bound, on the thing that leaves rather than the work done. The other
+# three cap filings, bytes read and wall clock; none of them caps the RESULT.
+# _md_scan_hits returns 200 + len(query) + 240 characters per hit, so the output
+# grows as _BATCH_MAX_FILINGS x 5 hits x (475 + len(query)) — past this ceiling
+# for any query over roughly 1,025 characters, and the query length is a
+# caller's free choice. 150k is Claude.ai's documented tool-result ceiling, the
+# same number filings_markdown_retrieve clamps `limit` to; past it the HOST
+# truncates, from the end, with no signal to anyone.
+# Which is the actual damage: the per-filing hit details used to be emitted
+# BEFORE the "No match" / "Searched only in part" / "Not searched" blocks, so a
+# host-side truncation deleted precisely the disclosure that separates a real
+# absence from an unread filing. The budget below is therefore paired with an
+# ORDERING — the small, bounded status blocks go first and are never dropped —
+# and the only thing it can omit is hit detail, which it announces.
+_BATCH_MAX_RESULT_CHARS = _MAX_RESULT_CHARS
+# Headroom kept back so the omission notice always fits. Without it the budget
+# could be spent entirely on hit detail and the one line explaining the omission
+# would be the thing omitted — a bound that hides its own operation.
+_BATCH_OMITTED_NOTICE_CHARS = 400
 
 
 def _md_candidates(raw: str) -> list:
@@ -5199,15 +5223,6 @@ async def filings_markdown_search_batch(
                 f"NOTE: {dropped} filing id(s) beyond the {_BATCH_MAX_FILINGS}-filing cap "
                 "were not searched — call again with the rest."
             )
-        for fid, hits, was_cut, more in with_hits:
-            suffix = ""
-            if more:
-                suffix += f" — hit cap reached, MORE MATCHES EXIST beyond these {len(hits)}"
-            if was_cut:
-                suffix += " (document truncated at the byte cap — there may be more below)"
-            parts.append(f"\\n=== filing {fid} — {len(hits)} match(es){suffix} ===")
-            for off, span in hits:
-                parts.append(f"--- near offset {off} ---\\n...{span}...")
         if no_hits:
             parts.append("\\nNo match in: " + ", ".join(str(f) for f in no_hits))
         if partial_budget:
@@ -5230,6 +5245,40 @@ async def filings_markdown_search_batch(
             parts.append(
                 "\\nNot searched (treat as UNKNOWN, not as 'no match'): "
                 + ", ".join(f"{f} ({e})" for f, e in unavailable)
+            )
+        # Everything above is the per-filing OUTCOME, which is what a caller must
+        # not lose: it is bounded by the filing cap (20 ids and some fixed prose),
+        # so it is emitted unconditionally and sits where a truncation from the
+        # end cannot reach it. Only the hit SPANS below are unbounded in the query
+        # length, so only they are budgeted.
+        budget = _BATCH_MAX_RESULT_CHARS - sum(len(p) + 1 for p in parts)
+        omitted = 0
+        for i, (fid, hits, was_cut, more) in enumerate(with_hits):
+            suffix = ""
+            if more:
+                suffix += f" — hit cap reached, MORE MATCHES EXIST beyond these {len(hits)}"
+            if was_cut:
+                suffix += " (document truncated at the byte cap — there may be more below)"
+            block = [f"\\n=== filing {fid} — {len(hits)} match(es){suffix} ==="]
+            for off, span in hits:
+                block.append(f"--- near offset {off} ---\\n...{span}...")
+            cost = sum(len(b) + 1 for b in block)
+            # Reserve room for the notice itself, or the bound would be met by
+            # dropping the sentence that explains the bound.
+            if cost > budget - _BATCH_OMITTED_NOTICE_CHARS:
+                omitted = len(with_hits) - i
+                break
+            parts.extend(block)
+            budget -= cost
+        if omitted:
+            # An omitted DETAIL is never an absence: the filing is still counted
+            # in "with hits" in the headline and its hits are real. Says which
+            # filings, so the re-run is a narrower call rather than a guess.
+            parts.append(
+                f"\\nNOTE: hit detail for {omitted} filing(s) omitted to stay under the "
+                f"{_BATCH_MAX_RESULT_CHARS}-character result ceiling — they DID match and "
+                "are counted above; re-run with just these to read the passages: "
+                + ", ".join(str(f) for f, _h, _t, _o in with_hits[len(with_hits) - omitted:])
             )
         return "\\n".join(parts)
     except UpstreamHTTPError:

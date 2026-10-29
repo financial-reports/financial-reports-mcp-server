@@ -554,15 +554,20 @@ def test_serverinfo_exposes_website_url(mcp_module) -> None:
 
 
 def test_markdown_clamp_is_150k(mcp_module) -> None:
-    """Claude.ai's documented tool-result ceiling is ~150k chars. Generator
-    template now clamps to that — looser caps risk silent truncation."""
-    src = (
-        mcp_module.__file__
-    )
-    with open(src) as f:
+    """Claude.ai's documented tool-result ceiling is ~150k chars, and the
+    generator clamps to it — looser caps risk silent truncation.
+
+    This used to grep the generated source for `result_ceiling = 150000`. The
+    ceiling became a module constant in SPECHT round 12, shared with the batch
+    search, which had carried its own copy of the number and agreed with this
+    one only by coincidence. Asserting the VALUE is strictly stronger than
+    matching the text that used to carry it: a rename cannot fool it, and it
+    now also fails if the two tools' ceilings diverge."""
+    assert mcp_module._MAX_RESULT_CHARS == 150_000
+    assert mcp_module._BATCH_MAX_RESULT_CHARS == mcp_module._MAX_RESULT_CHARS
+    with open(mcp_module.__file__) as f:
         body = f.read()
-    assert "result_ceiling = 150000" in body
-    assert "min(int(limit), result_ceiling)" in body
+    assert "min(int(limit), _MAX_RESULT_CHARS)" in body
     assert "min(int(limit), 200000)" not in body
 
 

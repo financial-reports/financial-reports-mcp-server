@@ -950,3 +950,103 @@ async def test_the_budget_wait_does_not_extend_the_batch_deadline(
         "added to the read window instead of taken out of it"
     )
     assert "Not searched" in out and "3" in out
+
+
+# --- 13. SPECHT round 12 -----------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_the_result_is_bounded_and_says_what_it_dropped(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """`_md_scan_hits` spans are `200 + len(query) + 240`, the hit cap is 5 and the
+    filing cap is 20, so the result grows as 100 x (475 + len(query)) — past the
+    client's documented 150,000-char ceiling for any query over ~1,025 characters.
+
+    Being too long is not the real damage. The host truncates from the END, and
+    the per-filing hit details used to be emitted BEFORE the 'No match',
+    'Searched only in part' and 'Not searched' blocks — so a truncated result
+    drops exactly the disclosure this tool exists to provide, and does it
+    invisibly. The bound is ours now, and what it drops is announced."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_RESULT_CHARS", 1500)
+    for fid in (1, 2, 3, 4):
+        _mock_md(respx_router, fid, DOC)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2, 3, 4], query="total revenue"
+    )
+    assert len(out) <= 1500, f"result was {len(out)} chars against a 1500 ceiling"
+    assert "hit detail" in out and "omitted" in out, "the drop was silent"
+    # An omitted DETAIL must never read as an absence: the headline still counts
+    # every filing that matched.
+    assert "4 with hits" in out.splitlines()[0]
+
+
+@pytest.mark.asyncio
+async def test_the_disclosure_blocks_outrank_the_hit_details(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """The ordering half of the fix, and the half a size assertion cannot see.
+    Whatever the budget drops, 'Not searched' and 'Searched only in part' must
+    survive — they are the difference between a real absence and an unread
+    filing, and they were the last thing in the output."""
+    import contextlib
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_RESULT_CHARS", 900)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_FILING_BYTES", 40)
+
+    @contextlib.asynccontextmanager
+    async def _fake_stream(method, url, **kw):
+        s = str(url)
+        if "/filings/9/" in s:
+            yield httpx.Response(404, text="gone", request=httpx.Request(method, url))
+        elif "/filings/8/" in s:
+            # Truncated at the byte cap with no hit in the part read.
+            yield httpx.Response(
+                200, text=("x" * 400) + " total revenue", request=httpx.Request(method, url)
+            )
+        else:
+            yield httpx.Response(200, text=DOC, request=httpx.Request(method, url))
+
+    monkeypatch.setattr(mcp_module._api_client, "stream", _fake_stream)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2, 3, 8, 9], query="total revenue"
+    )
+    assert len(out) <= 900
+    assert "Not searched" in out and "9" in out
+    assert "Searched only in part" in out
+    assert "UNKNOWN" in out
+
+
+@pytest.mark.asyncio
+async def test_an_ordinary_batch_keeps_every_hit_detail(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Control: the bound must not fire on a normal call. A cap that trims a
+    three-filing search would be a worse bug than the one it fixes."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    for fid in (1, 2, 3):
+        _mock_md(respx_router, fid, DOC)
+
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1, 2, 3], query="total revenue"
+    )
+    assert "omitted" not in out
+    for fid in (1, 2, 3):
+        assert f"=== filing {fid}" in out
+    assert "near offset" in out
+
+
+def test_batch_result_ceiling_matches_the_single_filing_tool(mcp_module):
+    """Both reading tools answer to the same host ceiling, so they must hold the
+    same number. It lived as a bare `150000` inside filings_markdown_retrieve
+    while the batch carried its own copy, and the two agreed only by
+    coincidence — a mutation moving the batch's value broke no test (SPECHT
+    round 12, mutation Q4). One constant now, and this asserts the identity
+    rather than the literal, so raising the host ceiling is a one-line change."""
+    assert mcp_module._BATCH_MAX_RESULT_CHARS == mcp_module._MAX_RESULT_CHARS
+    assert mcp_module._MAX_RESULT_CHARS == 150_000, (
+        "the documented Claude.ai tool-result ceiling; change both tools together"
+    )
