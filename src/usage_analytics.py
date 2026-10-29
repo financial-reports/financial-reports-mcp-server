@@ -77,7 +77,14 @@ ALLOWED_ARG_KEYS = frozenset({
     # other free-text keys (`search` has been stored on both ends throughout).
     # Rationale: document-search queries are the primary design input for
     # cross-corpus search, and 100% of them were unreadable.
-    "query", "q",
+    # "queries" is the batch tool's LIST form of the same input (mcp-server
+    # #165; receiver web#8551), carrying the same data from the same surface,
+    # so the same ruling reaches it — this is applying #163, not a new call.
+    # _apply_grammar/_truncate walk a list element-wise, so each entry is
+    # scrubbed exactly as the singular is. Flagged to cross-corpus-search,
+    # who on 2026-10-28 called the list form an open question for Alex while
+    # reasoning from the pre-#163 state; holding it back is a one-line change.
+    "query", "q", "queries",
     # New on both ends (the platform allowlist must add these too, or the
     # stricter receiver keeps redacting them). Enums, integers, dates and public
     # identifiers — none names a person or carries a credential.
@@ -88,7 +95,23 @@ ALLOWED_ARG_KEYS = frozenset({
     # datetime, no PII, no deny substring. Allowlisted on the receiver in the
     # same change.
     "as_known_at",
+    # The batch in-text search (filings_markdown_search_batch, mcp-server #165;
+    # receiver side web#8551 for web#8004). An integer hit cap. "queries" sits
+    # with "query"/"q" above, under #163's ruling. "filing_ids_count" is in
+    # DERIVED_ARG_KEYS below, deliberately NOT here — see that comment.
+    "max_hits_per_filing",
 })
+
+# Keys this sender SETS from other arguments and NEVER accepts from the caller.
+# A key must be in exactly one of these two sets: a derived key that is ALSO
+# allowlisted is written by the loop from whatever the client sent and only
+# *sometimes* overwritten by the derivation, which is precisely how round 10's
+# defect worked (`{"filing_ids_count": 99}` with no list was logged verbatim).
+# INVARIANT, pinned by test_no_derived_key_is_also_accepted_from_the_caller:
+#   DERIVED_ARG_KEYS & ALLOWED_ARG_KEYS == set()
+# The parity test adds this set to the sender side, because the receiver has to
+# allowlist a derived key like any other — it cannot tell who computed it.
+DERIVED_ARG_KEYS = frozenset({"filing_ids_count"})
 
 DENY_ARG_SUBSTRINGS = (
     "secret", "token", "password", "authorization", "auth",
@@ -336,6 +359,28 @@ def sanitize_mcp_arguments(arguments: Any) -> dict:
             clean[key] = _apply_grammar(value, grammar) if grammar else _truncate(value)
         else:
             clean[key] = REDACTED
+    # `filing_ids` is allowlisted on NEITHER end, so it stays <redacted> above: a
+    # 20-filing id list is a user's research set, not one public identifier like
+    # `filing_id`. The COUNT is what makes batch fan-out observable — how many
+    # filings a call asks for is the number web#8000 is sized against — and it
+    # cannot be reversed into the set.
+    #
+    # Derived here, never read off the wire: `filing_ids_count` is in
+    # DERIVED_ARG_KEYS and NOT in ALLOWED_ARG_KEYS, so the loop above has already
+    # written <redacted> for any count the caller sent, and this block replaces
+    # it only when there is a real list to count. Both halves are needed, and the
+    # first version shipped only the second: a count sent WITHOUT a list was
+    # allowlisted and logged verbatim, so a client could post any fan-out number
+    # on a deliberately-invalid call — the middleware emits from a `finally`, so
+    # an argument rejected by validation is still recorded (SPECHT round 10). It counts the ids AS REQUESTED, before the tool's own dedupe and
+    # 20-filing cap — demand, not work done. Scanning the same capped slice keeps
+    # MAX_ARG_KEYS meaningful; the derived key can take the output one past that
+    # cap, which is deliberate, since dropping the count to stay exactly at it
+    # would lose the only reason to log the argument at all.
+    for raw_key, value in list(arguments.items())[:MAX_ARG_KEYS]:
+        if str(raw_key).lower() == "filing_ids" and isinstance(value, (list, tuple)):
+            clean["filing_ids_count"] = len(value)
+            break
     return clean
 
 

@@ -453,6 +453,12 @@ if DEV_MODE_API_KEY:
 # balloons replica memory. The user-facing `limit` is far below this; this
 # is a defence-in-depth cap against runaway/malformed upstream responses.
 _MAX_FILING_BYTES = 10_000_000
+# Claude.ai's documented tool-result ceiling, covering the WHOLE result. One
+# constant for both reading tools: filings_markdown_retrieve clamps `limit` to
+# it, and the batch search budgets its hit detail against it. It was a bare
+# literal inside the retrieve body, so the batch's copy agreed with it only by
+# coincidence — and a mutation that moved the batch's value broke nothing.
+_MAX_RESULT_CHARS = 150_000
 
 _CDN_BASE = (
     "https://cdn.financialreports.eu/financialreports/static/"
@@ -1831,8 +1837,17 @@ async def _api_stream_get(url: str, **kwargs: Any) -> AsyncIterator[httpx.Respon
     the caller's own `aiter_bytes()` loop surfaces here, and re-raising is the
     only correct response.
 
-    Classifying a 429 needs the body, so it is read here. httpx caches after
-    `aread()`, so the caller's own `aread()` still works.
+    Classifying a 429 needs the body, so it is read here — BOUNDED, because an
+    unbounded `aread()` happens before any caller-side budget exists and a
+    concurrent caller buffers one body per in-flight request.
+
+    The bounded read CONSUMES the stream, unlike the `aread()` it replaced,
+    which cached. So a 429 that will NOT be retried can no longer be yielded:
+    the caller's `aread()`/`.text` would raise `StreamConsumed`, and
+    `quota_exhausted` is non-retryable and ~90% of all upstream errors. Such a
+    429 is raised HERE instead, from the buffered prefix, which is what the
+    caller would have done with it anyway (#104: an upstream failure must stay
+    an error, never a successful string).
     """
     delay: Optional[float] = None
     handed_off = False
@@ -1840,11 +1855,33 @@ async def _api_stream_get(url: str, **kwargs: Any) -> AsyncIterator[httpx.Respon
         async with _api_client.stream("GET", url, **kwargs) as response:
             body_text = ""
             if response.status_code == 429:
-                body_text = (await response.aread()).decode("utf-8", errors="replace")
+                # BOUNDED. `aread()` buffers the whole body, and this happens
+                # INSIDE the helper before the response is yielded — so no
+                # caller-side byte budget can see it, and a concurrent caller
+                # buffers one body per in-flight request. Our own 429 is small,
+                # but an intermediary's (a CDN error page) is not bounded by us.
+                # A prefix is enough, but NOT for the reason an earlier version
+                # of this comment claimed: `_classify_upstream_429` parses the
+                # WHOLE document, so a capped body does not parse at all. What
+                # makes the cap safe is `_429_type_from_prefix`, which recovers
+                # `type` from the prefix. (Our own 429 is the DRF-replaced
+                # payload, a few hundred chars, so the cap is not reached by it;
+                # an intermediary's CDN page is not valid JSON at any length.)
+                chunks = bytearray()
+                async for _c in response.aiter_bytes():
+                    chunks.extend(_c[: _MAX_ERROR_BODY - len(chunks)])
+                    if len(chunks) >= _MAX_ERROR_BODY:
+                        break
+                body_text = bytes(chunks).decode("utf-8", errors="replace")
             delay = _retry_delay(
                 response.status_code, body_text, _retry_after_seconds(response)
             )
             if delay is None:
+                if response.status_code == 429:
+                    # Stream already consumed by the bounded classification read
+                    # above — yielding it hands the caller a response whose body
+                    # cannot be read. Raise from the prefix we buffered.
+                    _raise_upstream_text_error(response, body_text)
                 handed_off = True
                 yield response
                 return
@@ -2158,18 +2195,64 @@ _NON_RETRYABLE_429 = frozenset(
 _MAX_UPSTREAM_COPY = 400
 
 
+# `type` as it appears in a body too truncated to parse. Anchored on the key so a
+# `detail` sentence quoting one of these tokens cannot be read as the type itself.
+_429_TYPE_IN_PREFIX_RE = re.compile(r'"type"\s*:\s*"([A-Za-z0-9_]+)"')
+
+
+def _429_type_from_prefix(body_text: str) -> str:
+    """`error_kind` from a 429 body that did not parse as a JSON object.
+
+    `_api_stream_get` caps its classification read at `_MAX_ERROR_BODY`, so a
+    capped valid document reaches the classifier as a PREFIX — syntactically
+    malformed, semantically intact. Inheriting the malformed-body fallback would
+    route an account-wide quota error to retry advice that cannot work, for the
+    error class that is ~90% of all upstream failures.
+
+    An unrecognised prefix still falls through to `rate_limited`: this recovers a
+    discriminator that is present, it does not guess one that is absent.
+
+    ⚠ A body can also be unparseable because something WRAPPED or replaced it — a
+    proxy error page that echoes our JSON inside HTML. That is not a prefix, and
+    reading one of our four `type` tokens out of it would hand a burst-limited
+    caller "your allowance is gone until next month": the exact direction
+    `_classify_upstream_429`'s asymmetry exists to prevent. The first version of
+    this helper did that (SPECHT r8). So the body must LOOK like the start of a
+    JSON object — the upstream's DRF handler replaces a 429 body wholesale with
+    one, so a capped one always does, and a substituted page does not.
+
+    Keyed on the body's own shape rather than on a `truncated` flag threaded down
+    from the read: the flag is more precise, but it would have to be passed
+    correctly at every bounded read — `_api_stream_get`'s AND the batch worker's
+    error read — through `_retry_delay` and `_classify_upstream_error`, and a site
+    that forgot it would silently reinstate the bug this helper was added to fix.
+    This test cannot be forgotten at a call site, and it fails toward retry advice.
+    """
+    if not body_text.lstrip().startswith("{"):
+        return "rate_limited"
+    match = _429_TYPE_IN_PREFIX_RE.search(body_text)
+    if match is None:
+        return "rate_limited"
+    return _RATE_LIMIT_KINDS.get(match.group(1), "rate_limited")
+
+
 def _classify_upstream_429(body_text: str) -> str:
     """Map a raw 429 body to a stable `error_kind` token.
 
-    Unrecognized, malformed, and empty bodies all fall through to
-    `"rate_limited"`, which renders as retry advice. That asymmetry is
-    deliberate: telling a burst-limited caller their allowance is gone until
-    next month is a far worse failure than telling a quota-exhausted caller to
-    retry, and a `type` the monolith adds later must not be read as quota.
+    Unrecognized and empty bodies fall through to `"rate_limited"`, which renders
+    as retry advice. That asymmetry is deliberate: telling a burst-limited caller
+    their allowance is gone until next month is a far worse failure than telling a
+    quota-exhausted caller to retry, and a `type` the monolith adds later must not
+    be read as quota.
+
+    "Malformed" used to be in that list and no longer is: a body capped mid-JSON by
+    `_api_stream_get` is malformed but semantically intact, and `_429_type_from_prefix`
+    reads it rather than discarding it. A malformed body that is NOT a JSON prefix
+    still falls through here.
     """
     payload = _parse_upstream_json(body_text)
     if payload is None:
-        return "rate_limited"
+        return _429_type_from_prefix(body_text)
     raw_type = payload.get("type")
     if not isinstance(raw_type, str):
         return "rate_limited"
@@ -4168,8 +4251,7 @@ async def {{ func_name }}(
         # Claude Desktop documented tool-result ceiling — anything larger
         # gets truncated by the host anyway. The ceiling covers the WHOLE
         # result, so the prose below is budgeted out of it before slicing (#122).
-        result_ceiling = 150000
-        limit = max(1, min(int(limit), result_ceiling))
+        limit = max(1, min(int(limit), _MAX_RESULT_CHARS))
 
         url = f"/filings/{filing_id}/markdown/"
 
@@ -4237,7 +4319,7 @@ async def {{ func_name }}(
         # converges — two passes in practice, three is slack.
         end_index = min(offset + limit, total_length)
         for _ in range(3):
-            budget = result_ceiling - len(_prose(end_index))
+            budget = _MAX_RESULT_CHARS - len(_prose(end_index))
             capped = min(end_index, offset + max(1, budget))
             if capped == end_index:
                 break
@@ -4690,6 +4772,124 @@ def _resource_markdown() -> str:
 # to a figure in a 200-page filing instead of paging the whole thing into context.
 MARKDOWN_SEARCH_TOOL_BLOCK = '''
 
+# Batch bounds. A model will happily pass 500 filing_ids; each fetch pulls the
+# WHOLE document (there is no server-side search endpoint — see
+# financial-reports/web#8000), so the batch is bounded three ways: how many
+# filings, how many bytes in total, and how long the whole call may take.
+_BATCH_MAX_FILINGS = 20
+# Matches the single-filing tool's _MAX_FILING_BYTES. A SMALLER cap here was
+# redundant: aggregate memory is bounded by _BATCH_MAX_TOTAL_BYTES via the
+# reservation (each worker takes min(cap, remaining), so a 10MB cap admits four
+# workers against a 40MB budget and the fifth waits) — the per-filing cap was
+# belt-and-braces that cost fidelity. Measured on live search traffic: a 4MB cap
+# would truncate 62 of 41,612 calls against 3 at 10MB, 20.7x, because large
+# documents are searched disproportionately often (62 calls over just 9 distinct
+# filings). Diverging from the single tool would also make a miss mean different
+# things in the two tools, which is what _md_scan_hits exists to prevent.
+_BATCH_MAX_FILING_BYTES = 10_000_000
+_BATCH_CONCURRENCY = 5
+# INVARIANT: total >= per-filing x concurrency. Reservation is up-front, so with
+# a smaller total the first workers reserve everything and a later one is told
+# "budget spent" while the earlier reads refund almost all of it moments later —
+# a filing silently missing from the answer despite ample real budget. The floor
+# keeps the aggregate bound explicit at 50 MB and lets every concurrent worker
+# take a FULL allowance.
+# It does NOT on its own make that false skip impossible — only rarer, which is
+# what this comment used to claim (SPECHT round 9, head aa407848). A worker that
+# fills its whole allowance refunds NOTHING, so a later worker can still find a
+# zero balance while the other reservations are outstanding and about to refund
+# almost everything. What rules the false skip out is the worker WAITING for an
+# outstanding reservation to settle before it calls a zero balance spent. Both
+# are load-bearing: the floor bounds the memory, the wait bounds the lie.
+_BATCH_MAX_TOTAL_BYTES = _BATCH_MAX_FILING_BYTES * _BATCH_CONCURRENCY
+_BATCH_DEADLINE_SECONDS = 50.0
+# A FOURTH bound, on the thing that leaves rather than the work done. The other
+# three cap filings, bytes read and wall clock; none of them caps the RESULT.
+# _md_scan_hits returns 200 + len(query) + 240 characters per hit, so the output
+# grows as _BATCH_MAX_FILINGS x 5 hits x (475 + len(query)) — past this ceiling
+# for any query over roughly 1,025 characters, and the query length is a
+# caller's free choice. 150k is Claude.ai's documented tool-result ceiling, the
+# same number filings_markdown_retrieve clamps `limit` to; past it the HOST
+# truncates, from the end, with no signal to anyone.
+# Which is the actual damage: the per-filing hit details used to be emitted
+# BEFORE the "No match" / "Searched only in part" / "Not searched" blocks, so a
+# host-side truncation deleted precisely the disclosure that separates a real
+# absence from an unread filing. The budget below is therefore paired with an
+# ORDERING — the small, bounded status blocks go first and are never dropped —
+# and the only thing it can omit is hit detail, which it announces.
+_BATCH_MAX_RESULT_CHARS = _MAX_RESULT_CHARS
+# Headroom kept back so the omission notice always fits. Without it the budget
+# could be spent entirely on hit detail and the one line explaining the omission
+# would be the thing omitted — a bound that hides its own operation.
+_BATCH_OMITTED_NOTICE_CHARS = 400
+
+
+def _md_candidates(raw: str) -> list:
+    """Query spellings to try, best first.
+
+    Filings render figures with thousands separators ("19,409"), so a query of
+    "19409" must also try the comma form or it misses every number in the
+    document.
+    """
+    bare = raw.replace(",", "")
+    if bare.isdigit() and len(bare) >= 4:
+        return [bare, format(int(bare), ",")]
+    return [raw]
+
+
+_QUERY_ECHO_CHARS = 200
+
+
+def _echo_query(raw: str) -> str:
+    """`repr()` of the query for display, BOUNDED.
+
+    Every result line that quotes the query back is otherwise unbounded in the
+    caller's own input: the schema is `query: str` with no maximum, so a
+    200,000-character query echoed in a headline passes the host's result
+    ceiling before a single hit is added — and host truncation then hides the
+    per-filing outcomes, which is the failure the batch's result budget exists
+    to prevent. The budget could not see it because the headline is emitted
+    unconditionally, and the comment on that budget called the headline "fixed
+    prose" (SPECHT round 13).
+
+    The SEARCH still uses the full term — only the echo is cut — so this cannot
+    change what matches. The real length is reported, because a silently
+    shortened echo would make two different long queries look identical in the
+    output.
+    """
+    if len(raw) <= _QUERY_ECHO_CHARS:
+        return repr(raw)
+    return (
+        repr(raw[:_QUERY_ECHO_CHARS])
+        + f" (query truncated for display; {len(raw)} chars total)"
+    )
+
+
+def _md_scan_hits(full_text: str, raw_query: str, cap: int) -> list:
+    """Case-insensitive substring scan -> [(offset, context), ...], document order.
+
+    Shared by `filings_markdown_search` and `filings_markdown_search_batch` so the
+    two cannot drift: a batch that matched differently from the single-filing tool
+    would make a miss impossible to interpret.
+    """
+    hay_l = full_text.lower()
+    hits = []
+    for cand in dict.fromkeys(_md_candidates(raw_query)):
+        cl = cand.lower()
+        start = 0
+        while len(hits) < cap:
+            i = hay_l.find(cl, start)
+            if i < 0:
+                break
+            lo = max(0, i - 200)
+            hi = min(len(full_text), i + len(cand) + 240)
+            hits.append((i, full_text[lo:hi]))
+            start = i + len(cand)
+        if hits:
+            break
+    return hits
+
+
 @mcp.tool(
     tags={"Filings"},
     annotations=ToolAnnotations(
@@ -4725,9 +4925,11 @@ async def filings_markdown_search(
                     response, body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace")
                 )
             buf = bytearray()
+            doc_truncated = False
             async for _chunk in response.aiter_bytes():
                 if len(buf) + len(_chunk) > _MAX_FILING_BYTES:
                     buf.extend(_chunk[: _MAX_FILING_BYTES - len(buf)])
+                    doc_truncated = True
                     break
                 buf.extend(_chunk)
         full_text = buf.decode("utf-8", errors="replace")
@@ -4736,36 +4938,33 @@ async def filings_markdown_search(
             cap = max(1, min(int(max_hits), 10))
         except (TypeError, ValueError):
             raise ToolInputError("max_hits must be an integer between 1 and 10")
-        # Number queries: also try the thousands-comma form, since filings render
-        # figures as e.g. "19,409" — so a query of "19409" still finds it.
-        cands = [raw]
-        _bare = raw.replace(",", "")
-        if _bare.isdigit() and len(_bare) >= 4:
-            cands = [_bare, format(int(_bare), ",")]
-        hay_l = full_text.lower()
-        hits = []
-        for cand in dict.fromkeys(cands):
-            cl = cand.lower()
-            start = 0
-            while len(hits) < cap:
-                i = hay_l.find(cl, start)
-                if i < 0:
-                    break
-                lo = max(0, i - 200)
-                hi = min(len(full_text), i + len(cand) + 240)
-                hits.append((i, full_text[lo:hi]))
-                start = i + len(cand)
-            if hits:
-                break
+        # Scan one past the cap so we can say whether it hid anything. ~46-58% of
+        # live calls land exactly ON the cap, so reporting "N match(es)" as a total
+        # is wrong about half the time.
+        found = _md_scan_hits(full_text, raw, cap + 1)
+        more = len(found) > cap
+        hits = found[:cap]
         record_result_count(len(hits))
         if not hits:
+            if doc_truncated:
+                # The tail was never read, so this is UNKNOWN, not absent.
+                return (
+                    f"No match for {_echo_query(query)} in the first {len(full_text)} chars of filing "
+                    f"{filing_id} — the document was TRUNCATED at the size cap and the rest "
+                    "was NOT searched. Treat this as unknown, not as an absence."
+                )
             return (
-                f"No match for {query!r} in filing {filing_id} ({len(full_text)} chars). "
+                f"No match for {_echo_query(query)} in filing {filing_id} ({len(full_text)} chars). "
                 "Try a shorter or different query (e.g. a single key term), or page the "
                 "document with filings_markdown_retrieve."
             )
-        parts = [f"{len(hits)} match(es) for {query!r} in filing {filing_id} "
-                 f"(document is {len(full_text)} chars):"]
+        suffix = ""
+        if more:
+            suffix += f" — hit cap reached, MORE MATCHES EXIST beyond these {len(hits)}"
+        if doc_truncated:
+            suffix += " (document truncated at the size cap — the tail was not searched)"
+        parts = [f"{len(hits)} match(es) for {_echo_query(query)} in filing {filing_id} "
+                 f"(document is {len(full_text)} chars){suffix}:"]
         for off, span in hits:
             parts.append(f"\\n--- match near offset {off} ---\\n...{span}...")
         return "\\n".join(parts)
@@ -4777,6 +4976,355 @@ async def filings_markdown_search(
     except Exception as exc:
         logger.exception("filings_markdown_search failed")
         return _safe_error("filings_markdown_search", exc)
+
+
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="Search Many Filings at Once (Batch)",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+@subscription_required
+async def filings_markdown_search_batch(
+    filing_ids: list[int],
+    query: str,
+    max_hits_per_filing: int = 3,
+) -> str:
+    """Search ONE query across SEVERAL filings in a single call — use this instead of
+    calling filings_markdown_search once per filing when you are checking the same term
+    across a set (e.g. the same disclosure across a company's filings, or across peers).
+    Case-insensitive. Returns per-filing hits with character offsets you can pass to
+    filings_markdown_retrieve. Outcomes are reported SEPARATELY — matched, no match,
+    searched only in part, and not searched — so you can tell a real absence from a
+    filing that was truncated or never read. A filing can be BOTH matched and only
+    partly searched — hits found before the byte cap are real, the tail past it is
+    unknown. Max 20 filings per call.
+    This searches only the filings you name — it does NOT search the whole corpus, so a
+    'no match' result says nothing about filings outside your list."""
+    try:
+        _require_auth_context()
+        if not isinstance(filing_ids, list) or not filing_ids:
+            raise ToolInputError("filing_ids must be a non-empty list of positive integers")
+        if not query or not query.strip():
+            raise ToolInputError("query must be a non-empty string")
+        seen = {}
+        for fid in filing_ids:
+            if not isinstance(fid, int) or isinstance(fid, bool) or fid <= 0:
+                raise ToolInputError(f"filing_ids must be positive integers (got {fid!r})")
+            seen[fid] = None
+        ordered = list(seen)
+        dropped = max(0, len(ordered) - _BATCH_MAX_FILINGS)
+        ordered = ordered[:_BATCH_MAX_FILINGS]
+        try:
+            cap = max(1, min(int(max_hits_per_filing), 5))
+        except (TypeError, ValueError):
+            raise ToolInputError("max_hits_per_filing must be an integer between 1 and 5")
+
+        raw = query.strip()
+        deadline = time.monotonic() + _BATCH_DEADLINE_SECONDS
+        budget = {"bytes": _BATCH_MAX_TOTAL_BYTES, "inflight": 0}
+        sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
+        # The budget is read-modify-written across concurrent workers, so it needs
+        # a lock: without one, N workers each compute an allowance from the SAME
+        # balance before any of them subtracts, and the batch overruns its stated
+        # bound by up to (concurrency x per-filing cap). Reserve up front, refund
+        # the unused tail afterwards.
+        # A Condition rather than a bare Lock, and `inflight` alongside the
+        # balance, because a zero BALANCE is not a spent BUDGET while reservations
+        # are still outstanding — see the _BATCH_MAX_TOTAL_BYTES comment.
+        budget_cv = asyncio.Condition()
+
+        async def _one(fid):
+            # Bounds are checked INSIDE the worker, not just before the gather, so a
+            # slow batch stops spending as soon as a budget is gone rather than
+            # running every scheduled fetch to completion. The deadline additionally
+            # wraps the stream itself: checking it only before the request lets an
+            # already-open slow read outlive the advertised bound, and gather waits.
+            async with sem:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return (fid, None, "skipped: batch deadline reached", None, False)
+                async with budget_cv:
+                    # Wait out the outstanding reservations before calling the
+                    # budget spent. A predecessor that filled its whole allowance
+                    # refunds nothing, so a zero balance with reads still in
+                    # flight means "not back yet", not "gone" — reporting this
+                    # filing as unsearched there is a false skip on a batch with
+                    # ample real budget. `inflight` is only ever decremented by a
+                    # worker that notifies, so the wait cannot outlast the reads;
+                    # the deadline bounds it regardless, and is re-read each pass
+                    # because waiting itself consumes it.
+                    while budget["bytes"] <= 0 and budget["inflight"] > 0:
+                        wait_for = deadline - time.monotonic()
+                        if wait_for <= 0:
+                            return (fid, None, "skipped: batch deadline reached", None, False)
+                        try:
+                            async with asyncio.timeout(wait_for):
+                                await budget_cv.wait()
+                        except (TimeoutError, asyncio.TimeoutError):
+                            return (fid, None, "skipped: batch deadline reached", None, False)
+                    if budget["bytes"] <= 0:
+                        return (fid, None, "skipped: batch byte budget spent", None, False)
+                    allowance = min(_BATCH_MAX_FILING_BYTES, budget["bytes"])
+                    budget["bytes"] -= allowance          # reserve before any await
+                    budget["inflight"] += 1
+                used = 0
+                buf = bytearray()   # defined BEFORE the try: a read that fails
+                                    # part-way has still spent those bytes, and the
+                                    # finally block must charge them to the budget
+                err_bytes = 0       # an error body is downloaded too — charge it,
+                                    # or N failing filings bypass the batch bound
+                try:
+                    truncated = None
+                    # Re-read, do NOT reuse the value measured before the budget
+                    # wait: a worker that waited there has already spent part of
+                    # the batch deadline, and the stream must be bounded by what
+                    # is LEFT. A non-positive value makes asyncio.timeout fire at
+                    # once, which the handler below reports as not-searched.
+                    remaining = deadline - time.monotonic()
+                    async with asyncio.timeout(remaining):
+                        async with _api_stream_get(f"/filings/{fid}/markdown/") as response:
+                            if response.is_error:
+                                # BOUNDED read. `aread()` buffers the whole body, and
+                                # the budget charged len(buf) == 0 on this path, so a
+                                # large 5xx body was unbounded AND free. Only the
+                                # first _MAX_ERROR_BODY bytes are ever used for the
+                                # message, so reading past them bought nothing.
+                                err = bytearray()
+                                async for _chunk in response.aiter_bytes():
+                                    err.extend(_chunk[: _MAX_ERROR_BODY - len(err)])
+                                    if len(err) >= _MAX_ERROR_BODY:
+                                        break
+                                err_bytes = len(err)
+                                _raise_upstream_text_error(
+                                    response,
+                                    bytes(err).decode("utf-8", errors="replace"),
+                                )
+                            async for _chunk in response.aiter_bytes():
+                                if len(buf) + len(_chunk) > allowance:
+                                    buf.extend(_chunk[: allowance - len(buf)])
+                                    # WHICH bound cut the read decides what advice
+                                    # can help: a shared-budget cut is fixable by a
+                                    # narrower call, a filing over the per-filing
+                                    # cap is not fixable by any call. Truthy either
+                                    # way, so every `not t` / `if was_cut` test
+                                    # below keeps its meaning.
+                                    truncated = (
+                                        "budget"
+                                        if allowance < _BATCH_MAX_FILING_BYTES
+                                        else "filing"
+                                    )
+                                    break
+                                buf.extend(_chunk)
+                    text = buf.decode("utf-8", errors="replace")
+                    # Scan for ONE more than we will show, so we can say whether the
+                    # hit cap hid anything. Reporting "3 match(es)" when there are
+                    # four lets a client read an incomplete answer as a complete one.
+                    found = _md_scan_hits(text, raw, cap + 1)
+                    overflow = len(found) > cap
+                    return (fid, found[:cap], None, truncated, overflow)
+                except (TimeoutError, asyncio.TimeoutError):
+                    # An expired read is NOT an absence. Report it as not-searched.
+                    return (fid, None, "not searched: deadline reached mid-read", None, False)
+                except UpstreamHTTPError as exc:
+                    # An ACCOUNT-WIDE failure is not a per-filing fact — it fails
+                    # every filing in the batch, so degrading it to 20 "unavailable"
+                    # rows reports the call as SUCCESSFUL and hides it from any
+                    # client branching on MCP error status. Re-raise, matching the
+                    # single-filing tool's #104 contract that an upstream failure
+                    # must stay distinguishable from a result.
+                    #   401/403      — a revoked or unauthorised token.
+                    #   _NON_RETRYABLE_429 — quota_exhausted / spend_cap_daily /
+                    #     spend_ceiling_monthly are facts about the ACCOUNT, and
+                    #     "0 match(es) across 20 filing(s)" is then a false absence
+                    #     that also discards the upstream's own remediation copy —
+                    #     the one actionable sentence it sent. quota_exhausted is
+                    #     ~90% of all upstream errors on this surface.
+                    # Keyed on `error_kind`, not on the 429 status: a burst limit
+                    # DOES clear, and _api_stream_get has already spent its single
+                    # retry on it, so it stays per-filing below.
+                    if exc.upstream_status in (401, 403) or exc.error_kind in _NON_RETRYABLE_429:
+                        raise
+                    # Anything else IS per-filing: one missing filing must not cost
+                    # the caller the other answers, and an explicit status is what
+                    # lets them tell "no match" from "never searched".
+                    # UpstreamHTTPError carries `upstream_status`; there is no
+                    # `status_code` on it, so the old getattr fell back EVERY time
+                    # and 404 / 429 / 500 were indistinguishable to the caller.
+                    return (fid, None, f"unavailable: {exc.upstream_status or 'upstream error'}", None, False)
+                except Exception:
+                    # `Exception`, deliberately not `BaseException`: CancelledError
+                    # is a BaseException, so a worker cancelled by the sibling
+                    # cleanup below propagates instead of being recorded as
+                    # "unavailable: read failed" on a filing nobody ever read.
+                    logger.exception("filings_markdown_search_batch: filing %s failed", fid)
+                    return (fid, None, "unavailable: read failed", None, False)
+                finally:
+                    used = len(buf) + err_bytes   # charge what was actually
+                                                  # downloaded, including a partial
+                                                  # read and any error body
+                    async with budget_cv:
+                        budget["bytes"] += allowance - used   # refund only the unread tail
+                        budget["inflight"] -= 1
+                        # Wake the waiters above: without this a worker parked on a
+                        # zero balance sleeps to the batch deadline and the fix
+                        # becomes the slower shape of the same false skip.
+                        budget_cv.notify_all()
+
+        # Explicit tasks, because `gather` propagates the first exception but does
+        # NOT cancel the others: an account-wide 429 would otherwise leave queued
+        # workers fetching filings that cannot succeed, each with its own retry, on
+        # the account that just said it is out of allowance.
+        tasks = [asyncio.ensure_future(_one(f)) for f in ordered]
+        try:
+            results = await asyncio.gather(*tasks)
+        except BaseException:
+            for _t in tasks:
+                _t.cancel()
+            # Await the cancellations so nothing outlives this call. A worker's
+            # budget-refund `finally` may itself be cut short (it awaits a lock),
+            # which is harmless: `budget` is per-call state that dies with the call.
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+        total_hits = sum(len(h) for _f, h, _e, _t, _o in results if h)
+        with_hits = [(f, h, t, o) for f, h, _e, t, o in results if h]
+        # A filing whose read was CUT OFF at the byte cap was only partly searched.
+        # Reporting it as "no match" would manufacture exactly the false absence this
+        # tool exists to reduce — the unsearched tail is unknown, not empty.
+        no_hits = [f for f, h, e, t, _o in results if h == [] and e is None and not t]
+        # One symptom, two causes: see the worker's `truncated` assignment. These two
+        # carry the ADVICE lines, which only hold for a filing whose read portion
+        # contained no match ("no match in the portion read") — hence `h == []`.
+        partial_budget = [f for f, h, e, t, _o in results if h == [] and e is None and t == "budget"]
+        partial_cap = [f for f, h, e, t, _o in results if h == [] and e is None and t == "filing"]
+        partial = partial_budget + partial_cap
+        # A filing can be BOTH: a hit before the cut and an unread tail after it.
+        # Those used to fall out of the partial count entirely, because the two
+        # lists above require `h == []` — so a batch that truncated every filing it
+        # matched still summarised itself as "0 searched only in part" while the
+        # per-filing detail lines said "document truncated". The headline is the
+        # part a client summarises from, so the two halves have to agree.
+        cut_with_hits = [f for f, h, _e, t, _o in results if h and t]
+        unavailable = [(f, e) for f, h, e, _t, _o in results if e]
+        # Per-filing degradation exists to protect the answers the batch DID get.
+        # With ZERO successes there is no answer to protect, and "0 match(es) across
+        # N filing(s)" tells a client branching on error status that the corpus was
+        # searched and is empty. Same #104 false-absence class as the account-wide
+        # 429, one level up: at the batch boundary rather than the filing boundary.
+        # Keyed on "nothing was SEARCHED", never on "nothing was FOUND" — a definite
+        # "searched it all, it is not there" is a RESULT, and erroring on that would
+        # be a far worse bug than the one this prevents.
+        if results and len(unavailable) == len(results):
+            raise UpstreamHTTPError(
+                "No filing in this batch could be read, so nothing was searched "
+                "for " + _echo_query(raw) + " — this is not an empty result. Per filing: "
+                + "; ".join(f"{f} ({e})" for f, e in unavailable),
+                # The reasons above are our own short tokens, never upstream text.
+                # upstream_status stays unset: the failures need not share one.
+                error_kind="unknown",
+            )
+        record_result_count(total_hits)
+
+        parts = [
+            f"{total_hits} match(es) for {_echo_query(query)} across {len(ordered)} filing(s): "
+            f"{len(with_hits)} with hits, {len(no_hits)} with none, "
+            f"{len(partial) + len(cut_with_hits)} searched only in part, "
+            f"{len(unavailable)} not searched."
+        ]
+        if cut_with_hits:
+            # Say the overlap out loud. The four counts above no longer sum to the
+            # filing count when it is non-empty, and an unexplained arithmetic
+            # mismatch reads as a bug in the tool rather than as the fact it is.
+            parts.append(
+                f"\\nNOTE: {len(cut_with_hits)} filing(s) are counted BOTH in "
+                "'with hits' and in 'searched only in part' — the hits reported for "
+                "them are real, and the tail past the byte cap is UNKNOWN, not "
+                "empty: " + ", ".join(str(f) for f in cut_with_hits)
+            )
+        if dropped:
+            parts.append(
+                f"NOTE: {dropped} filing id(s) beyond the {_BATCH_MAX_FILINGS}-filing cap "
+                "were not searched — call again with the rest."
+            )
+        if no_hits:
+            parts.append("\\nNo match in: " + ", ".join(str(f) for f in no_hits))
+        if partial_budget:
+            parts.append(
+                "\\nSearched only in part — no match in the portion read, the rest is UNKNOWN "
+                "(the batch's shared byte budget left these filings less than the full "
+                "per-filing allowance; re-run with a narrower filing set, or use "
+                "filings_markdown_search on these directly): "
+                + ", ".join(str(f) for f in partial_budget)
+            )
+        if partial_cap:
+            parts.append(
+                "\\nSearched only in part — no match in the portion read, the rest is UNKNOWN "
+                "(these filings are larger than the per-filing byte cap, which "
+                "filings_markdown_search shares — so neither a narrower batch nor that "
+                "tool can read the tail, and retrying will not change this answer): "
+                + ", ".join(str(f) for f in partial_cap)
+            )
+        if unavailable:
+            parts.append(
+                "\\nNot searched (treat as UNKNOWN, not as 'no match'): "
+                + ", ".join(f"{f} ({e})" for f, e in unavailable)
+            )
+        # Everything above is the per-filing OUTCOME, which is what a caller must
+        # not lose: it is emitted unconditionally and sits where a truncation
+        # from the end cannot reach it. Its size is bounded by the filing cap
+        # (20 ids and fixed prose) AND by _echo_query — this comment used to
+        # claim the first alone, which was false, because the headline quotes the
+        # caller's query and nothing capped its length (SPECHT round 13). The hit
+        # SPANS below are the other term in the query length, and they are the
+        # only part a budget can drop.
+        budget = _BATCH_MAX_RESULT_CHARS - sum(len(p) + 1 for p in parts)
+        omitted = 0
+        for i, (fid, hits, was_cut, more) in enumerate(with_hits):
+            suffix = ""
+            if more:
+                suffix += f" — hit cap reached, MORE MATCHES EXIST beyond these {len(hits)}"
+            if was_cut:
+                suffix += " (document truncated at the byte cap — there may be more below)"
+            block = [f"\\n=== filing {fid} — {len(hits)} match(es){suffix} ==="]
+            for off, span in hits:
+                block.append(f"--- near offset {off} ---\\n...{span}...")
+            cost = sum(len(b) + 1 for b in block)
+            # Reserve room for the notice itself, or the bound would be met by
+            # dropping the sentence that explains the bound.
+            if cost > budget - _BATCH_OMITTED_NOTICE_CHARS:
+                omitted = len(with_hits) - i
+                break
+            parts.extend(block)
+            budget -= cost
+        if omitted:
+            # An omitted DETAIL is never an absence: the filing is still counted
+            # in "with hits" in the headline and its hits are real. Says which
+            # filings, so the re-run is a narrower call rather than a guess.
+            parts.append(
+                f"\\nNOTE: hit detail for {omitted} filing(s) omitted to stay under the "
+                f"{_BATCH_MAX_RESULT_CHARS}-character result ceiling — they DID match and "
+                "are counted above; re-run with just these to read the passages: "
+                + ", ".join(str(f) for f, _h, _t, _o in with_hits[len(with_hits) - omitted:])
+            )
+        return "\\n".join(parts)
+    except UpstreamHTTPError:
+        # A whole-batch failure must stay an ERROR. Three things reach here:
+        # 401/403 and an account-wide 429 re-raised by a worker, and the
+        # nothing-was-searched raise above. Without this the outer handler below
+        # turns any of them back into a successful string and the re-raise is inert
+        # — which is what the first version of this fix did. Mirrors #104.
+        raise
+    except ToolInputError as exc:
+        return _safe_error("filings_markdown_search_batch", exc)
+    except Exception as exc:
+        logger.exception("filings_markdown_search_batch failed")
+        return _safe_error("filings_markdown_search_batch", exc)
+
 '''
 
 

@@ -764,6 +764,11 @@ _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
     "company", "company_isin",
     "max_hits", "context_chars", "offset", "limit",
     "as_known_at",
+    # web#8551 (head 0d59b292, for web#8004), verified by reading the receiver
+    # file at that ref rather than by relay: the batch tool's query list, a
+    # COUNT of the filing ids (the raw list is deliberately on NEITHER end) and
+    # the per-filing hit cap.
+    "queries", "filing_ids_count", "max_hits_per_filing",
 })
 
 
@@ -779,10 +784,16 @@ def _opaque_key():
 # this sender did not, so they reached the table as <redacted> regardless.
 # Allowlisted 2026-10-26 on Alex's product/privacy ruling (closes the open
 # question in #119). The two lists are now plain equals — no exclusion set.
+# "queries" (the batch tool's list form) follows the same ruling, so the
+# equality survives this branch's M1 work rather than reinstating the set.
 
 
 def test_sender_allowlist_equals_receiver_allowlist():
-    sender = usage_analytics.ALLOWED_ARG_KEYS
+    # DERIVED_ARG_KEYS counts as sender-side coverage: the receiver must
+    # allowlist a derived key like any other, because it cannot tell who
+    # computed the value. What the sender must NOT do is also ACCEPT it —
+    # pinned by test_no_derived_key_is_also_accepted_from_the_caller.
+    sender = usage_analytics.ALLOWED_ARG_KEYS | usage_analytics.DERIVED_ARG_KEYS
     assert sorted(_RECEIVER_ALLOWED_ARG_KEYS - sender) == [], \
         "receiver-approved keys the sender still redacts"
     assert sorted(sender - _RECEIVER_ALLOWED_ARG_KEYS) == [], \
@@ -984,3 +995,102 @@ def test_bool_is_not_a_cik():
 def test_free_text_keys_still_use_the_best_effort_scrub(key):
     """No closed grammar exists for these; they keep the #119 scrub (residual)."""
     assert sanitize_mcp_arguments({key: "Apple Inc"}) == {key: "Apple Inc"}
+
+
+# --- M1: the batch tool's arguments (web#8551 receiver, mcp-server #165) ------
+
+def test_batch_filing_ids_become_a_count_and_the_raw_list_stays_redacted():
+    """`filing_ids` is on NEITHER allowlist: a 20-filing id list is a user's
+    research set, not one public identifier like `filing_id`. The COUNT is the
+    part that makes batch fan-out observable, and it cannot be reversed into the
+    set.
+
+    `query` passes through as TEXT, which is the opposite of what this test
+    asserted when it was written: #163 (on main since 2026-10-27, from Alex's
+    2026-10-26 ruling) allowlisted raw in-text search terms. The expectation
+    changed because the product decision changed, not to accommodate this
+    branch — the identity of the id list is still the thing under test."""
+    out = sanitize_mcp_arguments(
+        {"filing_ids": [11, 22, 33], "query": "going concern", "max_hits_per_filing": 3}
+    )
+    assert out == {
+        "filing_ids": REDACTED,
+        "filing_ids_count": 3,
+        "query": "going concern",
+        "max_hits_per_filing": 3,
+    }
+
+
+def test_a_caller_supplied_count_cannot_outvote_the_real_list():
+    """Derived from the list, never read off the wire — otherwise a client could
+    log any fan-out size it liked while the real list stayed redacted and
+    unauditable."""
+    out = sanitize_mcp_arguments({"filing_ids": [1, 2], "filing_ids_count": 99})
+    assert out["filing_ids_count"] == 2
+
+
+def test_no_count_is_invented_when_there_is_no_list():
+    """Control: the derivation must not manufacture a count for a call that never
+    passed a list, nor for one that passed something that is not a list."""
+    assert "filing_ids_count" not in sanitize_mcp_arguments({"filing_id": 7})
+    assert sanitize_mcp_arguments({"filing_ids": "11,22"}) == {"filing_ids": REDACTED}
+
+
+def test_a_count_sent_without_a_list_is_redacted_not_logged():
+    """SPECHT round 10, 3/3 passes. `filing_ids_count` was on ALLOWED_ARG_KEYS, so a
+    count arriving WITHOUT a `filing_ids` list sailed through the loop untouched —
+    the derivation only overwrites when a list is present. The middleware's `finally`
+    emits even when `call_next` raises, so a call rejected by argument validation
+    still logs its raw arguments: a client could post any fan-out number it liked on
+    a deliberately-invalid call and pollute the metric.
+
+    My own control for this (`test_no_count_is_invented_when_there_is_no_list`) tried
+    `filing_id` and a non-list `filing_ids`, and never the key itself — blind to the
+    one case it existed to guard."""
+    assert sanitize_mcp_arguments({"filing_ids_count": 99}) == {
+        "filing_ids_count": REDACTED
+    }
+    assert sanitize_mcp_arguments({"filing_ids_count": 99, "max_hits_per_filing": 3}) == {
+        "filing_ids_count": REDACTED,
+        "max_hits_per_filing": 3,
+    }
+
+
+def test_the_derivation_still_fires_though_the_key_is_no_longer_accepted():
+    """Control for the fix: removing the key from the allowlist must not disable the
+    derived value, which is the only reason the argument is logged at all."""
+    assert sanitize_mcp_arguments({"filing_ids": [1, 2, 3]}) == {
+        "filing_ids": REDACTED,
+        "filing_ids_count": 3,
+    }
+
+
+def test_no_derived_key_is_also_accepted_from_the_caller():
+    """INVARIANT, and the one that would have caught round 10 before SPECHT did: a
+    key this sender SETS must never also be a key it ACCEPTS. The overlap is exactly
+    the defect — the loop writes the caller's value and the derivation only sometimes
+    overwrites it."""
+    overlap = sorted(usage_analytics.DERIVED_ARG_KEYS & usage_analytics.ALLOWED_ARG_KEYS)
+    assert not overlap, overlap
+
+
+def test_derived_keys_never_trip_the_deny_list():
+    tripping = sorted(
+        k for k in usage_analytics.DERIVED_ARG_KEYS
+        if any(bad in k for bad in usage_analytics.DENY_ARG_SUBSTRINGS)
+    )
+    assert not tripping, tripping
+
+
+def test_each_entry_of_a_queries_list_is_scrubbed_like_a_single_query():
+    """`queries` rides on #163's ruling, and the comment allowing it claims the
+    list form is no weaker than the singular because `_truncate` walks a list
+    element-wise. That claim is load-bearing — were it false, allowlisting the
+    list form would widen the credential exposure the ruling priced on the
+    singular — so it is asserted here rather than asserted in prose."""
+    jwt = _jwt_shaped()
+    out = sanitize_mcp_arguments({"queries": ["revenue guidance", f"leaked {jwt} here"]})
+    assert out["queries"][0] == "revenue guidance"
+    assert "eyJhbGciOiJIUzI1NiJ9" not in out["queries"][1]
+    # The singular is the control: same value, same scrubber, same result.
+    assert out["queries"][1] == sanitize_mcp_arguments({"query": f"leaked {jwt} here"})["query"]
