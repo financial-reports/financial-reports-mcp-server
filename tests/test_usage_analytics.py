@@ -780,26 +780,37 @@ def _opaque_key():
     return "K7m2Qp9x4Vb1Nc8Ld3Rf6Ty0Hs5Wj2Zg"
 
 
-# Free-text keys the receiver allows but this sender deliberately keeps
-# redacting: scrubbing cannot recognise an arbitrary opaque credential typed
-# into them. Removing a key from this set is a privacy decision, not a sync fix.
-_DELIBERATELY_REDACTED_FREE_TEXT = frozenset({"query", "q", "queries"})
+# "query"/"q" were the last sender-only exclusion: the receiver allowed them,
+# this sender did not, so they reached the table as <redacted> regardless.
+# Allowlisted 2026-10-26 on Alex's product/privacy ruling (closes the open
+# question in #119). The two lists are now plain equals — no exclusion set.
+# "queries" (the batch tool's list form) follows the same ruling, so the
+# equality survives this branch's M1 work rather than reinstating the set.
 
 
-def test_sender_allowlist_equals_receiver_allowlist_minus_free_text():
-    # DERIVED_ARG_KEYS counts as sender-side coverage: the receiver must allowlist
-    # a derived key like any other, because it cannot tell who computed the value.
-    # What the sender must NOT do is also ACCEPT it — that invariant is pinned
-    # separately by test_no_derived_key_is_also_accepted_from_the_caller.
+def test_sender_allowlist_equals_receiver_allowlist():
+    # DERIVED_ARG_KEYS counts as sender-side coverage: the receiver must
+    # allowlist a derived key like any other, because it cannot tell who
+    # computed the value. What the sender must NOT do is also ACCEPT it —
+    # pinned by test_no_derived_key_is_also_accepted_from_the_caller.
     sender = usage_analytics.ALLOWED_ARG_KEYS | usage_analytics.DERIVED_ARG_KEYS
-    expected = _RECEIVER_ALLOWED_ARG_KEYS - _DELIBERATELY_REDACTED_FREE_TEXT
-    assert sorted(expected - sender) == [], "receiver-approved keys the sender still redacts"
-    assert sorted(sender - expected) == [], "sender keys the receiver redacts, or free text re-allowed"
+    assert sorted(_RECEIVER_ALLOWED_ARG_KEYS - sender) == [], \
+        "receiver-approved keys the sender still redacts"
+    assert sorted(sender - _RECEIVER_ALLOWED_ARG_KEYS) == [], \
+        "sender keys the receiver redacts"
 
 
-@pytest.mark.parametrize("key", sorted(_DELIBERATELY_REDACTED_FREE_TEXT))
-def test_free_text_query_values_stay_redacted(key):
-    assert sanitize_mcp_arguments({key: _opaque_key()}) == {key: REDACTED}
+@pytest.mark.parametrize("key", ["query", "q"])
+def test_free_text_query_values_are_kept(key):
+    """The ruling: raw in-text search terms are logged."""
+    assert sanitize_mcp_arguments({key: "revenue recognition"}) == {key: "revenue recognition"}
+
+
+@pytest.mark.parametrize("key", ["query", "q", "search"])
+def test_free_text_values_are_still_shape_scrubbed(key):
+    """Logging the text does NOT disable the best-effort credential scrub — the
+    precaution the ruling was taken on top of. Same gate `search` has always had."""
+    assert sanitize_mcp_arguments({key: _opaque_key()}) == {key: "<redacted-token>"}
 
 
 def test_search_and_financials_intent_args_are_kept():
@@ -992,14 +1003,20 @@ def test_batch_filing_ids_become_a_count_and_the_raw_list_stays_redacted():
     """`filing_ids` is on NEITHER allowlist: a 20-filing id list is a user's
     research set, not one public identifier like `filing_id`. The COUNT is the
     part that makes batch fan-out observable, and it cannot be reversed into the
-    set. `query` keeps its free-text redaction, as in the single-filing tool."""
+    set.
+
+    `query` passes through as TEXT, which is the opposite of what this test
+    asserted when it was written: #163 (on main since 2026-10-27, from Alex's
+    2026-10-26 ruling) allowlisted raw in-text search terms. The expectation
+    changed because the product decision changed, not to accommodate this
+    branch — the identity of the id list is still the thing under test."""
     out = sanitize_mcp_arguments(
         {"filing_ids": [11, 22, 33], "query": "going concern", "max_hits_per_filing": 3}
     )
     assert out == {
         "filing_ids": REDACTED,
         "filing_ids_count": 3,
-        "query": REDACTED,
+        "query": "going concern",
         "max_hits_per_filing": 3,
     }
 
@@ -1063,3 +1080,17 @@ def test_derived_keys_never_trip_the_deny_list():
         if any(bad in k for bad in usage_analytics.DENY_ARG_SUBSTRINGS)
     )
     assert not tripping, tripping
+
+
+def test_each_entry_of_a_queries_list_is_scrubbed_like_a_single_query():
+    """`queries` rides on #163's ruling, and the comment allowing it claims the
+    list form is no weaker than the singular because `_truncate` walks a list
+    element-wise. That claim is load-bearing — were it false, allowlisting the
+    list form would widen the credential exposure the ruling priced on the
+    singular — so it is asserted here rather than asserted in prose."""
+    jwt = _jwt_shaped()
+    out = sanitize_mcp_arguments({"queries": ["revenue guidance", f"leaked {jwt} here"]})
+    assert out["queries"][0] == "revenue guidance"
+    assert "eyJhbGciOiJIUzI1NiJ9" not in out["queries"][1]
+    # The singular is the control: same value, same scrubber, same result.
+    assert out["queries"][1] == sanitize_mcp_arguments({"query": f"leaked {jwt} here"})["query"]

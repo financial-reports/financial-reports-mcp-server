@@ -2634,11 +2634,27 @@ def _upstream_hint(
             # successful call within 30 minutes. The limit is
             # account-wide, so say so, tell the agent to stop, and hand it the
             # sentence to relay (which carries the pay-as-you-go / plans link).
+            # #8459 (web): 575 of 582 capped free users who never added a card
+            # were MCP users, and the old copy never asked the assistant to
+            # SHOW the link, so say that in as many words.
+            # The wait condition points at the upstream copy rather than naming
+            # a remedy: `quota_exhausted` also covers paid plans (change plan,
+            # not add a card) and spend caps belong to users who have a card.
+            # Local guide tools fetch nothing, so they stay callable.
+            link = (
+                " Show the user every URL in that message as a clickable link, "
+                "exactly as written; do not shorten or rewrite it."
+                if "https://" in upstream_copy
+                else ""
+            )
             return (
                 "This is an account usage limit, not a temporary error: retrying, "
                 "or calling other tools that fetch FinancialFilings data, will fail "
-                "the same way until it resets or the user changes their plan. Stop "
-                "and tell the user: " + upstream_copy
+                "the same way. Do not call any tool that fetches FinancialFilings "
+                "data again until the user has followed the message below or the "
+                "limit resets. "
+                "Stop and tell the user in one sentence what happened, using the "
+                f"message below.{link} Message for the user: " + upstream_copy
             )
         wait = f" Retry after {retry_after}s." if retry_after else ""
         return "Rate limited by the FinancialFilings API — wait a moment and retry." + wait

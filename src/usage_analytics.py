@@ -68,13 +68,23 @@ ALLOWED_ARG_KEYS = frozenset({
     # pass through _scrub_token_shapes like every other allowlisted string.
     "code", "cik", "figi", "symbol", "exchange", "mic", "name",
     "type", "types",
-    # DELIBERATELY NOT HERE, although the receiver allowlists them: "query", "q",
-    # and "queries" (the batch tool's list form, added 2026-10-28 — same class,
-    # same decision; see the batch block at the end of this set).
-    # They are free text, and value-level scrubbing cannot recognise an arbitrary
-    # opaque credential (only JWT / Bearer shapes), so a pasted key would be
-    # stored durably. Whether raw in-text search terms may be logged is an open
-    # product/privacy decision, not an allowlist tweak — see #119.
+    # Free-text search intent. Allowlisted 2026-10-26 on Alex's product/privacy
+    # ruling, which closes the open question #119 left behind: raw in-text search
+    # terms MAY be logged. The known exposure is unchanged and accepted — value
+    # scrubbing recognises JWT / Bearer / opaque-run shapes but cannot enumerate
+    # every credential format, so a pasted key typed into a search box can still
+    # be stored. `_scrub_token_shapes` applies to these exactly as it does to the
+    # other free-text keys (`search` has been stored on both ends throughout).
+    # Rationale: document-search queries are the primary design input for
+    # cross-corpus search, and 100% of them were unreadable.
+    # "queries" is the batch tool's LIST form of the same input (mcp-server
+    # #165; receiver web#8551), carrying the same data from the same surface,
+    # so the same ruling reaches it — this is applying #163, not a new call.
+    # _apply_grammar/_truncate walk a list element-wise, so each entry is
+    # scrubbed exactly as the singular is. Flagged to cross-corpus-search,
+    # who on 2026-10-28 called the list form an open question for Alex while
+    # reasoning from the pre-#163 state; holding it back is a one-line change.
+    "query", "q", "queries",
     # New on both ends (the platform allowlist must add these too, or the
     # stricter receiver keeps redacting them). Enums, integers, dates and public
     # identifiers — none names a person or carries a credential.
@@ -86,9 +96,8 @@ ALLOWED_ARG_KEYS = frozenset({
     # same change.
     "as_known_at",
     # The batch in-text search (filings_markdown_search_batch, mcp-server #165;
-    # receiver side web#8551 for web#8004). An integer hit cap. "queries" is on
-    # the receiver list but NOT here: it is free text, the same class as
-    # "query"/"q" above, so the same decision applies. "filing_ids_count" is in
+    # receiver side web#8551 for web#8004). An integer hit cap. "queries" sits
+    # with "query"/"q" above, under #163's ruling. "filing_ids_count" is in
     # DERIVED_ARG_KEYS below, deliberately NOT here — see that comment.
     "max_hits_per_filing",
 })

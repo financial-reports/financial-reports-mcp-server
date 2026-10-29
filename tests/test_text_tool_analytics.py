@@ -207,7 +207,8 @@ async def test_markdown_search_hit_count_reaches_analytics_through_real_middlewa
     mcp_module, monkeypatch, fake_access_token, respx_router, query, expected_count
 ) -> None:
     """End-to-end through real FastMCP dispatch: the search tool's hit count, and
-    a miss as has_data=False, land on the event. The query text stays redacted."""
+    a miss as has_data=False, land on the event. The query text is stored (the
+    2026-10-26 ruling), not redacted."""
     from fastmcp import Client
 
     _auth_as(mcp_module, monkeypatch, fake_access_token)
@@ -227,7 +228,7 @@ async def test_markdown_search_hit_count_reaches_analytics_through_real_middlewa
     assert ev["status"] == "ok"
     assert ev["result_count"] == expected_count
     assert ev["has_data"] is (expected_count > 0)
-    assert ev["arguments"]["query"] == usage_analytics.REDACTED
+    assert ev["arguments"]["query"] == query
 
 
 # --- 6. response_bytes is the text the client receives (#127) ---------------
