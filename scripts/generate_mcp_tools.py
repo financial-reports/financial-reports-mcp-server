@@ -5936,24 +5936,89 @@ _CSV_ENUM_PARAMS = frozenset({"include"})
 # cannot drift. A lead written as prose can, which is why
 # test_the_hand_written_lead_still_matches_upstream pins its claim against the
 # snapshot's own text rather than trusting it to stay true.
-_PARAM_LEADS = {
-    "primary_annual_report": (
-        "Needs at least one of company, company_isin, lei, countries, source, "
-        "sources, fiscal_year or a date/period range, else 400. "
-    ),
-}
+# ⛔ ROUND 2 FRONT-LOADED THESE BY HAND AND ROUND 3 FOUND THE NEXT TWO. Measured
+# before fixing: **5 operative sentences across 3 parameters, 0 inside the cap** —
+# `include`'s "Not served with `as_known_at`" (twice), `cursor`'s "Adding `page`,
+# or changing `ordering` mid-walk, returns 400 `invalid_cursor`" and its 503
+# timeout note, plus `primary_annual_report`'s 400 condition. Hand-picking caught
+# 1 of 5.
+# ⇒ A FIXED CAP PLUS A HUMAN CHOOSING WHAT MATTERS IS A RACE THE HUMAN LOSES,
+# because upstream keeps writing and the cap keeps cutting from the end. So the
+# operative sentences are DERIVED by a rule instead of listed: no judgement, no
+# hand-written text to drift from the schema, and a newly-written failure rule is
+# picked up for free the next time the snapshot refreshes.
+# The rule is deliberately narrow — a hard HTTP failure or a stated
+# incompatibility — because a loose one ("must", "should") would front-load half
+# the prose and push the value lists back out, which is the control test.
+_OPERATIVE_RE = re.compile(r"(?:\b4\d\d\b|\b503\b|Not served with)")
+# How much of the cap the derived rules may take before the value list is at
+# risk. Rules first within this share, then the schema's own prose.
+_LEAD_SHARE = 0.55
 
 
-def _param_lead(name: str, csv_enum=None) -> str:
+def _operative_sentences(description: str) -> list:
+    """Sentences stating a hard failure or an incompatibility, in document order.
+
+    These are the facts a caller cannot discover by trying: a 4xx/503 rule, or a
+    combination the API refuses to serve. Everything else in a description is
+    explanatory and survives being cut.
+    """
+    sentences = re.split(r"(?<=\.)\s+", " ".join(description.split()))
+    seen, out, subject, grouped = set(), [], None, {}
+    for sentence in sentences:
+        text = sentence.strip()
+        if not text:
+            continue
+        # Track the last backticked identifier seen. An operative sentence is
+        # often a FRAGMENT whose subject is the value named in the sentence
+        # before it ("`split_adjusted` adds … . Not served with `as_known_at`.").
+        # Lifting the fragment alone strips that subject — and because upstream
+        # repeats the identical fragment under two different values, dedup then
+        # collapses them into ONE rule with no antecedent, which reads as
+        # applying to every value. Worse than the gap it closed: it would steer
+        # a caller off `as_known_at` entirely on a 40-credit call.
+        if _OPERATIVE_RE.search(text):
+            # A fragment is one that does not OPEN with a backticked identifier.
+            # Testing "contains a backticked token" is the wrong question and was
+            # the first version of this: "Not served with `as_known_at`." carries
+            # one, but as the OBJECT — the subject is in the sentence before it.
+            has_subject = re.match(r"`[a-z_]+`", text) is not None
+            if has_subject or not subject:
+                if text not in seen:
+                    seen.add(text)
+                    out.append(text)
+            else:
+                # Upstream states the SAME rule once per value it binds to, so
+                # group by predicate and list the subjects: two 48-char rules
+                # become one 56-char rule naming both, and the second no longer
+                # loses a race with the budget against the value list.
+                grouped.setdefault(text, []).append(subject)
+        leading = re.match(r"`([a-z_]+)`", text)
+        if leading:
+            subject = f"`{leading.group(1)}`"
+    for predicate, subjects in grouped.items():
+        out.append(f"{', '.join(subjects)}: {predicate}")
+    return out
+
+
+def _param_lead(name: str, csv_enum=None, description: str = "") -> str:
     """The part of a parameter's guidance that must survive the length cap.
 
-    Returns "" for a parameter that needs none. A derived lead (the member list
-    of a comma-separated vocabulary) is preferred over a written one because it
-    cannot disagree with the schema it came from.
+    Two sources, both DERIVED from the schema so neither can drift from it:
+    the member list of a comma-separated vocabulary, and any sentence stating a
+    hard failure or an incompatibility. Returns "" when there is nothing to
+    protect.
     """
+    parts = []
     if csv_enum:
-        return f"One or more of: {', '.join(csv_enum)}, comma-separated. "
-    return _PARAM_LEADS.get(name, "")
+        parts.append(f"One or more of: {', '.join(csv_enum)}, comma-separated.")
+    budget = int(_MAX_PARAM_DESCRIPTION * _LEAD_SHARE) - len(" ".join(parts))
+    for sentence in _operative_sentences(description):
+        if len(sentence) + 1 > budget:
+            break
+        parts.append(sentence)
+        budget -= len(sentence) + 1
+    return (" ".join(parts) + " ") if parts else ""
 
 
 def describe_param(py_type: str, description, name: str = "", csv_enum=None) -> str:
@@ -5970,7 +6035,7 @@ def describe_param(py_type: str, description, name: str = "", csv_enum=None) -> 
         return py_type
     # The lead goes IN FRONT of the schema text and is counted inside the cap, so
     # the budget is unchanged and the truncation can only eat upstream prose.
-    lead = _param_lead(name, csv_enum)
+    lead = _param_lead(name, csv_enum, text)
     text = lead + text
     if len(text) > _MAX_PARAM_DESCRIPTION:
         text = text[: _MAX_PARAM_DESCRIPTION - 1].rstrip() + "…"

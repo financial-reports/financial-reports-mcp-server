@@ -270,3 +270,83 @@ def test_the_hand_written_lead_still_matches_upstream(mcp_module) -> None:
     for f in ("company", "company_isin", "lei", "countries", "source", "sources",
               "fiscal_year"):
         assert f in upstream, f"upstream dropped {f} from the satisfying filters"
+
+
+# --- SPECHT #170 round 3: hand-picked leads lose a race they cannot win ----
+
+def test_every_hard_failure_rule_survives_the_cap(mcp_module) -> None:
+    """Round 2 front-loaded `include`'s member list and `primary_annual_report`'s
+    400 condition BY HAND. Round 3 found the next two facts the cap was eating:
+    `include`'s "Not served with `as_known_at`" (twice) and `cursor`'s "Adding
+    `page`, or changing `ordering` mid-walk, returns 400 `invalid_cursor`".
+
+    Measured before fixing: 5 operative sentences across 3 parameters, 0 of them
+    inside the 320-char cap. Hand-picking caught 1 of 5 and would have been
+    overtaken again next round — a fixed cap plus a human choosing what matters
+    is a race the human loses, because upstream keeps writing.
+
+    So they are DERIVED: any sentence stating a hard failure (4xx/503) or an
+    incompatibility ("Not served with") is front-loaded mechanically. No
+    judgement, nothing to keep in sync, and a new one is picked up for free."""
+    checks = {
+        ("companies_financials_retrieve", "include"): ["as_known_at"],
+        ("filings_list", "cursor"): ["400", "ordering"],
+        ("filings_list", "primary_annual_report"): ["400"],
+    }
+    for (tool, param), musts in checks.items():
+        desc = _input_schema(mcp_module, tool)["properties"][param].get("description", "")
+        for must in musts:
+            assert must in desc, f"{tool}.{param} lost {must!r} to the cap: {desc!r}"
+
+
+def test_the_derivation_is_a_rule_not_a_lookup_table(mcp_module) -> None:
+    """The point of deriving rather than listing: a parameter nobody hand-curated
+    still gets its failure rule. `cursor` has no entry anywhere — it is covered
+    only because its text matches the rule."""
+    assert not hasattr(mcp_module, "_PARAM_LEADS") or "cursor" not in getattr(
+        mcp_module, "_PARAM_LEADS", {}
+    ), "cursor is hand-listed, so this test proves nothing about the rule"
+    desc = _input_schema(mcp_module, "filings_list")["properties"]["cursor"].get("description", "")
+    assert "invalid_cursor" in desc or "400" in desc, (
+        f"the derived rule did not reach an un-curated parameter: {desc!r}"
+    )
+
+
+def test_the_value_list_still_survives_alongside_the_rules(mcp_module) -> None:
+    """Control: adding the failure rules must not push the member list back out.
+    Both have to fit, and if they ever cannot, that is a cap decision to take
+    deliberately rather than discover."""
+    desc = _input_schema(mcp_module, "companies_financials_retrieve")["properties"][
+        "include"
+    ].get("description", "")
+    for member in ("as_reported", "preliminary", "revisions", "split_adjusted",
+                   "standalone_quarters"):
+        assert member in desc, f"{member} was displaced by the failure rules: {desc!r}"
+
+
+def test_an_operative_sentence_keeps_the_value_it_binds_to(mcp_module) -> None:
+    """Found by reading the generated output as prose, not by a reviewer.
+
+    Upstream states "Not served with `as_known_at`." TWICE — once after
+    `as_reported` and once after `split_adjusted`. Extracting the sentence alone
+    deduped them into one rule with NO ANTECEDENT, which a model can read as
+    applying to all five members. That is worse in a specific way: it would steer
+    a caller off `as_known_at` entirely on a 40-credit call, so the fix for an
+    invisible rule had made a visible but ungrounded one."""
+    desc = _input_schema(mcp_module, "companies_financials_retrieve")["properties"][
+        "include"
+    ].get("description", "")
+    # ⚠ Asserted on the RULE SENTENCE, not on a leading slice. The first version
+    # of this test checked the text before "Comma-separated." — which contains
+    # the MEMBER LIST, so `as_reported` and `split_adjusted` were present for an
+    # unrelated reason and the test passed in the RED phase. Third vacuous
+    # assertion of the day with the same shape: asserting over a region that
+    # holds the words you are looking for, put there by something else.
+    import re
+    rules = [t for t in re.split(r"(?<=\.)\s+", desc) if "as_known_at" in t and "Not served" in t]
+    assert rules, f"the incompatibility rule is gone entirely: {desc!r}"
+    bound = [r for r in rules if "as_reported" in r or "split_adjusted" in r]
+    assert bound, (
+        "the rule reached the schema with NO antecedent, so it reads as applying "
+        f"to all five members: {rules!r}"
+    )
