@@ -185,3 +185,38 @@ def test_guide_warns_that_def_14a_is_a_name_collision(mcp_module) -> None:
     guide = mcp_module._resource_filing_types.fn()
     assert "PSI" in guide
     assert "collision" in guide.lower()
+
+
+def test_markdown_search_routes_line_items_to_the_structured_path(mcp_module) -> None:
+    """#167: the tool's own description told the model to use document search for
+    "a specific figure, line item, or section (e.g. query='total revenue')" — and it
+    obeyed. 267 of 559 users who call it have never once called
+    companies_financials_retrieve, and 80% of those never have since telemetry began.
+    Not reliability, not coverage, not price: the remaining explanation was our copy."""
+    tool = mcp_module.mcp._tool_manager._tools["filings_markdown_search"]
+    d = tool.description or ""
+    assert "companies_financials_retrieve" in d, "the structured path is not named"
+    assert "total revenue" not in d, "the line-item example is still here"
+
+
+def test_markdown_search_keeps_the_text_fallback_REQUIRED(mcp_module) -> None:
+    """cross-corpus-search's condition 1, and the thing that makes this an
+    experiment rather than a wall: when structured financials has no coverage or
+    comes back empty, the model must STILL be told to search the document. We are
+    measuring which path it routes to, so the second path has to stay open — and an
+    absent structured value is not an absent fact."""
+    d = mcp_module.mcp._tool_manager._tools["filings_markdown_search"].description or ""
+    low = d.lower()
+    assert "empty" in low and ("come back" in low or "fall back" in low), (
+        f"the fallback is not stated as required: {d!r}"
+    )
+
+
+def test_markdown_search_example_is_single_filing_shaped(mcp_module) -> None:
+    """cross-corpus-search's condition 2: the example must be a lookup INSIDE one
+    known filing, not a 'which filings mention X' discovery query — discovery stays
+    reserved for the cross-corpus tool, whose demand they are separately measuring."""
+    d = mcp_module.mcp._tool_manager._tools["filings_markdown_search"].description or ""
+    assert "going concern" in d, f"no single-filing example: {d!r}"
+    for discovery in ("which filings", "across filings", "any filing that"):
+        assert discovery not in d.lower(), f"discovery-shaped example leaked in: {discovery}"

@@ -4989,9 +4989,17 @@ async def filings_markdown_search(
     query: str,
     max_hits: int = 5,
 ) -> str:
-    """Search a filing's processed Markdown for `query` and return ONLY the matching
-    passages with their character offsets — use this INSTEAD of paging a long filing
-    to find a specific figure, line item, or section (e.g. query='total revenue').
+    """Search ONE filing's processed Markdown for `query` and return ONLY the matching
+    passages with their character offsets (e.g. query='going concern'). Use it INSTEAD
+    of paging a long filing. Best for what only the document has: disclosures, risk and
+    policy language, commitments, auditor and going-concern wording, and the sentence
+    around a number.
+    FOR A FINANCIAL LINE ITEM — revenue, assets, cash flow, EPS and the rest — CALL
+    companies_financials_retrieve FIRST: it returns those as structured values with
+    their period and currency, which grepping a document cannot give you.
+    BUT IF IT HAS NO COVERAGE for that company, or comes back empty for the line item
+    you need, COME BACK HERE and search the filing text. An absent structured value is
+    not an absent fact, and the figure is usually in the document.
     Case-insensitive. Each hit shows ~440 chars of context and an offset you can pass
     to filings_markdown_retrieve to read more around it."""
     try:
