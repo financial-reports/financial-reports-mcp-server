@@ -5909,7 +5909,7 @@ _MAX_PARAM_DESCRIPTION = 320
 # model will guess — and `include` became comma-separated in the same refresh.
 _DESCRIBED_PARAMS = frozenset(
     {"type", "types", "source_filing_type", "line_items", "fiscal_period",
-     "cursor", "include"}
+     "cursor", "include", "primary_annual_report"}
 )
 
 # Params whose schema `enum` lists the legal MEMBERS of a comma-separated list
@@ -5921,8 +5921,42 @@ _DESCRIBED_PARAMS = frozenset(
 # suddenly was not.
 _CSV_ENUM_PARAMS = frozenset({"include"})
 
+# ⛔ `_MAX_PARAM_DESCRIPTION` TRUNCATES FROM THE END AND HAS NO IDEA WHAT IT IS
+# CUTTING. Twice now the operative fact was the LAST thing in an upstream
+# description, so capping it dropped exactly the part that prevents a failing or
+# incomplete call (#170 round 2):
+#   include               — 1388 chars; the cap lands mid-`preliminary`, so three
+#                           of the five members were undiscoverable. Round 1 had
+#                           just removed the enum, which was the only other way to
+#                           learn them.
+#   primary_annual_report — 562 chars ending in "otherwise returns 400"; the cap
+#                           eats the condition that stops the 400.
+# ⇒ So anything load-bearing is moved to the FRONT, where the cap cannot reach it.
+# A lead for a _CSV_ENUM_PARAMS member list is DERIVED from the schema enum and
+# cannot drift. A lead written as prose can, which is why
+# test_the_hand_written_lead_still_matches_upstream pins its claim against the
+# snapshot's own text rather than trusting it to stay true.
+_PARAM_LEADS = {
+    "primary_annual_report": (
+        "Needs at least one of company, company_isin, lei, countries, source, "
+        "sources, fiscal_year or a date/period range, else 400. "
+    ),
+}
 
-def describe_param(py_type: str, description, name: str = "") -> str:
+
+def _param_lead(name: str, csv_enum=None) -> str:
+    """The part of a parameter's guidance that must survive the length cap.
+
+    Returns "" for a parameter that needs none. A derived lead (the member list
+    of a comma-separated vocabulary) is preferred over a written one because it
+    cannot disagree with the schema it came from.
+    """
+    if csv_enum:
+        return f"One or more of: {', '.join(csv_enum)}, comma-separated. "
+    return _PARAM_LEADS.get(name, "")
+
+
+def describe_param(py_type: str, description, name: str = "", csv_enum=None) -> str:
     """Wrap a param type in Annotated[..., Field(description=...)] (#132).
 
     The generator used to emit bare `type: str | None`, so the parameter carried
@@ -5934,6 +5968,10 @@ def describe_param(py_type: str, description, name: str = "") -> str:
     text = " ".join(description.split())
     if not text:
         return py_type
+    # The lead goes IN FRONT of the schema text and is counted inside the cap, so
+    # the budget is unchanged and the truncation can only eat upstream prose.
+    lead = _param_lead(name, csv_enum)
+    text = lead + text
     if len(text) > _MAX_PARAM_DESCRIPTION:
         text = text[: _MAX_PARAM_DESCRIPTION - 1].rstrip() + "…"
     return f"Annotated[{py_type}, Field(description={text!r})]"
@@ -6149,6 +6187,7 @@ def extract_query_params(operation: dict) -> list:
                 py_type,
                 param.get("description") or param_schema.get("description"),
                 name,
+                csv_enum=csv_enum,
             ),
             "default_val": default_val,
             "is_path": False,

@@ -209,3 +209,64 @@ async def test_the_generated_tool_actually_calls_the_validator(
         await fn(id=1, include="revisions,nonsense")
     assert "nonsense" in str(ei.value) and "include" in str(ei.value)
     assert not seen, "an invalid include was sent upstream anyway"
+
+
+# --- SPECHT #170 round 2: the 320-char cap eats the operative tail ----------
+
+def test_every_include_member_is_discoverable(mcp_module) -> None:
+    """Round 1 removed `include`'s enum because the enum was a VALUE vocabulary and
+    the parameter is comma-separated. The enum was also the only way a client could
+    DISCOVER the five members — and the description that replaced it is 1388 chars,
+    so `_MAX_PARAM_DESCRIPTION` cuts it mid-`preliminary`: `as_reported`,
+    `split_adjusted` and `standalone_quarters` became unreachable. A model asked for
+    split-adjusted EPS cannot ask for it.
+
+    The members are DERIVED from the schema enum, not hand-typed, so they cannot
+    drift from upstream."""
+    props = _input_schema(mcp_module, "companies_financials_retrieve")["properties"]
+    desc = props["include"].get("description", "")
+    for member in ("as_reported", "preliminary", "revisions", "split_adjusted",
+                   "standalone_quarters"):
+        assert member in desc, f"{member} is not discoverable: {desc!r}"
+
+
+def test_primary_annual_report_keeps_its_400_condition(mcp_module) -> None:
+    """The same cap, the same direction, a different parameter. This one's operative
+    sentence — it 400s unless combined with one of eight other filters — is the LAST
+    sentence of a 562-char description, so adding the param to `_DESCRIBED_PARAMS`
+    alone would have truncated precisely the part that stops a failing call."""
+    props = _input_schema(mcp_module, "filings_list")["properties"]
+    assert "primary_annual_report" in props, sorted(props)
+    desc = props["primary_annual_report"].get("description", "")
+    assert desc, "description discarded by the _DESCRIBED_PARAMS allowlist"
+    assert "400" in desc, f"the failure condition was truncated away: {desc!r}"
+    assert "fiscal_year" in desc or "company" in desc, (
+        f"the companion filters are not named: {desc!r}"
+    )
+
+
+def test_the_hand_written_lead_still_matches_upstream(mcp_module) -> None:
+    """ANTI-ROT, and the reason a hand-written lead-in is acceptable at all.
+
+    `include`'s lead is derived from the schema, so it cannot drift. The
+    `primary_annual_report` lead is prose I wrote, which CAN drift from upstream
+    silently — exactly the comment-rot class. So this asserts my lead's claim is
+    still what the snapshot says: if upstream changes which filters satisfy the
+    requirement, this fails instead of shipping a confident wrong instruction."""
+    import json
+    import os
+
+    snap = json.load(
+        open(os.path.join(os.path.dirname(__file__), "..", "scripts", "openapi.snapshot.json"))
+    )
+    op = snap["paths"]["/filings/"]["get"]
+    upstream = " ".join(
+        (next(p for p in op["parameters"] if p["name"] == "primary_annual_report")
+         .get("description") or "").split()
+    )
+    assert "otherwise returns 400" in upstream, (
+        "upstream no longer states the 400 condition — re-read it and update the lead"
+    )
+    for f in ("company", "company_isin", "lei", "countries", "source", "sources",
+              "fiscal_year"):
+        assert f in upstream, f"upstream dropped {f} from the satisfying filters"
