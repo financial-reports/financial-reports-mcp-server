@@ -239,3 +239,39 @@ def test_batch_search_closes_the_same_line_item_door(mcp_module) -> None:
     )
     # Its example was already disclosure-shaped; widening must not break that.
     assert "disclosure" in low, f"the disclosure-shaped example was lost: {d!r}"
+
+
+def test_structured_first_does_not_hijack_as_reported_questions(mcp_module) -> None:
+    """SPECHT #171, 2/3 passes, and a correctness bug in my own #167 copy.
+
+    companies_financials_retrieve selects ONE statement per fiscal year, period and
+    statement type when several filings report it, so it does NOT necessarily return
+    the statement from the filing you are searching. "What did THIS filing report"
+    followed by structured-first can therefore answer with a later restatement
+    attributed to the earlier filing — a wrong citation, not a missing one, which is
+    the worse failure.
+
+    These two tools are the filing-specific path: both take filing ids. So the
+    carve-out belongs in both."""
+    for name in ("filings_markdown_search", "filings_markdown_search_batch"):
+        d = (mcp_module.mcp._tool_manager._tools[name].description or "").lower()
+        assert "restat" in d or "particular filing" in d, (
+            f"{name} does not carve out as-reported questions: {d!r}"
+        )
+
+
+def test_the_fallback_covers_a_refusal_not_only_an_empty_result(mcp_module) -> None:
+    """The second #171 finding. My fallback enumerated its triggers — no coverage,
+    empty line item — so a structured call that is REFUSED fell outside the list,
+    and a model could report a figure unavailable while the document was readable.
+
+    ⚠ SPECHT's stated premise (Markdown is Level 2, financials Level 3) is NOT
+    verifiable from the pinned schema: `Level N` appears ZERO times for either
+    endpoint, because the #154 refresh replaced access-level text with `Cost:`.
+    Fixed on the general principle instead — ANY unanswered structured call should
+    fall back, and enumerating the reasons is what caused the gap."""
+    for name in ("filings_markdown_search", "filings_markdown_search_batch"):
+        d = (mcp_module.mcp._tool_manager._tools[name].description or "").lower()
+        assert "refus" in d or "denied" in d or "not available to your plan" in d, (
+            f"{name}'s fallback still excludes a refused call: {d!r}"
+        )

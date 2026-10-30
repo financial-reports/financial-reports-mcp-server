@@ -4994,11 +4994,15 @@ async def filings_markdown_search(
     of paging a long filing. Best for what only the document has: disclosures, risk and
     policy language, commitments, auditor and going-concern wording, and the sentence
     around a number.
-    FOR A FINANCIAL LINE ITEM — revenue, assets, cash flow, EPS and the rest — CALL
-    companies_financials_retrieve FIRST: it returns those as structured values with
-    their period and currency, which grepping a document cannot give you.
-    BUT IF IT HAS NO COVERAGE for that company, or comes back empty for the line item
-    you need, COME BACK HERE and search the filing text. An absent structured value is
+    FOR A COMPANY-AND-PERIOD LINE ITEM — revenue, assets, cash flow, EPS and the rest
+    — CALL companies_financials_retrieve FIRST: it returns those as structured values
+    with their period and currency, which grepping a document cannot give you.
+    STAY HERE INSTEAD when the question is what a PARTICULAR filing reported. That
+    tool picks ONE statement per fiscal year, period and statement type across every
+    filing that reports them, so a later restatement can come back in place of the
+    filing you named — a wrong citation rather than a missing one.
+    AND COME BACK HERE whenever that call does not answer: no coverage, an empty line
+    item, or a refusal for your plan. A value that is absent or unavailable there is
     not an absent fact, and the figure is usually in the document.
     Case-insensitive. Each hit shows ~440 chars of context and an offset you can pass
     to filings_markdown_retrieve to read more around it."""
@@ -5088,10 +5092,12 @@ async def filings_markdown_search_batch(
     """Search ONE query across SEVERAL filings in a single call — use this instead of
     calling filings_markdown_search once per filing when you are checking the same term
     across a set (e.g. the same disclosure across a company's filings, or across peers).
-    SAME RULE AS THE SINGLE-FILING TOOL: for a financial line item, call
+    SAME RULE AS THE SINGLE-FILING TOOL: for a company-and-period line item, call
     companies_financials_retrieve first — per company, not as a sweep here, which
-    costs a read per filing. If it has no coverage, or comes back empty for the line
-    item you need, COME BACK HERE: an absent structured value is not an absent fact.
+    costs a read per filing. Stay here when the question is what a PARTICULAR filing
+    reported: that tool may answer with a later restatement of the period instead.
+    And come back here whenever it does not answer — no coverage, an empty line item,
+    or a refusal for your plan; unavailable there is not absent.
     Case-insensitive. Returns per-filing hits with character offsets you can pass to
     filings_markdown_retrieve. Outcomes are reported SEPARATELY — matched, no match,
     searched only in part, and not searched — so you can tell a real absence from a
