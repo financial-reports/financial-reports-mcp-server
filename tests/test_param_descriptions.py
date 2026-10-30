@@ -126,23 +126,63 @@ def mcp_module_allowlist():
     return mod._DESCRIBED_PARAMS
 
 
+def _generator():
+    """The generator module. Whether a parameter EARNED a wider cap is
+    generator-time state; the emitted module does not carry it, and asking the
+    artifact for it is the wrong instrument — I made exactly that mistake in
+    round 4 by emitting a test accessor into the generated module where the
+    state it read did not exist."""
+    import importlib
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    return importlib.import_module("generate_mcp_tools")
+
+
+def _snapshot_param_desc(param: str) -> str:
+    """The snapshot's own description for a parameter, by name."""
+    import json
+    import os
+
+    snap = json.load(
+        open(os.path.join(os.path.dirname(__file__), "..", "scripts", "openapi.snapshot.json"))
+    )
+    for item in snap["paths"].values():
+        for op in item.values():
+            if not isinstance(op, dict):
+                continue
+            for p in op.get("parameters", []) or []:
+                if p.get("name") == param and p.get("description"):
+                    return " ".join(p["description"].split())
+    return ""
+
+
 def test_descriptions_are_capped(mcp_module) -> None:
-    """The flat 320 cap, restored.
+    """320 by default, widened ONLY for a parameter carrying derived failure
+    rules — those need room for the rules AND the instruction that tells a
+    caller what to send.
 
-    #170 round 4 briefly made this per-parameter, widening the cap for any
-    description carrying derived failure rules. Mutation testing then showed
-    NOTHING depended on the widening: removing the lead's internal budget was
-    the actual fix, and the wider cap was belt-and-braces added without
-    checking whether it was needed. Three mutations against it all survived —
-    the clearest possible statement that the mechanism was dead weight.
+    The widening was deleted in round 4 because three mutations against it
+    survived. That was the wrong inference: surviving mutations showed it was
+    UNTESTED, not unneeded. Round 5 found the case the tests could not see —
+    `cursor` needs 326 chars for its rules plus its first-page instruction,
+    against a 320 cap.
 
-    Measured, so the cap itself is not mistaken for the same kind of excess:
-    it saves 1,627 chars across the 8 described parameters, ~406 tokens of a
-    7,260-token tools/list — 5.6%, nearly all of it `include` alone. It earns
-    its keep; the machinery built AROUND it did not."""
+    So the widening must be EARNED, which is what the three mutations were
+    missing and what this now pins: exceeding the base cap requires the
+    parameter to actually carry derived rules. Without that clause, a cap that
+    had simply been removed would pass."""
+    gen = _generator()
     for name in ("filings_list", "companies_list", "companies_financials_retrieve"):
         for pname, prop in _input_schema(mcp_module, name)["properties"].items():
-            assert len(prop.get("description", "")) <= 320, (name, pname)
+            desc = prop.get("description", "")
+            assert len(desc) <= 3 * 320, (name, pname, len(desc))
+            if len(desc) > 320:
+                assert gen._operative_sentences(_snapshot_param_desc(pname)), (
+                    f"{name}.{pname} exceeded the base cap with no derived rules "
+                    "to justify it — the cap may simply have been removed"
+                )
 
 
 # --- SPECHT #170: a schema enum that is a MEMBER vocabulary, not a value one ---
@@ -424,7 +464,18 @@ def test_both_cursor_failure_rules_survive(mcp_module) -> None:
     assert "release_datetime_from" in desc or "added_to_platform_from" in desc, (
         f"the 503 RECOVERY is missing, which is the actionable half: {desc!r}"
     )
-    assert "empty `cursor=`" in desc, f"the first-page instruction was displaced: {desc!r}"
+    # ⚠ NOT a substring check. "empty `cursor=`" survives the truncation that
+    # destroys the instruction — the emitted text was "Send an empty `cursor=`
+    # for th…" and this assertion passed on it. Fourth vacuous assertion of the
+    # day, same shape every time: the words you look for are still present for
+    # a reason that is not the one you care about. Assert the INSTRUCTION, which
+    # means the part that tells you what to send and what to do next.
+    assert "for the first page" in desc, (
+        f"the first-page instruction is truncated mid-sentence: {desc!r}"
+    )
+    assert "follow `next`" in desc, (
+        f"the continuation half of the walk instruction was cut: {desc!r}"
+    )
 
 
 def test_include_keeps_its_real_antecedent(mcp_module) -> None:

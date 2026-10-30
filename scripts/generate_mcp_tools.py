@@ -5951,6 +5951,22 @@ _CSV_ENUM_PARAMS = frozenset({"include"})
 # incompatibility — because a loose one ("must", "should") would front-load half
 # the prose and push the value lists back out, which is the control test.
 _OPERATIVE_RE = re.compile(r"(?:\b4\d\d\b|\b503\b|Not served with)")
+# Chars of the schema's OWN prose kept after the derived rules. The opening
+# sentences are where the "what do I actually send" instruction lives, and for
+# `cursor` that instruction is load-bearing: send an EMPTY cursor for the first
+# page, then follow `next`. A client that misses it gets ordinary offset
+# pagination and cannot tell an incomplete walk from a complete one.
+#
+# ⛔ THIS WAS DELETED IN ROUND 4 AND THE REASONING WAS WRONG. Three mutations
+# against it survived, and I concluded the widening was UNNEEDED. What those
+# mutations actually established is that it was UNTESTED — my tests then
+# asserted the failure rules survived and said nothing about the instruction.
+# Round 5 found the case they could not see: rules (218) + the first-page
+# instruction (108) = 326 against a 320 cap, over by six characters.
+# ⇒ "No test depends on this" and "nothing needs this" are different claims,
+# and treating the first as the second is the empty-result-is-not-absence
+# error wearing a mutation-testing hat.
+_PROSE_HEAD_CHARS = 180
 # How much of the cap the derived rules may take before the value list is at
 # risk. Rules first within this share, then the schema's own prose.
 
@@ -6050,9 +6066,18 @@ def describe_param(py_type: str, description, name: str = "", csv_enum=None) -> 
     # The lead goes IN FRONT of the schema text and is counted inside the cap, so
     # the budget is unchanged and the truncation can only eat upstream prose.
     lead = _param_lead(name, csv_enum, text)
+    # A parameter carrying derived rules keeps room for them AND for the head of
+    # the schema's own prose; everything else lands on the flat cap for free,
+    # since an empty lead makes the max the base cap. No `if lead` guard: it was
+    # here and a mutation removing it survived — then arithmetic showed it could
+    # never change an outcome, so it was dead code rather than an untested
+    # branch. A surviving mutation on an INERT guard is not a test gap, and
+    # telling those two apart is what round 4 got backwards in the other
+    # direction.
+    cap = max(_MAX_PARAM_DESCRIPTION, len(lead) + _PROSE_HEAD_CHARS)
     text = lead + text
-    if len(text) > _MAX_PARAM_DESCRIPTION:
-        text = text[: _MAX_PARAM_DESCRIPTION - 1].rstrip() + "…"
+    if len(text) > cap:
+        text = text[: cap - 1].rstrip() + "…"
     return f"Annotated[{py_type}, Field(description={text!r})]"
 
 
