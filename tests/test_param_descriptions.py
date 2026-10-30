@@ -98,3 +98,114 @@ def test_descriptions_are_capped(mcp_module) -> None:
     for name in ("filings_list", "companies_list", "companies_financials_retrieve"):
         for pname, prop in _input_schema(mcp_module, name)["properties"].items():
             assert len(prop.get("description", "")) <= 320, (name, pname)
+
+
+# --- SPECHT #170: a schema enum that is a MEMBER vocabulary, not a value one ---
+
+def test_comma_separated_include_is_not_a_single_value_enum(mcp_module) -> None:
+    """`include` on companies_financials_retrieve says "Comma-separated." in its own
+    description and its enum lists the five MEMBERS, not the legal whole values.
+
+    The #154 refresh is what made this wrong: before it, the enum held exactly one
+    value (`revisions`), so a `Literal` was correct and "comma-separated" was moot.
+    With five members a `Literal` rejects `include="revisions,preliminary"` — the
+    documented usage — inside MCP validation, before the request can reach the API
+    that would accept it. A client cannot work around a type that will not serialise."""
+    props = _input_schema(mcp_module, "companies_financials_retrieve")["properties"]
+    inc = props["include"]
+    # Asserted on the SCHEMA, not on str() of it. The first version of this test
+    # read `"enum" not in rendered or "anyOf" in rendered`, which is true for the
+    # BROKEN shape too — the type is `anyOf: [{enum:[...]}, {null}]`, so the `or`
+    # short-circuited and the test passed in the RED phase. A test that passes
+    # before the fix is testing nothing.
+    def _has_enum(node):
+        if isinstance(node, dict):
+            return "enum" in node or any(_has_enum(v) for v in node.values())
+        if isinstance(node, list):
+            return any(_has_enum(v) for v in node)
+        return False
+    assert not _has_enum(inc), (
+        f"include is still a closed enum, so combinations cannot be expressed: {inc}"
+    )
+
+
+def test_unknown_include_members_are_still_rejected(mcp_module) -> None:
+    """Widening the type must not stop validating. Each comma-separated member is
+    checked against the vocabulary; an unknown one is a ToolInputError, not a 400
+    round-trip and not silence."""
+    assert hasattr(mcp_module, "_validate_csv_enum")
+    allowed = ("as_reported", "preliminary", "revisions", "split_adjusted", "standalone_quarters")
+    assert mcp_module._validate_csv_enum("revisions,preliminary", allowed, "include") == \
+        "revisions,preliminary"
+    assert mcp_module._validate_csv_enum(" revisions , preliminary ", allowed, "include") == \
+        "revisions,preliminary"
+    assert mcp_module._validate_csv_enum(None, allowed, "include") is None
+    for bad in ("nonsense", "revisions,nonsense", "revisions,,preliminary"):
+        try:
+            mcp_module._validate_csv_enum(bad, allowed, "include")
+        except mcp_module.ToolInputError as exc:
+            assert "include" in str(exc)
+        else:
+            raise AssertionError(f"{bad!r} was accepted")
+
+
+def test_the_new_cursor_param_carries_its_description(mcp_module) -> None:
+    """`_DESCRIBED_PARAMS` is an ALLOWLIST, so a new upstream parameter arrives with
+    its description silently discarded — the same denylist/allowlist asymmetry as
+    `_PRUNED_EXCLUDE`, pointing the other way. `cursor` is unusable without its text:
+    the first page needs an EMPTY `cursor=`, which no model will guess."""
+    props = _input_schema(mcp_module, "filings_list")["properties"]
+    assert "cursor" in props, sorted(props)
+    desc = props["cursor"].get("description", "")
+    assert desc, "cursor reached the schema with its description discarded"
+    assert "empty" in desc.lower(), f"the first-page rule is missing: {desc!r}"
+
+
+@pytest.mark.asyncio
+async def test_the_generated_tool_actually_calls_the_validator(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    """The INTEGRATION half, and the one mutation testing demanded.
+
+    `_validate_csv_enum` being correct says nothing about the generated tool
+    body calling it, or using what it returns. Mutation S5 rewired the template
+    to call it and throw the result away, and every other test here stayed
+    green — the isolated-constant failure mode PROCESS.md was written for after
+    PR #75.
+
+    So this asserts both halves at the boundary: an unknown member never leaves
+    the process, and a valid combination reaches the wire CANONICALISED, which
+    is only true if the return value is the thing assigned to the query param."""
+    import httpx
+
+    from .conftest import TEST_API_BASE, TEST_CLIENT_ID
+
+    at = fake_access_token(client_id=TEST_CLIENT_ID, token="real-access-token")
+    monkeypatch.setattr(mcp_module, "get_access_token", lambda: at)
+
+    seen = {}
+
+    def _capture(request):
+        seen["include"] = dict(request.url.params).get("include")
+        return httpx.Response(200, json={"results": []})
+
+    respx_router.get(f"{TEST_API_BASE}/companies/1/financials/").mock(side_effect=_capture)
+    tool = mcp_module.mcp._tool_manager._tools["companies_financials_retrieve"]
+    fn = getattr(tool, "fn", None) or getattr(tool, "function", None)
+
+    # Valid combination, deliberately with whitespace the caller might type.
+    await fn(id=1, include=" revisions , preliminary ")
+    assert seen["include"] == "revisions,preliminary", (
+        f"the validator's return value never reached the request: {seen['include']!r}"
+    )
+
+    # Unknown member: must not reach the wire at all. These generated tools
+    # RAISE on bad input rather than returning a safe-error string — the
+    # contract test_guidance_132 already pins for `page_size`. My first version
+    # of this test expected a returned string, which is the hand-built tools'
+    # contract, not this one's.
+    seen.clear()
+    with pytest.raises(Exception) as ei:
+        await fn(id=1, include="revisions,nonsense")
+    assert "nonsense" in str(ei.value) and "include" in str(ei.value)
+    assert not seen, "an invalid include was sent upstream anyway"

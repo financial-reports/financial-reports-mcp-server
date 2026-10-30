@@ -2965,6 +2965,36 @@ _UUID_RE = re.compile(
 _GENERIC_PATH_RE = re.compile(r"^[A-Za-z0-9_.~:@!*'()+,;=$&%-]{1,128}$")
 
 
+
+def _validate_csv_enum(value, allowed, name: str):
+    """Validate a comma-separated list whose members come from a fixed vocabulary.
+
+    The schema's `enum` for these params lists the legal MEMBERS, not the legal
+    whole values, so the generator emits `str` rather than Literal[...] — see
+    _CSV_ENUM_PARAMS. Widening the type must not stop validating: an unknown
+    member is caught here, with the vocabulary in the message, rather than
+    spent on an upstream round-trip that returns a bare 400.
+
+    Returns the value re-joined without surrounding whitespace so the upstream
+    sees a canonical form; None passes through so an omitted param stays omitted.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ToolInputError(f"{name} must be a comma-separated string")
+    members = [m.strip() for m in value.split(",")]
+    # An empty member means a stray or doubled comma. Dropping it silently would
+    # accept "a,,b" and "a,b," as if they were typed correctly, which hides a
+    # malformed call rather than reporting it.
+    bad = [m for m in members if m not in allowed]
+    if bad:
+        raise ToolInputError(
+            f"{name}: unknown value(s) {', '.join(repr(b) for b in bad)}. "
+            f"Comma-separated, from: {', '.join(allowed)}"
+        )
+    return ",".join(members)
+
+
 def _validate_path_param(name: str, value: Any) -> str:
     """Coerce + validate a path-param value before URL interpolation.
 
@@ -4145,6 +4175,16 @@ async def {{ func_name }}(
             "{{ param.original_name }}": {{ param.name }},
             {%- endfor %}
         }
+        # Comma-separated member vocabularies (see _CSV_ENUM_PARAMS): each
+        # member is validated and the CANONICALISED return value is what goes
+        # on the wire, so a widened type does not mean an unvalidated one.
+        {%- for param in params if param.is_query and param.csv_enum %}
+        query_params["{{ param.original_name }}"] = _validate_csv_enum(
+            {{ param.name }},
+            ({% for v in param.csv_enum %}"{{ v }}", {% endfor %}),
+            "{{ param.original_name }}",
+        )
+        {%- endfor %}
         # DRF paginates from 1. A zero/negative page_size took an unhandled
         # path and surfaced a FastMCP-internal serialization message
         # ("structured_content must be a dict or None. Got list: []") to the
@@ -4408,6 +4448,16 @@ async def {{ func_name }}(
             "{{ param.original_name }}": {{ param.name }},
             {%- endfor %}
         }
+        # Comma-separated member vocabularies (see _CSV_ENUM_PARAMS): each
+        # member is validated and the CANONICALISED return value is what goes
+        # on the wire, so a widened type does not mean an unvalidated one.
+        {%- for param in params if param.is_query and param.csv_enum %}
+        query_params["{{ param.original_name }}"] = _validate_csv_enum(
+            {{ param.name }},
+            ({% for v in param.csv_enum %}"{{ v }}", {% endfor %}),
+            "{{ param.original_name }}",
+        )
+        {%- endfor %}
         # DRF paginates from 1. A zero/negative page_size took an unhandled
         # path and surfaced a FastMCP-internal serialization message
         # ("structured_content must be a dict or None. Got list: []") to the
@@ -5848,9 +5898,28 @@ _MAX_PARAM_DESCRIPTION = 320
 # `type`/`types` (83 400s) where `source_filing_type` belongs, invented KPI
 # codes in `line_items` (165), and period names like `Q3` passed as a type
 # (web#4185 redirects those to `fiscal_period`). Widen it here.
+# ⚠ AN ALLOWLIST, so a new upstream parameter arrives with its description
+# SILENTLY DISCARDED — the same denylist/allowlist asymmetry as _PRUNED_EXCLUDE,
+# pointing the other way: there, forgetting an entry EXPOSES a tool; here, it
+# HIDES guidance. It is an allowlist on purpose (every description costs tokens
+# on every tools/list for every client), so the cost of the design is that each
+# refresh must ask which new params need their text.
+# `cursor` and `include` added with the #154 refresh (#170): `cursor` is
+# unusable without its text — the first page needs an EMPTY `cursor=`, which no
+# model will guess — and `include` became comma-separated in the same refresh.
 _DESCRIBED_PARAMS = frozenset(
-    {"type", "types", "source_filing_type", "line_items", "fiscal_period"}
+    {"type", "types", "source_filing_type", "line_items", "fiscal_period",
+     "cursor", "include"}
 )
+
+# Params whose schema `enum` lists the legal MEMBERS of a comma-separated list
+# rather than the legal whole values. Emitting Literal[...] for these rejects
+# the documented usage inside MCP validation, before the request can reach the
+# API that would accept it — and a client cannot work around a type that will
+# not serialise. `include` on companies_financials_retrieve held exactly ONE
+# enum value until the #154 refresh, which is why a Literal was right until it
+# suddenly was not.
+_CSV_ENUM_PARAMS = frozenset({"include"})
 
 
 def describe_param(py_type: str, description, name: str = "") -> str:
@@ -6061,12 +6130,16 @@ def extract_query_params(operation: dict) -> list:
             continue
         name = param["name"]
         param_schema = param.get("schema", {})
+        schema_enum = param_schema.get("enum")
+        # A member vocabulary is not a value vocabulary: pass enum=None so the
+        # type stays `str`, and validate each member at call time instead.
+        csv_enum = list(schema_enum) if (name in _CSV_ENUM_PARAMS and schema_enum) else None
         py_type, default_val = get_python_type(
             param_schema.get("type"),
             param_schema.get("format"),
             param.get("required", False),
             param_schema.get("default"),
-            enum=param_schema.get("enum"),
+            enum=None if csv_enum else schema_enum,
             items_type=(param_schema.get("items") or {}).get("type"),
         )
         params.append({
@@ -6081,6 +6154,7 @@ def extract_query_params(operation: dict) -> list:
             "is_path": False,
             "is_query": True,
             "is_body": False,
+            "csv_enum": csv_enum,
         })
     return params
 
