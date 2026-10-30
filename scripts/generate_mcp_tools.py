@@ -104,6 +104,39 @@ _PRUNED_EXCLUDE = {
     # generic tool template would fail on every call.
     "agent_key_claim",
     "filings_document_retrieve",
+    # Added with the 2026-10-30 refresh (#154). Three corporate-actions /
+    # segment endpoints, all three **40 credits per request** — joint most
+    # expensive we have, level with companies_financials_retrieve — and all
+    # three carrying "Experimental: the response may change without an API
+    # version bump" in their own descriptions.
+    #
+    # The decisive argument is an ASYMMETRY, not the cost: withholding a tool
+    # is cheap to reverse, shipping one is not. Clients build on what the
+    # default surface shows them, so putting an endpoint that may change shape
+    # without a version bump into the curated set exports that instability to
+    # every client — and `quota_exhausted` is already ~90% of all upstream
+    # errors on this surface, so a 40-credit call a model has no reason to
+    # prefer lands on the sorest spot we have. Each also has its own reason:
+    #
+    #   companies_segments_retrieve — coverage is only where segment notes are
+    #     XBRL-tagged (US, JP, KR, CL, IN and a few European filers), so on most
+    #     of the corpus it returns nothing and teaches the model to distrust it.
+    #   companies_splits_retrieve — an ADJUSTMENT PRIMITIVE rather than an
+    #     answer. companies_dividends_retrieve already returns `split_adjusted`
+    #     computed from exactly these splits, so a model wanting adjusted
+    #     amounts gets them without this call. Same "spend context to re-fetch
+    #     what another call already returns" ground as companies_merges_retrieve.
+    #   companies_dividends_retrieve — the genuinely arguable one, and excluded
+    #     on the experimental ground ALONE. It is real new capability with no
+    #     inline equivalent on the Company object, and dividend questions are
+    #     ordinary in this domain. It is a "not yet", not a "never".
+    #
+    # ⇒ REVISIT TRIGGER, all three: when the endpoint drops "Experimental" from
+    # its description. `MCP_FULL_SURFACE=1` emits all three today, so nothing is
+    # lost for a caller who asks for them deliberately.
+    "companies_segments_retrieve",
+    "companies_splits_retrieve",
+    "companies_dividends_retrieve",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 

@@ -15,12 +15,26 @@ def _input_schema(mcp_module, tool_name):
     return tool.parameters
 
 
+# ⚠ THESE STRINGS PIN *UPSTREAM'S* PROSE, NOT THIS GENERATOR'S BEHAVIOUR. A
+# failure here means the REST schema reworded a description — re-read the new
+# text and confirm the distinction below still survives, then update the string.
+# It does NOT mean the generator stopped plumbing descriptions through; that is
+# what `test_params_without_a_schema_description_get_none` and the non-empty
+# assertion in the test body cover.
+#
+# The distinction being guarded, which is the thing that must survive any
+# rewording: a model must be able to tell a FinancialFilings taxonomy code
+# (`type`/`types`) from the source's own form name (`source_filing_type`).
+# Re-pointed 2026-10-30 with the #154 snapshot refresh: upstream replaced the
+# NEGATION ("taxonomy codes, not regulator form names") with a POSITIVE
+# CROSS-REFERENCE ("for the source's own form name, use `source_filing_type`"),
+# which is better for an LLM — a negation tells it what the field is not.
 @pytest.mark.parametrize(
     "tool_name,param,must_contain",
     [
-        ("filings_list", "types", "not regulator form names"),
-        ("filings_list", "type", "not regulator form names"),
-        ("filings_list", "source_filing_type", "regulator's own form name"),
+        ("filings_list", "types", "use `source_filing_type`"),
+        ("filings_list", "type", "use `source_filing_type`"),
+        ("filings_list", "source_filing_type", "exactly as the source publishes it"),
         ("companies_financials_retrieve", "line_items", "Unknown codes return"),
     ],
 )
@@ -29,7 +43,16 @@ def test_param_description_reaches_the_input_schema(
 ) -> None:
     props = _input_schema(mcp_module, tool_name)["properties"]
     assert param in props, sorted(props)
-    assert must_contain in props[param].get("description", "")
+    described = props[param].get("description", "")
+    # Plumbing first, prose second: a param that arrives with NO description is
+    # the generator failing, and that is a different diagnosis from upstream
+    # having reworded one. Asserting them separately keeps the two apart.
+    assert described, f"{tool_name}.{param} reached the input schema with no description at all"
+    assert must_contain in described, (
+        f"{tool_name}.{param} no longer contains {must_contain!r}. If upstream reworded it, "
+        f"confirm the code-vs-source-form distinction still survives, then update the string. "
+        f"Current text: {described!r}"
+    )
 
 
 def test_params_without_a_schema_description_get_none(mcp_module) -> None:
