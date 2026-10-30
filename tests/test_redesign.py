@@ -220,3 +220,22 @@ def test_markdown_search_example_is_single_filing_shaped(mcp_module) -> None:
     assert "going concern" in d, f"no single-filing example: {d!r}"
     for discovery in ("which filings", "across filings", "any filing that"):
         assert discovery not in d.lower(), f"discovery-shaped example leaked in: {discovery}"
+
+
+def test_batch_search_closes_the_same_line_item_door(mcp_module) -> None:
+    """#167's fix only closed one door. filings_markdown_search_batch takes ONE
+    query across up to 20 filings, so a line-item sweep across peers could route
+    around the new copy at 20x the cost — and the release that carries #167 also
+    carries #165, so both doors have to change together.
+
+    cross-corpus-search approved widening it and amended the PREREG to count batch
+    calls in the after window, so a migration from the single tool to this one
+    cannot read as a win."""
+    d = mcp_module.mcp._tool_manager._tools["filings_markdown_search_batch"].description or ""
+    assert "companies_financials_retrieve" in d, "the structured path is not named"
+    low = d.lower()
+    assert "empty" in low and ("come back" in low or "fall back" in low), (
+        f"the required text fallback is missing: {d!r}"
+    )
+    # Its example was already disclosure-shaped; widening must not break that.
+    assert "disclosure" in low, f"the disclosure-shaped example was lost: {d!r}"
