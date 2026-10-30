@@ -10,6 +10,38 @@ from __future__ import annotations
 import pytest
 
 
+def _generator():
+    """The generator module. Some facts — like whether a parameter EARNED its
+    wider cap — are generator-time state and simply are not present in the
+    emitted module; asking the artifact for them is the wrong question."""
+    import importlib
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    return importlib.import_module("generate_mcp_tools")
+
+
+def _snapshot_desc(tool_name: str, param: str) -> str:
+    """The snapshot's own description for a parameter, by tool."""
+    import json
+    import os
+
+    snap = json.load(
+        open(os.path.join(os.path.dirname(__file__), "..", "scripts", "openapi.snapshot.json"))
+    )
+    for item in snap["paths"].values():
+        for op in item.values():
+            if not isinstance(op, dict):
+                continue
+            if op.get("operationId") != tool_name:
+                continue
+            for p in op.get("parameters", []) or []:
+                if p.get("name") == param:
+                    return " ".join((p.get("description") or "").split())
+    return ""
+
+
 def _input_schema(mcp_module, tool_name):
     tool = mcp_module.mcp._tool_manager._tools[tool_name]
     return tool.parameters
@@ -95,6 +127,19 @@ def mcp_module_allowlist():
 
 
 def test_descriptions_are_capped(mcp_module) -> None:
+    """The flat 320 cap, restored.
+
+    #170 round 4 briefly made this per-parameter, widening the cap for any
+    description carrying derived failure rules. Mutation testing then showed
+    NOTHING depended on the widening: removing the lead's internal budget was
+    the actual fix, and the wider cap was belt-and-braces added without
+    checking whether it was needed. Three mutations against it all survived —
+    the clearest possible statement that the mechanism was dead weight.
+
+    Measured, so the cap itself is not mistaken for the same kind of excess:
+    it saves 1,627 chars across the 8 described parameters, ~406 tokens of a
+    7,260-token tools/list — 5.6%, nearly all of it `include` alone. It earns
+    its keep; the machinery built AROUND it did not."""
     for name in ("filings_list", "companies_list", "companies_financials_retrieve"):
         for pname, prop in _input_schema(mcp_module, name)["properties"].items():
             assert len(prop.get("description", "")) <= 320, (name, pname)
@@ -349,4 +394,47 @@ def test_an_operative_sentence_keeps_the_value_it_binds_to(mcp_module) -> None:
     assert bound, (
         "the rule reached the schema with NO antecedent, so it reads as applying "
         f"to all five members: {rules!r}"
+    )
+
+
+def test_a_subject_is_only_bound_when_the_schema_says_it_is_one(mcp_module) -> None:
+    """Round 3 bound an operative fragment to the last identifier that opened a
+    sentence. That is right for `include`, whose description is written one
+    paragraph per enum member — and WRONG for `cursor`, where an earlier
+    sentence opens with `ordering`. The emitted text read "`ordering`: Adding
+    `page`, or changing `ordering` mid-walk, returns 400", attributing cursor's
+    failure rule to a different parameter.
+
+    MIS-grounded is worse than un-grounded: round 3 fixed a vague rule by making
+    a false one. The fix is to stop guessing from prose and check the schema —
+    bind a subject only when it is a declared member of THIS parameter's enum.
+    `cursor` has no enum, so it can never acquire a subject."""
+    desc = _input_schema(mcp_module, "filings_list")["properties"]["cursor"].get("description", "")
+    assert "`ordering`:" not in desc, f"cursor's rules are attributed to `ordering`: {desc!r}"
+    assert "400" in desc, f"the 400 rule was lost: {desc!r}"
+
+
+def test_both_cursor_failure_rules_survive(mcp_module) -> None:
+    """The 400 rule is 89 chars and the 503 rule is 151; the lead budget was 176,
+    so the second was dropped by the `break` — while the comment above it claimed
+    the 503 note was front-loaded. A parameter carrying hard failure rules gets
+    enough cap to hold them, rather than ever-cleverer extraction."""
+    desc = _input_schema(mcp_module, "filings_list")["properties"]["cursor"].get("description", "")
+    assert "400" in desc and "503" in desc, f"a failure rule was dropped: {desc!r}"
+    assert "release_datetime_from" in desc or "added_to_platform_from" in desc, (
+        f"the 503 RECOVERY is missing, which is the actionable half: {desc!r}"
+    )
+    assert "empty `cursor=`" in desc, f"the first-page instruction was displaced: {desc!r}"
+
+
+def test_include_keeps_its_real_antecedent(mcp_module) -> None:
+    """Control for the narrowing: `include` DOES have an enum, so its fragments
+    must still bind. Tightening the rule must not throw away round 3's fix."""
+    desc = _input_schema(mcp_module, "companies_financials_retrieve")["properties"][
+        "include"
+    ].get("description", "")
+    import re
+    rules = [t for t in re.split(r"(?<=\.)\s+", desc) if "Not served" in t]
+    assert rules and any("as_reported" in r or "split_adjusted" in r for r in rules), (
+        f"include lost its antecedent: {rules!r}"
     )

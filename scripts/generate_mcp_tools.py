@@ -5953,10 +5953,10 @@ _CSV_ENUM_PARAMS = frozenset({"include"})
 _OPERATIVE_RE = re.compile(r"(?:\b4\d\d\b|\b503\b|Not served with)")
 # How much of the cap the derived rules may take before the value list is at
 # risk. Rules first within this share, then the schema's own prose.
-_LEAD_SHARE = 0.55
 
 
-def _operative_sentences(description: str) -> list:
+
+def _operative_sentences(description: str, members=None) -> list:
     """Sentences stating a hard failure or an incompatibility, in document order.
 
     These are the facts a caller cannot discover by trying: a 4xx/503 rule, or a
@@ -5982,8 +5982,20 @@ def _operative_sentences(description: str) -> list:
             # Testing "contains a backticked token" is the wrong question and was
             # the first version of this: "Not served with `as_known_at`." carries
             # one, but as the OBJECT — the subject is in the sentence before it.
+            # ⛔ BIND A SUBJECT ONLY WHEN THE SCHEMA DECLARES IT ONE. Round 3
+            # bound a fragment to the last identifier that opened a sentence,
+            # which is right for a description written one paragraph per enum
+            # member (`include`) and WRONG for a single-subject description that
+            # merely mentions other names: `cursor` emitted
+            # "`ordering`: … returns 400", attributing its own failure rule to a
+            # different parameter. MIS-grounded is worse than un-grounded — round
+            # 3 fixed a vague rule by making a false one. So the test is a lookup
+            # against this parameter's own enum, not a guess about prose.
             has_subject = re.match(r"`[a-z_]+`", text) is not None
-            if has_subject or not subject:
+            bindable = subject is not None and members is not None and (
+                subject.strip("`") in members
+            )
+            if has_subject or not bindable:
                 if text not in seen:
                     seen.add(text)
                     out.append(text)
@@ -6012,13 +6024,15 @@ def _param_lead(name: str, csv_enum=None, description: str = "") -> str:
     parts = []
     if csv_enum:
         parts.append(f"One or more of: {', '.join(csv_enum)}, comma-separated.")
-    budget = int(_MAX_PARAM_DESCRIPTION * _LEAD_SHARE) - len(" ".join(parts))
-    for sentence in _operative_sentences(description):
-        if len(sentence) + 1 > budget:
-            break
-        parts.append(sentence)
-        budget -= len(sentence) + 1
+    # No budget race: every operative sentence is kept, and the CAP is widened to
+    # fit them (see _param_cap). Round 3 budgeted them against a fixed share and
+    # silently dropped `cursor`'s 151-char 503 rule — including the RECOVERY, the
+    # only actionable half — while the comment above claimed it was protected.
+    # Ever-cleverer extraction kept acquiring new failure modes; paying a few
+    # tokens for the rules that stop a failing call is the cheaper trade.
+    parts.extend(_operative_sentences(description, members=csv_enum))
     return (" ".join(parts) + " ") if parts else ""
+
 
 
 def describe_param(py_type: str, description, name: str = "", csv_enum=None) -> str:
