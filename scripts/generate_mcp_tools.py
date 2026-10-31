@@ -4908,15 +4908,30 @@ _BATCH_OMITTED_NOTICE_CHARS = 400
 
 
 def _md_candidates(raw: str) -> list:
-    """Query spellings to try, best first.
+    """Query spellings to try, THE TYPED ONE FIRST.
 
     Filings render figures with thousands separators ("19,409"), so a query of
     "19409" must also try the comma form or it misses every number in the
     document.
+
+    ⛔ TYPED-FIRST, NOT BARE-FIRST, AND THE ORDER IS LOAD-BEARING TWICE OVER.
+    This returned the bare form first whatever the user typed, so "19,409" was
+    searched as "19409".
+      1. It is wrong on its own terms: web#8990 measured that bare-first
+         returned ONE bare hit on a document holding both forms where TWO
+         literal ones existed. A user who types the separators means them.
+      2. And once the tool asks the API's search endpoint (#166) rather than
+         scanning locally, the server applies its OWN literal-first rule to the
+         `q` IT RECEIVES — so sending the bare form first would make the server
+         search bare-first and silently undo web#8990's fix. The server cannot
+         prefer a spelling it was never sent.
+    The other spelling stays as the FALLBACK, which is the point of the helper.
     """
     bare = raw.replace(",", "")
     if bare.isdigit() and len(bare) >= 4:
-        return [bare, format(int(bare), ",")]
+        comma = format(int(bare), ",")
+        # `raw` first: whichever of the two the caller actually typed.
+        return [raw, bare] if raw == comma else [raw, comma]
     return [raw]
 
 

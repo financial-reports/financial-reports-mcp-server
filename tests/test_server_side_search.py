@@ -187,19 +187,22 @@ async def test_the_first_hitting_candidate_wins_and_is_not_overwritten(
     ordering.
 
     Here the FIRST candidate hits and the second misses — the only arrangement
-    that can tell "stops at the first hit" from "keeps whatever came last". A
-    query of "19,409" yields candidates ["19409", "19,409"] via the bare form,
-    so a document written WITHOUT separators hits on candidate one."""
+    that can tell "stops at the first hit" from "keeps whatever came last".
+
+    ⚠ Re-pointed when `_md_candidates` became TYPED-FIRST: the scenario depends
+    on WHICH spelling is tried first, so a deliberate order change had to move
+    the hit with it. "19,409" now yields ["19,409", "19409"], so the literal
+    form is candidate one and the document holds separators."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
     asked = []
 
     def _first_hits(request):
         q = dict(request.url.params).get("q")
         asked.append(q)
-        if q == "19409":
+        if q == "19,409":
             return httpx.Response(200, json={
                 "filing_id": 1, "query": q, "total_chars": 900,
-                "total_hits": 1, "hits": [_hit(12, "unseparated 19409 here")],
+                "total_hits": 1, "hits": [_hit(12, "separated 19,409 here")],
             })
         return httpx.Response(200, json={
             "filing_id": 1, "query": q, "total_chars": 900, "total_hits": 0, "hits": [],
@@ -207,8 +210,8 @@ async def test_the_first_hitting_candidate_wins_and_is_not_overwritten(
 
     respx_router.get(f"{TEST_API_BASE}{SEARCH}").mock(side_effect=_first_hits)
     out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="19,409")
-    assert asked == ["19409"], f"it kept asking after a hit: {asked}"
-    assert "unseparated 19409 here" in out, f"the first hit was overwritten: {out!r}"
+    assert asked == ["19,409"], f"it kept asking after a hit: {asked}"
+    assert "separated 19,409 here" in out, f"the first hit was overwritten: {out!r}"
 
 
 @pytest.mark.asyncio
@@ -235,3 +238,29 @@ async def test_max_hits_is_passed_to_the_endpoint(
     respx_router.get(f"{TEST_API_BASE}{SEARCH}").mock(side_effect=_capture)
     await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="revenue", max_hits=9)
     assert seen.get("max_hits") == "9", f"the caller's cap did not reach the endpoint: {seen}"
+
+
+def test_candidate_order_is_TYPED_FIRST_not_bare_first(mcp_module) -> None:
+    """⛔ Found from web#8990, which made the REST comma rule LITERAL-FIRST.
+
+    `_md_candidates` returned the bare form first **whatever the user typed**:
+    "19,409" → ["19409", "19,409"]. So this tool sent `q=19409` as its first
+    request, and a literal-first server treats the `q` IT RECEIVES as the typed
+    form — searching bare-first and never seeing the user's comma. ⇒ My
+    client-side normalisation would have silently undone their fix, because the
+    server cannot know what it was not sent.
+
+    Typed-first is also the better order on the pre-#8990 server: a user who
+    typed "19,409" means the literal form, and web#8990's own finding was that
+    bare-first returned 1 bare hit where 2 literal ones existed.
+
+    The bare form stays as the FALLBACK, which is the whole point of the helper:
+    a figure typed without separators must still match "19,409"."""
+    assert mcp_module._md_candidates("19,409") == ["19,409", "19409"], (
+        "a comma-typed query must try the literal form first"
+    )
+    assert mcp_module._md_candidates("19409") == ["19409", "19,409"], (
+        "a bare-typed query must try the bare form first"
+    )
+    # Non-numeric is untouched: one candidate, no second request.
+    assert mcp_module._md_candidates("going concern") == ["going concern"]
