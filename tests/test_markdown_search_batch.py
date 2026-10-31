@@ -1138,49 +1138,59 @@ async def test_bounding_the_echo_does_not_change_what_matches(
 
 
 @pytest.mark.asyncio
-async def test_the_single_filing_tool_bounds_its_echo_too(
+async def test_the_single_filing_tools_echo_bound_is_now_UNREACHABLE(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
-    """The same defect is in `filings_markdown_search`, which SPECHT did not flag
-    because it reviews the diff and that tool's echo is untouched by this PR. It
-    is the #1 tool by call volume, and ALL THREE of its result lines quote the
-    query back unbounded. Same rule, both tools — as with the hit cap and the
-    truncation disclosure before it.
+    """⛔ REPLACES a test that asserted this tool TRUNCATES a long echo. It cannot
+    any more, and the replacement asserts the stronger property instead.
 
-    All three lines are exercised, not one. The first version of this test used a
-    non-matching document, so it covered only the two no-match lines: reverting
-    the echo on the HIT line left it green, and the mutation pass is what said so
-    (R2). That is the fourth time in this PR a control probed only the inputs the
-    fix was already thinking about."""
+    #173 added an INPUT bound: `len(raw) > _MAX_QUERY_CHARS` (200) is refused
+    locally, because `q` now crosses the wire into web's parse_search() which
+    400s above 200. `_QUERY_ECHO_CHARS` is ALSO 200 — so on this tool
+    `len(raw) <= _QUERY_ECHO_CHARS` is now always true and the truncation branch
+    is DEAD CODE. The old test fed it 320- and 5,000-character queries, which the
+    guard refuses before any echo happens.
+
+    ⭐ The guard is not removed, and neither is `_echo_query`: the BATCH tool still
+    scans client-side, has no server-side query bound, and is where the unbounded
+    echo was originally found. Two tools, one helper, and only one of them has had
+    its input narrowed — so the helper stays load-bearing until the batch half of
+    #166 lands and inherits the same 200-char bound, at which point it can retire.
+
+    ⚠ The transferable bit: a LATER, STRONGER guard silently made an EARLIER one
+    unreachable, and the only thing that said so was this test going red. Nothing
+    else would have — a dead branch passes lint, passes mutation testing on the
+    paths that do run, and reads as defence-in-depth."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    long_q = "y" * 5_000
     single = _tool(mcp_module, "filings_markdown_search")
+    calls = {"n": 0}
 
-    # (a) the HIT line — the one R2 showed was uncovered.
-    # Mocks the SEARCH endpoint since #166: the single tool no longer downloads.
+    def _count(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={
+            "filing_id": 1, "query": "x", "total_chars": 10,
+            "total_hits": 0, "hits": [],
+        })
+
+    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/search/").mock(side_effect=_count)
+
+    # Exactly the input the retired test used, now refused rather than truncated.
     phrase = "material adverse change in the business " * 8   # 320 chars
-    _mock_search(respx_router, 1, hits=[(7, f"Intro. {phrase} Tail.")], total_hits=1)
-    hit = await single(filing_id=1, query=phrase)
-    head = hit.splitlines()[0]
-    assert "match(es) for" in head
-    assert "truncated for display" in head
-    # Asserted on the HEADLINE, not the whole result: the hit's context span is
-    # SUPPOSED to contain the matched phrase, so `phrase not in hit` would fail
-    # on correct code. The echo is the only thing under test here.
-    assert phrase not in head, "the full query was echoed back on the hit line"
+    assert len(phrase) > mcp_module._QUERY_ECHO_CHARS, "the premise of the old test"
+    out = await single(filing_id=1, query=phrase)
+    assert "200 characters" in out, "an over-long query should be refused, not echoed"
+    assert "truncated for display" not in out, (
+        "the echo bound fired, so the input guard did not — they overlap and the "
+        "input guard must win, or the API is paid for a query it will reject"
+    )
+    assert calls["n"] == 0, "an over-long query reached the API"
 
-    # (b) the NO-MATCH line.
-    _mock_search(respx_router, 2, hits=[], total_hits=0, total_chars=len(OTHER))
-    miss = await single(filing_id=2, query=long_q)
-    assert "truncated for display" in miss
-    assert "y" * 1_000 not in miss, "the full query was echoed back on the miss line"
-
-    # (c) ⛔ THE THIRD ECHO SITE IS GONE, not untested. It lived on the
-    # "document was TRUNCATED at the size cap" miss line, which #166 deleted
-    # because the client never truncates now. Two echo sites remain, both
-    # covered above. Recorded rather than silently dropped: a test that loses
-    # a case to a deletion should say which case and why, or the next reader
-    # cannot tell coverage from omission.
+    # And the dead branch is dead by ARITHMETIC, not by inspection: no reachable
+    # input can be longer than the echo bound when the two constants are equal.
+    assert mcp_module._MAX_QUERY_CHARS <= mcp_module._QUERY_ECHO_CHARS, (
+        "if the input bound ever exceeds the echo bound, this tool can echo an "
+        "unbounded query again and the retired test needs reinstating"
+    )
 
 
 @pytest.mark.asyncio

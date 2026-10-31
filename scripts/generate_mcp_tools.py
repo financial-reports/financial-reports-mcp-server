@@ -493,6 +493,17 @@ _MAX_FILING_BYTES = 10_000_000
 # coincidence — and a mutation that moved the batch's value broke nothing.
 _MAX_RESULT_CHARS = 150_000
 
+# MIRRORS A SERVER-SIDE VALIDATOR, so it can drift silently: web's
+# filings/markdown_window.py MAX_QUERY_CHARS, enforced in parse_search(), which
+# raises ValidationError -> 400 above it. Before #166 this tool scanned the
+# document locally and any length worked; now `q` crosses the wire, so an
+# unbounded query turns a local no-op into an upstream 400 after a round trip.
+# Validated HERE instead, so an over-long query costs nothing and the message
+# names the limit. NOT declared in the OpenAPI schema -- `q` is a bare
+# {"type": "string"} in openapi.snapshot.json -- so the snapshot cannot be the
+# source for this number and the drift job cannot see it move.
+_MAX_QUERY_CHARS = 200
+
 _CDN_BASE = (
     "https://cdn.financialreports.eu/financialreports/static/"
     "assets/favicon/new"
@@ -5020,7 +5031,8 @@ async def filings_markdown_search(
     item, or a refusal for your plan. A value that is absent or unavailable there is
     not an absent fact, and the figure is usually in the document.
     Case-insensitive. Each hit shows ~440 chars of context and an offset you can pass
-    to filings_markdown_retrieve to read more around it."""
+    to filings_markdown_retrieve to read more around it. `query` is a SUBSTRING, at most
+    200 characters -- search a distinctive phrase, not a whole passage."""
     try:
         _require_auth_context()
         if not isinstance(filing_id, int) or filing_id <= 0:
@@ -5028,6 +5040,13 @@ async def filings_markdown_search(
         if not query or not query.strip():
             raise ToolInputError("query must be a non-empty string")
         raw = query.strip()
+        if len(raw) > _MAX_QUERY_CHARS:
+            raise ToolInputError(
+                f"query must be at most {_MAX_QUERY_CHARS} characters "
+                f"(got {len(raw)}). This is a substring search, so a passage "
+                "that long will not match; search a distinctive phrase from "
+                "it instead."
+            )
         try:
             cap = max(1, min(int(max_hits), 10))
         except (TypeError, ValueError):

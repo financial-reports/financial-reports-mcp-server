@@ -264,3 +264,89 @@ def test_candidate_order_is_TYPED_FIRST_not_bare_first(mcp_module) -> None:
     )
     # Non-numeric is untouched: one candidate, no second request.
     assert mcp_module._md_candidates("going concern") == ["going concern"]
+
+
+# --- The query-length bound (SPECHT S2 on PR #173, 3/3 passes) ----------------
+#
+# Before #166 the scan was LOCAL, so `query` had no effective length limit. Now
+# `q` crosses the wire into web's parse_search(), which raises ValidationError
+# -> 400 above MAX_QUERY_CHARS = 200. So an over-long query went from a local
+# no-op to an upstream error after a paid round trip.
+#
+# ⭐ WHY THE REVIEWER'S CITED EVIDENCE WAS WRONG AND THE FINDING STILL REAL:
+# it attributed the limit to `scripts/openapi.snapshot.json`, where `q` is a
+# bare {"type": "string"} with no maxLength. The bound lives in the SERVER, in
+# the other repo, and is invisible to the schema — so checking the snapshot
+# first (as I did) refutes the warrant while the defect stands. The number was
+# read from filings/markdown_window.py:27, not from the review.
+#
+# Rejected fix: keep a local-scan path for long queries. That reinstates the
+# 10 MB download, the byte cap and the truncation hedge — i.e. un-does the PR
+# for exactly the queries least likely to match anything, since a 200+ char
+# exact SUBSTRING match is near-hopeless by construction.
+
+
+@pytest.mark.asyncio
+async def test_an_over_long_query_is_refused_LOCALLY_and_never_hits_the_api(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """A negative control on the wire, which is the whole point.
+
+    Asserting only that it raises would pass just as well if the tool sent the
+    query, got a 400 and re-raised it — the round trip is the regression, so the
+    call count is the assertion that can see it."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    calls = {"n": 0}
+
+    def _count(request):
+        calls["n"] += 1
+        return httpx.Response(200, json={
+            "filing_id": 1, "query": "x", "total_chars": 10,
+            "total_hits": 1, "hits": [_hit(0, "x")],
+        })
+
+    respx_router.get(f"{TEST_API_BASE}{SEARCH}").mock(side_effect=_count)
+    too_long = "a" * (mcp_module._MAX_QUERY_CHARS + 1)
+    out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query=too_long)
+    assert calls["n"] == 0, "an over-long query was sent to the API anyway"
+    assert "200 characters" in out and "201" in out
+
+
+@pytest.mark.asyncio
+async def test_a_query_at_exactly_the_limit_is_still_sent(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """The boundary, in the direction a too-eager guard would break.
+
+    `> _MAX_QUERY_CHARS` and `>=` differ only here, and only this test fails if
+    the guard is off by one — mirroring the server's own `len(query) > 200`."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    sent = []
+
+    def _capture(request):
+        sent.append(dict(request.url.params))
+        return httpx.Response(200, json={
+            "filing_id": 1, "query": "a", "total_chars": 10,
+            "total_hits": 1, "hits": [_hit(0, "aaa")],
+        })
+
+    respx_router.get(f"{TEST_API_BASE}{SEARCH}").mock(side_effect=_capture)
+    at_limit = "a" * mcp_module._MAX_QUERY_CHARS
+    await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query=at_limit)
+    assert len(sent) == 1, "a query at exactly the limit was refused"
+    assert sent[0]["q"] == at_limit
+
+
+def test_the_limit_mirrors_the_servers_and_is_stated_in_the_contract(mcp_module) -> None:
+    """Two halves, because the constant alone is not a contract.
+
+    An LLM only learns the bound from the tool DESCRIPTION; a guard the caller
+    cannot see turns every long query into a wasted turn. And the value mirrors
+    a server constant the OpenAPI schema does not carry, so nothing else in
+    this repo would notice it drifting."""
+    assert mcp_module._MAX_QUERY_CHARS == 200, (
+        "mirrors web filings/markdown_window.py MAX_QUERY_CHARS"
+    )
+    doc = _tool(mcp_module, "filings_markdown_search").__doc__
+    assert "200 characters" in doc, "the cap is enforced but not disclosed to the caller"
+    assert "SUBSTRING" in doc
