@@ -104,6 +104,39 @@ _PRUNED_EXCLUDE = {
     # generic tool template would fail on every call.
     "agent_key_claim",
     "filings_document_retrieve",
+    # Added with the 2026-10-30 refresh (#154). Three corporate-actions /
+    # segment endpoints, all three **40 credits per request** — joint most
+    # expensive we have, level with companies_financials_retrieve — and all
+    # three carrying "Experimental: the response may change without an API
+    # version bump" in their own descriptions.
+    #
+    # The decisive argument is an ASYMMETRY, not the cost: withholding a tool
+    # is cheap to reverse, shipping one is not. Clients build on what the
+    # default surface shows them, so putting an endpoint that may change shape
+    # without a version bump into the curated set exports that instability to
+    # every client — and `quota_exhausted` is already ~90% of all upstream
+    # errors on this surface, so a 40-credit call a model has no reason to
+    # prefer lands on the sorest spot we have. Each also has its own reason:
+    #
+    #   companies_segments_retrieve — coverage is only where segment notes are
+    #     XBRL-tagged (US, JP, KR, CL, IN and a few European filers), so on most
+    #     of the corpus it returns nothing and teaches the model to distrust it.
+    #   companies_splits_retrieve — an ADJUSTMENT PRIMITIVE rather than an
+    #     answer. companies_dividends_retrieve already returns `split_adjusted`
+    #     computed from exactly these splits, so a model wanting adjusted
+    #     amounts gets them without this call. Same "spend context to re-fetch
+    #     what another call already returns" ground as companies_merges_retrieve.
+    #   companies_dividends_retrieve — the genuinely arguable one, and excluded
+    #     on the experimental ground ALONE. It is real new capability with no
+    #     inline equivalent on the Company object, and dividend questions are
+    #     ordinary in this domain. It is a "not yet", not a "never".
+    #
+    # ⇒ REVISIT TRIGGER, all three: when the endpoint drops "Experimental" from
+    # its description. `MCP_FULL_SURFACE=1` emits all three today, so nothing is
+    # lost for a caller who asks for them deliberately.
+    "companies_segments_retrieve",
+    "companies_splits_retrieve",
+    "companies_dividends_retrieve",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 
@@ -2932,6 +2965,36 @@ _UUID_RE = re.compile(
 _GENERIC_PATH_RE = re.compile(r"^[A-Za-z0-9_.~:@!*'()+,;=$&%-]{1,128}$")
 
 
+
+def _validate_csv_enum(value, allowed, name: str):
+    """Validate a comma-separated list whose members come from a fixed vocabulary.
+
+    The schema's `enum` for these params lists the legal MEMBERS, not the legal
+    whole values, so the generator emits `str` rather than Literal[...] — see
+    _CSV_ENUM_PARAMS. Widening the type must not stop validating: an unknown
+    member is caught here, with the vocabulary in the message, rather than
+    spent on an upstream round-trip that returns a bare 400.
+
+    Returns the value re-joined without surrounding whitespace so the upstream
+    sees a canonical form; None passes through so an omitted param stays omitted.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ToolInputError(f"{name} must be a comma-separated string")
+    members = [m.strip() for m in value.split(",")]
+    # An empty member means a stray or doubled comma. Dropping it silently would
+    # accept "a,,b" and "a,b," as if they were typed correctly, which hides a
+    # malformed call rather than reporting it.
+    bad = [m for m in members if m not in allowed]
+    if bad:
+        raise ToolInputError(
+            f"{name}: unknown value(s) {', '.join(repr(b) for b in bad)}. "
+            f"Comma-separated, from: {', '.join(allowed)}"
+        )
+    return ",".join(members)
+
+
 def _validate_path_param(name: str, value: Any) -> str:
     """Coerce + validate a path-param value before URL interpolation.
 
@@ -4112,6 +4175,16 @@ async def {{ func_name }}(
             "{{ param.original_name }}": {{ param.name }},
             {%- endfor %}
         }
+        # Comma-separated member vocabularies (see _CSV_ENUM_PARAMS): each
+        # member is validated and the CANONICALISED return value is what goes
+        # on the wire, so a widened type does not mean an unvalidated one.
+        {%- for param in params if param.is_query and param.csv_enum %}
+        query_params["{{ param.original_name }}"] = _validate_csv_enum(
+            {{ param.name }},
+            ({% for v in param.csv_enum %}"{{ v }}", {% endfor %}),
+            "{{ param.original_name }}",
+        )
+        {%- endfor %}
         # DRF paginates from 1. A zero/negative page_size took an unhandled
         # path and surfaced a FastMCP-internal serialization message
         # ("structured_content must be a dict or None. Got list: []") to the
@@ -4375,6 +4448,16 @@ async def {{ func_name }}(
             "{{ param.original_name }}": {{ param.name }},
             {%- endfor %}
         }
+        # Comma-separated member vocabularies (see _CSV_ENUM_PARAMS): each
+        # member is validated and the CANONICALISED return value is what goes
+        # on the wire, so a widened type does not mean an unvalidated one.
+        {%- for param in params if param.is_query and param.csv_enum %}
+        query_params["{{ param.original_name }}"] = _validate_csv_enum(
+            {{ param.name }},
+            ({% for v in param.csv_enum %}"{{ v }}", {% endfor %}),
+            "{{ param.original_name }}",
+        )
+        {%- endfor %}
         # DRF paginates from 1. A zero/negative page_size took an unhandled
         # path and surfaced a FastMCP-internal serialization message
         # ("structured_content must be a dict or None. Got list: []") to the
@@ -5815,12 +5898,160 @@ _MAX_PARAM_DESCRIPTION = 320
 # `type`/`types` (83 400s) where `source_filing_type` belongs, invented KPI
 # codes in `line_items` (165), and period names like `Q3` passed as a type
 # (web#4185 redirects those to `fiscal_period`). Widen it here.
+# ⚠ AN ALLOWLIST, so a new upstream parameter arrives with its description
+# SILENTLY DISCARDED — the same denylist/allowlist asymmetry as _PRUNED_EXCLUDE,
+# pointing the other way: there, forgetting an entry EXPOSES a tool; here, it
+# HIDES guidance. It is an allowlist on purpose (every description costs tokens
+# on every tools/list for every client), so the cost of the design is that each
+# refresh must ask which new params need their text.
+# `cursor` and `include` added with the #154 refresh (#170): `cursor` is
+# unusable without its text — the first page needs an EMPTY `cursor=`, which no
+# model will guess — and `include` became comma-separated in the same refresh.
 _DESCRIBED_PARAMS = frozenset(
-    {"type", "types", "source_filing_type", "line_items", "fiscal_period"}
+    {"type", "types", "source_filing_type", "line_items", "fiscal_period",
+     "cursor", "include", "primary_annual_report"}
 )
 
+# Params whose schema `enum` lists the legal MEMBERS of a comma-separated list
+# rather than the legal whole values. Emitting Literal[...] for these rejects
+# the documented usage inside MCP validation, before the request can reach the
+# API that would accept it — and a client cannot work around a type that will
+# not serialise. `include` on companies_financials_retrieve held exactly ONE
+# enum value until the #154 refresh, which is why a Literal was right until it
+# suddenly was not.
+_CSV_ENUM_PARAMS = frozenset({"include"})
 
-def describe_param(py_type: str, description, name: str = "") -> str:
+# ⛔ `_MAX_PARAM_DESCRIPTION` TRUNCATES FROM THE END AND HAS NO IDEA WHAT IT IS
+# CUTTING. Twice now the operative fact was the LAST thing in an upstream
+# description, so capping it dropped exactly the part that prevents a failing or
+# incomplete call (#170 round 2):
+#   include               — 1388 chars; the cap lands mid-`preliminary`, so three
+#                           of the five members were undiscoverable. Round 1 had
+#                           just removed the enum, which was the only other way to
+#                           learn them.
+#   primary_annual_report — 562 chars ending in "otherwise returns 400"; the cap
+#                           eats the condition that stops the 400.
+# ⇒ So anything load-bearing is moved to the FRONT, where the cap cannot reach it.
+# A lead for a _CSV_ENUM_PARAMS member list is DERIVED from the schema enum and
+# cannot drift. A lead written as prose can, which is why
+# test_the_hand_written_lead_still_matches_upstream pins its claim against the
+# snapshot's own text rather than trusting it to stay true.
+# ⛔ ROUND 2 FRONT-LOADED THESE BY HAND AND ROUND 3 FOUND THE NEXT TWO. Measured
+# before fixing: **5 operative sentences across 3 parameters, 0 inside the cap** —
+# `include`'s "Not served with `as_known_at`" (twice), `cursor`'s "Adding `page`,
+# or changing `ordering` mid-walk, returns 400 `invalid_cursor`" and its 503
+# timeout note, plus `primary_annual_report`'s 400 condition. Hand-picking caught
+# 1 of 5.
+# ⇒ A FIXED CAP PLUS A HUMAN CHOOSING WHAT MATTERS IS A RACE THE HUMAN LOSES,
+# because upstream keeps writing and the cap keeps cutting from the end. So the
+# operative sentences are DERIVED by a rule instead of listed: no judgement, no
+# hand-written text to drift from the schema, and a newly-written failure rule is
+# picked up for free the next time the snapshot refreshes.
+# The rule is deliberately narrow — a hard HTTP failure or a stated
+# incompatibility — because a loose one ("must", "should") would front-load half
+# the prose and push the value lists back out, which is the control test.
+_OPERATIVE_RE = re.compile(r"(?:\b4\d\d\b|\b503\b|Not served with)")
+# Chars of the schema's OWN prose kept after the derived rules. The opening
+# sentences are where the "what do I actually send" instruction lives, and for
+# `cursor` that instruction is load-bearing: send an EMPTY cursor for the first
+# page, then follow `next`. A client that misses it gets ordinary offset
+# pagination and cannot tell an incomplete walk from a complete one.
+#
+# ⛔ THIS WAS DELETED IN ROUND 4 AND THE REASONING WAS WRONG. Three mutations
+# against it survived, and I concluded the widening was UNNEEDED. What those
+# mutations actually established is that it was UNTESTED — my tests then
+# asserted the failure rules survived and said nothing about the instruction.
+# Round 5 found the case they could not see: rules (218) + the first-page
+# instruction (108) = 326 against a 320 cap, over by six characters.
+# ⇒ "No test depends on this" and "nothing needs this" are different claims,
+# and treating the first as the second is the empty-result-is-not-absence
+# error wearing a mutation-testing hat.
+_PROSE_HEAD_CHARS = 180
+# How much of the cap the derived rules may take before the value list is at
+# risk. Rules first within this share, then the schema's own prose.
+
+
+
+def _operative_sentences(description: str, members=None) -> list:
+    """Sentences stating a hard failure or an incompatibility, in document order.
+
+    These are the facts a caller cannot discover by trying: a 4xx/503 rule, or a
+    combination the API refuses to serve. Everything else in a description is
+    explanatory and survives being cut.
+    """
+    sentences = re.split(r"(?<=\.)\s+", " ".join(description.split()))
+    seen, out, subject, grouped = set(), [], None, {}
+    for sentence in sentences:
+        text = sentence.strip()
+        if not text:
+            continue
+        # Track the last backticked identifier seen. An operative sentence is
+        # often a FRAGMENT whose subject is the value named in the sentence
+        # before it ("`split_adjusted` adds … . Not served with `as_known_at`.").
+        # Lifting the fragment alone strips that subject — and because upstream
+        # repeats the identical fragment under two different values, dedup then
+        # collapses them into ONE rule with no antecedent, which reads as
+        # applying to every value. Worse than the gap it closed: it would steer
+        # a caller off `as_known_at` entirely on a 40-credit call.
+        if _OPERATIVE_RE.search(text):
+            # A fragment is one that does not OPEN with a backticked identifier.
+            # Testing "contains a backticked token" is the wrong question and was
+            # the first version of this: "Not served with `as_known_at`." carries
+            # one, but as the OBJECT — the subject is in the sentence before it.
+            # ⛔ BIND A SUBJECT ONLY WHEN THE SCHEMA DECLARES IT ONE. Round 3
+            # bound a fragment to the last identifier that opened a sentence,
+            # which is right for a description written one paragraph per enum
+            # member (`include`) and WRONG for a single-subject description that
+            # merely mentions other names: `cursor` emitted
+            # "`ordering`: … returns 400", attributing its own failure rule to a
+            # different parameter. MIS-grounded is worse than un-grounded — round
+            # 3 fixed a vague rule by making a false one. So the test is a lookup
+            # against this parameter's own enum, not a guess about prose.
+            has_subject = re.match(r"`[a-z_]+`", text) is not None
+            bindable = subject is not None and members is not None and (
+                subject.strip("`") in members
+            )
+            if has_subject or not bindable:
+                if text not in seen:
+                    seen.add(text)
+                    out.append(text)
+            else:
+                # Upstream states the SAME rule once per value it binds to, so
+                # group by predicate and list the subjects: two 48-char rules
+                # become one 56-char rule naming both, and the second no longer
+                # loses a race with the budget against the value list.
+                grouped.setdefault(text, []).append(subject)
+        leading = re.match(r"`([a-z_]+)`", text)
+        if leading:
+            subject = f"`{leading.group(1)}`"
+    for predicate, subjects in grouped.items():
+        out.append(f"{', '.join(subjects)}: {predicate}")
+    return out
+
+
+def _param_lead(name: str, csv_enum=None, description: str = "") -> str:
+    """The part of a parameter's guidance that must survive the length cap.
+
+    Two sources, both DERIVED from the schema so neither can drift from it:
+    the member list of a comma-separated vocabulary, and any sentence stating a
+    hard failure or an incompatibility. Returns "" when there is nothing to
+    protect.
+    """
+    parts = []
+    if csv_enum:
+        parts.append(f"One or more of: {', '.join(csv_enum)}, comma-separated.")
+    # No budget race: every operative sentence is kept, and the CAP is widened to
+    # fit them (see _param_cap). Round 3 budgeted them against a fixed share and
+    # silently dropped `cursor`'s 151-char 503 rule — including the RECOVERY, the
+    # only actionable half — while the comment above claimed it was protected.
+    # Ever-cleverer extraction kept acquiring new failure modes; paying a few
+    # tokens for the rules that stop a failing call is the cheaper trade.
+    parts.extend(_operative_sentences(description, members=csv_enum))
+    return (" ".join(parts) + " ") if parts else ""
+
+
+
+def describe_param(py_type: str, description, name: str = "", csv_enum=None) -> str:
     """Wrap a param type in Annotated[..., Field(description=...)] (#132).
 
     The generator used to emit bare `type: str | None`, so the parameter carried
@@ -5832,8 +6063,21 @@ def describe_param(py_type: str, description, name: str = "") -> str:
     text = " ".join(description.split())
     if not text:
         return py_type
-    if len(text) > _MAX_PARAM_DESCRIPTION:
-        text = text[: _MAX_PARAM_DESCRIPTION - 1].rstrip() + "…"
+    # The lead goes IN FRONT of the schema text and is counted inside the cap, so
+    # the budget is unchanged and the truncation can only eat upstream prose.
+    lead = _param_lead(name, csv_enum, text)
+    # A parameter carrying derived rules keeps room for them AND for the head of
+    # the schema's own prose; everything else lands on the flat cap for free,
+    # since an empty lead makes the max the base cap. No `if lead` guard: it was
+    # here and a mutation removing it survived — then arithmetic showed it could
+    # never change an outcome, so it was dead code rather than an untested
+    # branch. A surviving mutation on an INERT guard is not a test gap, and
+    # telling those two apart is what round 4 got backwards in the other
+    # direction.
+    cap = max(_MAX_PARAM_DESCRIPTION, len(lead) + _PROSE_HEAD_CHARS)
+    text = lead + text
+    if len(text) > cap:
+        text = text[: cap - 1].rstrip() + "…"
     return f"Annotated[{py_type}, Field(description={text!r})]"
 
 
@@ -6028,12 +6272,16 @@ def extract_query_params(operation: dict) -> list:
             continue
         name = param["name"]
         param_schema = param.get("schema", {})
+        schema_enum = param_schema.get("enum")
+        # A member vocabulary is not a value vocabulary: pass enum=None so the
+        # type stays `str`, and validate each member at call time instead.
+        csv_enum = list(schema_enum) if (name in _CSV_ENUM_PARAMS and schema_enum) else None
         py_type, default_val = get_python_type(
             param_schema.get("type"),
             param_schema.get("format"),
             param.get("required", False),
             param_schema.get("default"),
-            enum=param_schema.get("enum"),
+            enum=None if csv_enum else schema_enum,
             items_type=(param_schema.get("items") or {}).get("type"),
         )
         params.append({
@@ -6043,11 +6291,13 @@ def extract_query_params(operation: dict) -> list:
                 py_type,
                 param.get("description") or param_schema.get("description"),
                 name,
+                csv_enum=csv_enum,
             ),
             "default_val": default_val,
             "is_path": False,
             "is_query": True,
             "is_body": False,
+            "csv_enum": csv_enum,
         })
     return params
 

@@ -11,12 +11,24 @@ import pytest
 
 def test_pruned_default_surface(mcp_module) -> None:
     """Cold reference / ISIC hierarchy / webhooks / watchlist tools are dropped
-    from the default surface; the core tools stay."""
+    from the default surface; the core tools stay.
+
+    The corporate-actions trio is here because `_PRUNED_EXCLUDE` is a DENYLIST:
+    an upstream endpoint joins the LLM-facing surface the moment the snapshot is
+    refreshed unless something stops it. Before #154 nothing asserted the newer
+    entries, so deleting one would have silently promoted a 40-credit
+    experimental tool and no test would have said so."""
     tools = mcp_module.mcp._tool_manager._tools
     for gone in (
         "countries_list", "languages_list", "filings_history_retrieve",
         "isic_sections_list", "isic_classes_list",
         "webhooks_list", "watchlist_retrieve",
+        # #154, 2026-10-30: 40 credits each and all three self-described
+        # "Experimental: the response may change without an API version bump".
+        "companies_segments_retrieve", "companies_splits_retrieve",
+        "companies_dividends_retrieve",
+        # #149/#156 entries, likewise previously unasserted.
+        "agent_key_claim", "agent_signup", "filings_document_retrieve",
     ):
         assert gone not in tools, f"{gone} should be pruned from the default surface"
     for kept in (
