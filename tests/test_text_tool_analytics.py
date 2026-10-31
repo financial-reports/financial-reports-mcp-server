@@ -212,9 +212,22 @@ async def test_markdown_search_hit_count_reaches_analytics_through_real_middlewa
     from fastmcp import Client
 
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    doc = "Intro. Total revenue was 10. Costs. Total Revenue rose to 12. End."
-    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
-        return_value=httpx.Response(200, text=doc)
+    # #166: the tool calls the SEARCH endpoint, so mocking /markdown/ would
+    # leave the real route unmocked and the tool would error — which this test
+    # would have reported as status != "ok" rather than as a wiring mistake.
+    import json as _json
+
+    doc_chars = 66
+    _hits = (
+        [{"offset": 7, "context": "Total revenue was 10."},
+         {"offset": 36, "context": "Total Revenue rose to 12."}]
+        if expected_count else []
+    )
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/search/").mock(
+        return_value=httpx.Response(200, text=_json.dumps({
+            "filing_id": 7, "query": query, "total_chars": doc_chars,
+            "total_hits": len(_hits), "hits": _hits,
+        }))
     )
     captured: list[dict] = []
     monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))

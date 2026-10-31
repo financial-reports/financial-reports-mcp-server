@@ -40,6 +40,29 @@ def _auth_as(mcp_module, monkeypatch, fake_access_token):
     monkeypatch.setattr(mcp_module, "get_access_token", lambda: at)
 
 
+def _mock_search(respx_router, fid, *, hits, total_hits=None, total_chars=1000, status=200):
+    """Mock the SERVER-SIDE search endpoint (#166).
+
+    `filings_markdown_search` no longer downloads `/markdown/`, so mocking that
+    route leaves the search route unmocked — which makes the tool ERROR. That
+    matters for any test asserting an ABSENCE: an erroring tool satisfies
+    "X not in out" for free. Every absence assertion below is therefore paired
+    with a positive one proving the tool actually ran.
+    """
+    import json as _json
+
+    body = {
+        "filing_id": fid,
+        "query": "q",
+        "total_chars": total_chars,
+        "total_hits": total_hits if total_hits is not None else len(hits),
+        "hits": [{"offset": o, "context": c} for o, c in hits],
+    }
+    respx_router.get(f"{TEST_API_BASE}/filings/{fid}/markdown/search/").mock(
+        return_value=httpx.Response(status, text=_json.dumps(body))
+    )
+
+
 def _mock_md(respx_router, fid, text=DOC, status=200):
     respx_router.get(f"{TEST_API_BASE}/filings/{fid}/markdown/").mock(
         return_value=httpx.Response(status, text=text)
@@ -336,13 +359,16 @@ async def test_upstream_status_is_reported_not_swallowed(
 async def test_single_tool_announces_the_hit_cap(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
+    """Re-pointed for #166: the count is now EXACT. Scanning cap+1 could only say
+    "more than cap"; the endpoint returns total_hits over the whole document, so
+    the notice says how many were hidden."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    _mock_md(respx_router, 1, "revenue " * 6)
+    _mock_search(respx_router, 1, hits=[(i, f"revenue {i}") for i in (0, 8, 16)], total_hits=6)
     out = await _tool(mcp_module, "filings_markdown_search")(
         filing_id=1, query="revenue", max_hits=3
     )
-    assert "MORE MATCHES EXIST" in out
     assert "3 match(es)" in out
+    assert "hit cap reached" in out and "6 match(es) exist in total" in out
 
 
 @pytest.mark.asyncio
@@ -352,26 +378,41 @@ async def test_single_tool_exactly_at_cap_is_not_flagged(
     """Control: without this the fix marks every capped result uncertain and the
     signal carries no information."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    _mock_md(respx_router, 1, "revenue " * 3)
+    _mock_search(respx_router, 1, hits=[(i, f"revenue {i}") for i in (0, 8, 16)], total_hits=3)
     out = await _tool(mcp_module, "filings_markdown_search")(
         filing_id=1, query="revenue", max_hits=3
     )
-    assert "MORE MATCHES EXIST" not in out
+    # ⚠ POSITIVE GUARD FIRST. This test asserts an ABSENCE, and when #166
+    # switched the tool to the search endpoint this file still mocked
+    # `/markdown/` — so the tool returned "Error calling …" and the assertion
+    # passed on an error string. It stayed green and meant nothing. An absence
+    # assertion needs proof the subject ran.
+    assert "3 match(es)" in out, f"the tool did not run: {out!r}"
+    assert "hit cap reached" not in out
 
 
 @pytest.mark.asyncio
-async def test_single_tool_truncated_miss_is_unknown_not_absent(
+async def test_the_truncated_miss_CANNOT_HAPPEN_any_more(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
-    """A document cut at the size cap was only partly searched. Reporting a bare
-    'No match' turns an unread tail into a confirmed absence."""
+    """RETIRED AND REPLACED, not re-pointed — the condition it guarded is gone.
+
+    It asserted that a miss in a document cut at `_MAX_FILING_BYTES` reports
+    TRUNCATED and unknown rather than a bare "No match". #166 moved the match
+    server-side, so the client never truncates and the whole document is always
+    searched. ⇒ The old assertion is unsatisfiable by correct code, and keeping
+    it re-pointed would have meant inventing a truncation path to keep a test.
+
+    So this asserts the STRONGER property that replaced it: the tool no longer
+    has a truncation story to tell, and says how much it searched."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    monkeypatch.setattr(mcp_module, "_MAX_FILING_BYTES", 40)
-    _mock_md(respx_router, 1, ("x" * 400) + " total revenue was 19,409.")
+    _mock_search(respx_router, 1, hits=[], total_hits=0, total_chars=480000)
     out = await _tool(mcp_module, "filings_markdown_search")(
         filing_id=1, query="total revenue"
     )
-    assert "TRUNCATED" in out and "unknown" in out.lower()
+    assert "No match for" in out, f"the tool did not run: {out!r}"
+    assert "truncat" not in out.lower() and "unknown" not in out.lower()
+    assert "480000" in out, "the searched size is not reported"
 
 
 @pytest.mark.asyncio
@@ -379,7 +420,7 @@ async def test_single_tool_untruncated_miss_stays_definite(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    _mock_md(respx_router, 1, OTHER)
+    _mock_search(respx_router, 1, hits=[], total_hits=0, total_chars=len(OTHER))
     out = await _tool(mcp_module, "filings_markdown_search")(
         filing_id=1, query="total revenue"
     )
@@ -1116,8 +1157,9 @@ async def test_the_single_filing_tool_bounds_its_echo_too(
     single = _tool(mcp_module, "filings_markdown_search")
 
     # (a) the HIT line — the one R2 showed was uncovered.
+    # Mocks the SEARCH endpoint since #166: the single tool no longer downloads.
     phrase = "material adverse change in the business " * 8   # 320 chars
-    _mock_md(respx_router, 1, f"Intro. {phrase} Tail.")
+    _mock_search(respx_router, 1, hits=[(7, f"Intro. {phrase} Tail.")], total_hits=1)
     hit = await single(filing_id=1, query=phrase)
     head = hit.splitlines()[0]
     assert "match(es) for" in head
@@ -1127,18 +1169,18 @@ async def test_the_single_filing_tool_bounds_its_echo_too(
     # on correct code. The echo is the only thing under test here.
     assert phrase not in head, "the full query was echoed back on the hit line"
 
-    # (b) the untruncated NO-MATCH line.
-    _mock_md(respx_router, 2, OTHER)
+    # (b) the NO-MATCH line.
+    _mock_search(respx_router, 2, hits=[], total_hits=0, total_chars=len(OTHER))
     miss = await single(filing_id=2, query=long_q)
     assert "truncated for display" in miss
     assert "y" * 1_000 not in miss, "the full query was echoed back on the miss line"
 
-    # (c) the TRUNCATED no-match line, which carries its own echo.
-    monkeypatch.setattr(mcp_module, "_MAX_FILING_BYTES", 40)
-    _mock_md(respx_router, 3, "x" * 400)
-    cut = await single(filing_id=3, query=long_q)
-    assert "truncated for display" in cut
-    assert "y" * 1_000 not in cut, "the full query was echoed back on the cut-miss line"
+    # (c) ⛔ THE THIRD ECHO SITE IS GONE, not untested. It lived on the
+    # "document was TRUNCATED at the size cap" miss line, which #166 deleted
+    # because the client never truncates now. Two echo sites remain, both
+    # covered above. Recorded rather than silently dropped: a test that loses
+    # a case to a deletion should say which case and why, or the next reader
+    # cannot tell coverage from omission.
 
 
 @pytest.mark.asyncio
