@@ -185,3 +185,93 @@ def test_guide_warns_that_def_14a_is_a_name_collision(mcp_module) -> None:
     guide = mcp_module._resource_filing_types.fn()
     assert "PSI" in guide
     assert "collision" in guide.lower()
+
+
+def test_markdown_search_routes_line_items_to_the_structured_path(mcp_module) -> None:
+    """#167: the tool's own description told the model to use document search for
+    "a specific figure, line item, or section (e.g. query='total revenue')" — and it
+    obeyed. 267 of 559 users who call it have never once called
+    companies_financials_retrieve, and 80% of those never have since telemetry began.
+    Not reliability, not coverage, not price: the remaining explanation was our copy."""
+    tool = mcp_module.mcp._tool_manager._tools["filings_markdown_search"]
+    d = tool.description or ""
+    assert "companies_financials_retrieve" in d, "the structured path is not named"
+    assert "total revenue" not in d, "the line-item example is still here"
+
+
+def test_markdown_search_keeps_the_text_fallback_REQUIRED(mcp_module) -> None:
+    """cross-corpus-search's condition 1, and the thing that makes this an
+    experiment rather than a wall: when structured financials has no coverage or
+    comes back empty, the model must STILL be told to search the document. We are
+    measuring which path it routes to, so the second path has to stay open — and an
+    absent structured value is not an absent fact."""
+    d = mcp_module.mcp._tool_manager._tools["filings_markdown_search"].description or ""
+    low = d.lower()
+    assert "empty" in low and ("come back" in low or "fall back" in low), (
+        f"the fallback is not stated as required: {d!r}"
+    )
+
+
+def test_markdown_search_example_is_single_filing_shaped(mcp_module) -> None:
+    """cross-corpus-search's condition 2: the example must be a lookup INSIDE one
+    known filing, not a 'which filings mention X' discovery query — discovery stays
+    reserved for the cross-corpus tool, whose demand they are separately measuring."""
+    d = mcp_module.mcp._tool_manager._tools["filings_markdown_search"].description or ""
+    assert "going concern" in d, f"no single-filing example: {d!r}"
+    for discovery in ("which filings", "across filings", "any filing that"):
+        assert discovery not in d.lower(), f"discovery-shaped example leaked in: {discovery}"
+
+
+def test_batch_search_closes_the_same_line_item_door(mcp_module) -> None:
+    """#167's fix only closed one door. filings_markdown_search_batch takes ONE
+    query across up to 20 filings, so a line-item sweep across peers could route
+    around the new copy at 20x the cost — and the release that carries #167 also
+    carries #165, so both doors have to change together.
+
+    cross-corpus-search approved widening it and amended the PREREG to count batch
+    calls in the after window, so a migration from the single tool to this one
+    cannot read as a win."""
+    d = mcp_module.mcp._tool_manager._tools["filings_markdown_search_batch"].description or ""
+    assert "companies_financials_retrieve" in d, "the structured path is not named"
+    low = d.lower()
+    assert "empty" in low and ("come back" in low or "fall back" in low), (
+        f"the required text fallback is missing: {d!r}"
+    )
+    # Its example was already disclosure-shaped; widening must not break that.
+    assert "disclosure" in low, f"the disclosure-shaped example was lost: {d!r}"
+
+
+def test_structured_first_does_not_hijack_as_reported_questions(mcp_module) -> None:
+    """SPECHT #171, 2/3 passes, and a correctness bug in my own #167 copy.
+
+    companies_financials_retrieve selects ONE statement per fiscal year, period and
+    statement type when several filings report it, so it does NOT necessarily return
+    the statement from the filing you are searching. "What did THIS filing report"
+    followed by structured-first can therefore answer with a later restatement
+    attributed to the earlier filing — a wrong citation, not a missing one, which is
+    the worse failure.
+
+    These two tools are the filing-specific path: both take filing ids. So the
+    carve-out belongs in both."""
+    for name in ("filings_markdown_search", "filings_markdown_search_batch"):
+        d = (mcp_module.mcp._tool_manager._tools[name].description or "").lower()
+        assert "restat" in d or "particular filing" in d, (
+            f"{name} does not carve out as-reported questions: {d!r}"
+        )
+
+
+def test_the_fallback_covers_a_refusal_not_only_an_empty_result(mcp_module) -> None:
+    """The second #171 finding. My fallback enumerated its triggers — no coverage,
+    empty line item — so a structured call that is REFUSED fell outside the list,
+    and a model could report a figure unavailable while the document was readable.
+
+    ⚠ SPECHT's stated premise (Markdown is Level 2, financials Level 3) is NOT
+    verifiable from the pinned schema: `Level N` appears ZERO times for either
+    endpoint, because the #154 refresh replaced access-level text with `Cost:`.
+    Fixed on the general principle instead — ANY unanswered structured call should
+    fall back, and enumerating the reasons is what caused the gap."""
+    for name in ("filings_markdown_search", "filings_markdown_search_batch"):
+        d = (mcp_module.mcp._tool_manager._tools[name].description or "").lower()
+        assert "refus" in d or "denied" in d or "not available to your plan" in d, (
+            f"{name}'s fallback still excludes a refused call: {d!r}"
+        )
