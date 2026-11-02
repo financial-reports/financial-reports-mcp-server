@@ -47,6 +47,14 @@ TRUSTED_REGISTRABLE_DOMAINS = frozenset({
 # other. Note `::1` and not `[::1]`: urlsplit strips the brackets.
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
+# Custom schemes that dispatch to a locally registered APP handler, enumerated on
+# purpose. ⛔ The first version accepted EVERY non-http scheme on the grounds that
+# "a custom scheme needs a local handler" — true of `cursor://`, false of network
+# protocols: `ftp://attacker.example/cb` and `wss://attacker.example/cb` both
+# classified as safe (SPECHT S2, 2/3). Adding a scheme here is a review decision,
+# the same as adding a trusted domain.
+ALLOWED_CUSTOM_SCHEMES = frozenset({"cursor"})
+
 
 def classify(pattern: str) -> str:
     """``'safe:<reason>'`` or ``'UNSAFE:<reason>'``. The whole point of this file.
@@ -86,10 +94,15 @@ def classify(pattern: str) -> str:
         return f"UNSAFE:no host in {pattern!r}, so its reach is unknown"
 
     if scheme not in ("http", "https"):
-        # A custom scheme dispatches to a locally registered handler. Claiming it
-        # requires code already running on the victim's machine, which is a
-        # strictly larger compromise than this control defends against.
-        return f"safe:custom scheme {scheme!r} needs a local handler"
+        if scheme in ALLOWED_CUSTOM_SCHEMES:
+            # An app-registered scheme dispatches to a local handler. Claiming it
+            # requires code already running on the victim's machine, a strictly
+            # larger compromise than this control defends against.
+            return f"safe:app scheme {scheme!r} needs a local handler"
+        return (
+            f"UNSAFE:scheme {scheme!r} is not an enumerated app scheme — it may be a "
+            "network protocol that reaches a remote host"
+        )
 
     # A single trailing dot is the DNS root and names the SAME host, so normalise
     # it rather than rejecting it — otherwise the guard is accidentally strict and
@@ -162,6 +175,10 @@ def test_every_shipped_pattern_is_safe(mcp_module) -> None:
     (r"https://claude.ai\@evil.example/cb", "backslash userinfo separator"),
     ("//claude.ai/cb", "no scheme — a protocol-relative target inherits the page's"),
     ("https:///cb", "scheme but no host"),
+    # ⛔ SPECHT round 2: network protocols were waved through as "custom schemes".
+    ("ftp://attacker.example/cb", "FTP is a network protocol, not a local app handler"),
+    ("wss://attacker.example/cb", "WebSocket to a remote host"),
+    ("vscode://attacker.example/cb", "an app scheme we have NOT reviewed"),
 ])
 def test_the_classifier_REJECTS_the_dangerous_shapes(pattern, why) -> None:
     """⭐ The positive control, and the reason this file is not self-congratulatory.
@@ -190,19 +207,55 @@ def test_the_classifier_ACCEPTS_the_shapes_we_actually_ship(pattern) -> None:
     assert verdict.startswith("safe"), f"{pattern!r} was rejected: {verdict}"
 
 
+def _consent_args_in_generated_module() -> list:
+    """``[(provider_call_name, value)]`` for every provider construction, by AST.
+
+    ⛔ The first version asserted ``"require_authorization_consent=False" in
+    source`` — and the comment this same PR added at the allowlist CONTAINS that
+    exact string (generator line ~1016). So flipping BOTH real arguments to True
+    left it green: a check satisfied by its own documentation (SPECHT S3, both
+    phrasings). A mention is not an occurrence. Reading the call keywords from
+    the AST of the GENERATED module cannot be satisfied by a comment, and it reads
+    what actually ships rather than the template that produces it."""
+    import ast
+    import pathlib
+    gen = pathlib.Path(__file__).parent.parent / "src" / "financial_reports_mcp.py"
+    tree = ast.parse(gen.read_text(encoding="utf-8"))
+    found = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", None)
+        if name not in ("_LoggingOAuthProxy", "_LoggingAWSCognitoProvider"):
+            continue
+        val = next(
+            (kw.value.value for kw in node.keywords
+             if kw.arg == "require_authorization_consent" and isinstance(kw.value, ast.Constant)),
+            "<absent or non-literal>",
+        )
+        found.append((name, val))
+    return found
+
+
 def test_consent_is_off_so_this_control_is_LOAD_BEARING(mcp_module) -> None:
     """Ties the two together, so the next reader cannot miss why this file exists.
 
-    If FastMCP's consent screen were ever turned on, or the pin moved to >=3.2.0,
-    the allowlist would stop being the sole mitigation and this file's framing would
-    need revisiting. Until then it is, and that is checkable rather than asserted."""
-    import pathlib
-    gen = pathlib.Path(__file__).parent.parent / "scripts" / "generate_mcp_tools.py"
-    source = gen.read_text(encoding="utf-8")
-    assert "require_authorization_consent=False" in source, (
-        "consent appears to be ON now — if so, re-read this file's docstring: the "
-        "allowlist may no longer be the sole confused-deputy control"
+    If FastMCP's consent screen is turned on, or the pin moves to >=3.2.0, the
+    allowlist stops being the SOLE mitigation and this file's framing needs
+    revisiting. Until then it is — and that is now checked on the real arguments,
+    not on any text that happens to contain them."""
+    calls = _consent_args_in_generated_module()
+    assert len(calls) == 2, (
+        f"expected exactly the two provider branches, found {calls} — a new branch "
+        "needs its consent setting reviewed against this control"
     )
+    assert all(v is False for _n, v in calls), (
+        f"consent is no longer off on every branch: {calls}. If that is intended, the "
+        "allowlist may no longer be the sole confused-deputy control — revisit this "
+        "file's docstring before relaxing it"
+    )
+    import pathlib
     reqs = (pathlib.Path(__file__).parent.parent / "requirements.txt").read_text(encoding="utf-8")
     assert "fastmcp==2.14.7" in reqs, (
         "the fastmcp pin moved — if it is now >=3.2.0 the advisory is fixed upstream "
