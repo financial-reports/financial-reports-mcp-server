@@ -2,7 +2,7 @@
 
 The official FinancialFilings plugin. It connects Claude Code to the FinancialFilings MCP server, so Claude can find listed companies worldwide, read their regulatory filings as Markdown, and pull standardised financial statements, all from inside your terminal session.
 
-FinancialFilings collects annual and quarterly reports, ad-hoc disclosures, insider transactions and XBRL/ESEF financials as companies publish them with their securities regulators. A free FinancialFilings account is enough; no API key and no paid plan.
+FinancialFilings collects annual and quarterly reports, ad-hoc disclosures, insider transactions and XBRL/ESEF financials as companies publish them. A free FinancialFilings account is enough; no API key and no paid plan.
 
 ## What the plugin adds
 

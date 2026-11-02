@@ -140,7 +140,7 @@ fetch then comes back empty.
 `filings_list` rejects an unrecognised `type`/`types` code with a 400 that
 names it and, where one exists, suggests a replacement (for example
 `10-Q -> types=IR` or `source_filing_type=10-Q`). Read the suggestion and fix
-the call; an identical retry fails the same way. A regulator's own form name
+the call; an identical retry fails the same way. The source's own form name
 belongs on `source_filing_type`, not `type`.
 
 ## Output

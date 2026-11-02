@@ -33,7 +33,7 @@ Not parameters: period_type, from_date, to_date. Annual is `fiscal_period='FY'`;
 
 Returns: `{company_id, currency, sources_masked, filters, period_count, periods[]}`; each period carries `statements[]`, each statement `line_items[]` of `{code, name, statement_type, depth, parent_code, value, raw_value, scale, currency, source_page}`.
 
-Pitfall: line items are normalized across regulators but currency is per-filing. Don't aggregate currencies without conversion.
+Pitfall: line items are normalized across markets but currency is per-filing. Don't aggregate currencies without conversion.
 
 ### `companies_next_annual_report_retrieve`
 Predicted publication date of the next annual report. Useful for monitoring setup ("when's Apple's next 10-K?").
@@ -159,7 +159,7 @@ Lookups for filtering and labeling. All have `_list` and `_retrieve` variants.
 | `filing_categories_list` / `filing_categories_retrieve` | Cross-jurisdiction categories (annual_report, insider_transaction, etc.) |
 | `filing_types_list` / `filing_types_retrieve` | Jurisdiction-specific types (10-K, DEF 14A, AR-Form, etc.) |
 | `languages_list` / `languages_retrieve` | ISO-639 language codes for filings |
-| `sources_list` / `sources_retrieve` | Source regulators (the canonical list is returned by the API; treat the response as authoritative rather than hardcoding regulator names) |
+| `sources_list` / `sources_retrieve` | Filing sources, labelled generically unless your account has them unlocked. Treat the response as authoritative |
 
 Use these for **labeling**, not lookup. Don't call `countries_list` to find country IDs — `companies_list?countries=US` accepts ISO codes directly (note the plural; there is no `country` param).
 

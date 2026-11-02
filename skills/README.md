@@ -8,7 +8,7 @@ Agent Skills that pair with the [FinancialFilings MCP server](https://github.com
 
 | Name | What it does |
 |---|---|
-| [`financial-filings-research`](./financial-filings-research/SKILL.md) | Research public companies' regulatory filings, financial statements, and industry context. Workflows for company lookup, filings retrieval and summarization, multi-company financial comparison, ISIC industry screening, and filings-monitoring setup with watchlists + webhooks. |
+| [`financial-filings-research`](./financial-filings-research/SKILL.md) | Research public companies' regulatory filings, financial statements, and industry context. Workflows for company lookup, filings retrieval and summarization, multi-company financial comparison, and ISIC industry screening. |
 
 ## Format
 

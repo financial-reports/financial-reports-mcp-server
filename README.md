@@ -8,7 +8,7 @@ English | [简体中文](README.zh-CN.md)
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialFilings](https://financialfilings.com) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **17 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 55-tool surface). **Free for any FinancialFilings account.** Sourced from official regulators.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **17 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 55-tool surface). **Free for any FinancialFilings account.** Official filings, as published.
 
 ---
 
@@ -290,7 +290,7 @@ Once connected, try:
 - *"Compare net debt for Iberdrola, Engie, Enel, RWE for the latest fiscal year."*
 - *"List EU airlines that filed annual reports in the last 6 months."*
 - *"Show me insider-transaction filings at Tesla in the last 30 days."*
-- *"Alert me when any company in my watchlist files an 8-K."*
+- *"Show the latest filings from companies on my watchlist."*
 - *"What's the LEI for Volkswagen AG?"*
 
 ---
