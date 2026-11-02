@@ -33,7 +33,7 @@ def test_instructions_tell_the_model_how_to_describe_provenance(mcp_module) -> N
     """Removing the words is not enough: a model can still name the regulator
     from a filing title or its own knowledge, so the rule has to be stated."""
     text = mcp_module.mcp.instructions
-    assert "official filing authorities" in text
+    assert "official filings, as published" in text
     assert "Never name a regulator" in text
     assert "unless the user asked about that form" in text
 

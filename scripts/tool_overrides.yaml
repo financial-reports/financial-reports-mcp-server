@@ -15,7 +15,7 @@ companies_list:
   when_to_use: >
     Use as the **first step** to resolve a company name, ticker, or
     partial match to a FinancialFilings internal ID. Required before
-    calling any per-company tool (financials, filings, watchlist).
+    calling any per-company tool (financials, filings).
     CONFIRM the match — state the resolved company's full name and country
     before reporting data ("Apple" can surface "Apple Hospitality REIT").
     PEER / SCREENING LISTS: include ONLY companies whose requested data you
@@ -200,7 +200,7 @@ filing_types_list:
   when_to_use: >
     Call when the user names a form or report type that is not in the
     filing-type table in the instructions, to find its FinancialFilings code
-    before filtering `filings_list`. A regulator's own form name (10-Q, 8-K,
+    before filtering `filings_list`. The source's own form name (10-Q, 8-K,
     6-K) is not a code: it goes on `filings_list` `source_filing_type`.
 
 line_item_definitions_list:
