@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 NAMED_REGULATOR = re.compile(r"\b(SEC|ESMA|ASX|EDGAR|FCA|BaFin)\b")
+CLIENT_INSTRUCTION_CAP = 4096
 
 
 def test_instructions_name_no_regulator(mcp_module) -> None:
@@ -34,7 +35,23 @@ def test_instructions_tell_the_model_how_to_describe_provenance(mcp_module) -> N
     text = mcp_module.mcp.instructions
     assert "official filing authorities" in text
     assert "Never name a regulator" in text
-    assert "only when the user asked about that form" in text
+    assert "unless the user asked about that form" in text
+
+
+def test_key_guidance_survives_the_client_instruction_cap(mcp_module) -> None:
+    """Claude Code cuts server instructions at 4096 characters (measured
+    2026-11-02: rule text stopped at exactly that offset, mid-sentence). Text
+    past the cap never reaches the model, so what must arrive has to sit before it.
+    """
+    delivered = mcp_module.mcp.instructions[:CLIENT_INSTRUCTION_CAP]
+    assert "unless the user asked about that form" in delivered
+    for resource in (
+        "fr://guide/filing-types",
+        "fr://guide/industry-classification",
+        "fr://guide/markdown-strategy",
+    ):
+        assert resource in delivered, f"{resource} is cut off by the client cap"
+    assert "values missing from the normalised financials" in delivered
 
 
 def test_form_check_is_not_worded_as_repeating_it_to_the_user(mcp_module) -> None:
