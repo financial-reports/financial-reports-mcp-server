@@ -29,7 +29,7 @@ be explicit and reviewed rather than appended to a list nobody guards.
 """
 from __future__ import annotations
 
-import re
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -43,18 +43,47 @@ TRUSTED_REGISTRABLE_DOMAINS = frozenset({
 })
 
 # Loopback resolves on the VICTIM's machine, so a code sent there never reaches a
-# remote attacker. Plaintext http is acceptable for exactly this reason and no other.
-LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]"})
-
-_PATTERN_RE = re.compile(r"^(?P<scheme>[a-z][a-z0-9+.-]*)://(?P<host>[^/]*)(?P<path>/.*)?$")
+# remote attacker. Plaintext http is acceptable for exactly this reason and no
+# other. Note `::1` and not `[::1]`: urlsplit strips the brackets.
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
 def classify(pattern: str) -> str:
-    """``'safe:<reason>'`` or ``'UNSAFE:<reason>'``. The whole point of this file."""
-    m = _PATTERN_RE.match(pattern)
-    if not m:
-        return f"UNSAFE:unparseable, so its reach is unknown: {pattern!r}"
-    scheme, host = m.group("scheme"), m.group("host")
+    """``'safe:<reason>'`` or ``'UNSAFE:<reason>'``. The whole point of this file.
+
+    ⛔ THE FIRST VERSION HAND-ROLLED THIS WITH A REGEX AND SPECHT BROKE IT TWICE
+    (S2 + S3, 3/3 passes), which is the lesson rather than the bug:
+
+        https://claude.ai:443@evil.example/cb  -> "safe: trusted 'claude.ai'"
+        https://attacker.example?next=.claude.ai -> "safe: under trusted"
+
+    Userinfo and a query string each defeated it, because `[^/]*` for the host
+    plus `rsplit(':', 1)` is not a URL parser. **Eight adversarial shapes were
+    already controlled and both misses were shapes I had not thought of** — so the
+    remedy is NOT more cases, it is to stop hand-parsing and use a parser that was
+    validated by someone else. `PROCESS.md` Phase 3.5 §9: the hand-written
+    component is an unvalidated instrument until it is measured like a model.
+
+    `urlsplit().hostname` is that parser, and it handles every shape we ship with
+    no placeholder tricks — measured, not assumed: it strips userinfo
+    (`...@evil.example` -> `evil.example`), excludes query and fragment,
+    lowercases (so `CLAUDE.AI.attacker.example` cannot pass as trusted), strips
+    IPv6 brackets (`[::1]:*` -> `::1`), and leaves `*` intact in the host so the
+    wildcard entries still classify.
+
+    ⚠ Never touch `.port` here: `localhost:*` is not a valid port and `.port`
+    raises ValueError on it. `.hostname` is fine.
+    """
+    try:
+        parts = urlsplit(pattern)
+    except ValueError as exc:
+        return f"UNSAFE:unparseable ({exc}), so its reach is unknown"
+
+    scheme, hostname = parts.scheme, parts.hostname
+    if not scheme:
+        return "UNSAFE:no scheme — a protocol-relative target inherits the page's"
+    if not hostname:
+        return f"UNSAFE:no host in {pattern!r}, so its reach is unknown"
 
     if scheme not in ("http", "https"):
         # A custom scheme dispatches to a locally registered handler. Claiming it
@@ -62,37 +91,35 @@ def classify(pattern: str) -> str:
         # strictly larger compromise than this control defends against.
         return f"safe:custom scheme {scheme!r} needs a local handler"
 
-    hostname = host.rsplit(":", 1)[0] if not host.startswith("[") else host.split("]")[0] + "]"
+    # A single trailing dot is the DNS root and names the SAME host, so normalise
+    # it rather than rejecting it — otherwise the guard is accidentally strict and
+    # someone will "fix" it by loosening the comparison.
+    host = hostname.rstrip(".") or hostname
 
-    if hostname in LOOPBACK_HOSTS:
-        if scheme == "http":
-            return "safe:loopback, unreachable from a remote attacker"
-        return "safe:loopback"
-
+    if host in LOOPBACK_HOSTS:
+        return "safe:loopback, unreachable from a remote attacker"
     if scheme == "http":
-        return f"UNSAFE:plaintext http to non-loopback host {hostname!r}"
+        return f"UNSAFE:plaintext http to non-loopback host {host!r}"
 
-    if hostname.startswith("*."):
-        base = hostname[2:]
+    if host.startswith("*."):
+        base = host[2:]
         if base in TRUSTED_REGISTRABLE_DOMAINS:
             return f"safe:wildcard subdomain of trusted {base!r}"
         return (
             f"UNSAFE:wildcard subdomain of UNTRUSTED {base!r} — any host under it "
             "could receive an auth code"
         )
-
-    if "*" in hostname:
+    if "*" in host:
         return (
-            f"UNSAFE:wildcard spans the registrable domain in {hostname!r} — this "
+            f"UNSAFE:wildcard spans the registrable domain in {host!r} — this "
             "matches hosts nobody has vetted"
         )
 
-    if hostname in TRUSTED_REGISTRABLE_DOMAINS:
-        return f"safe:exact trusted host {hostname!r}"
-    if any(hostname.endswith("." + d) for d in TRUSTED_REGISTRABLE_DOMAINS):
-        return f"safe:exact host under trusted {hostname!r}"
-
-    return f"UNSAFE:exact but UNTRUSTED host {hostname!r}"
+    if host in TRUSTED_REGISTRABLE_DOMAINS:
+        return f"safe:exact trusted host {host!r}"
+    if any(host.endswith("." + d) for d in TRUSTED_REGISTRABLE_DOMAINS):
+        return f"safe:exact host under trusted {host!r}"
+    return f"UNSAFE:exact but UNTRUSTED host {host!r}"
 
 
 def test_every_shipped_pattern_is_safe(mcp_module) -> None:
@@ -124,6 +151,17 @@ def test_every_shipped_pattern_is_safe(mcp_module) -> None:
     ("http://evil.example/cb", "plaintext to a remote host"),
     ("https://claude.ai.attacker.example/cb", "trusted name as a PREFIX of an untrusted host"),
     ("not a url", "unparseable"),
+    # ⛔ The two SPECHT found in the hand-rolled parser (S2 + S3, 3/3 passes).
+    # Both were "safe" before. Kept FIRST in spirit: they are the reason this
+    # classifier uses urlsplit at all.
+    ("https://claude.ai:443@evil.example/cb", "USERINFO — trusted name before the @, attacker host after"),
+    ("https://attacker.example?next=.claude.ai", "QUERY STRING carrying a trusted suffix"),
+    # Implied by those two, and none of them occurred to me before the review.
+    ("https://attacker.example#.claude.ai", "FRAGMENT carrying a trusted suffix"),
+    ("https://CLAUDE.AI.attacker.example/cb", "UPPERCASE trusted prefix — case must not help"),
+    (r"https://claude.ai\@evil.example/cb", "backslash userinfo separator"),
+    ("//claude.ai/cb", "no scheme — a protocol-relative target inherits the page's"),
+    ("https:///cb", "scheme but no host"),
 ])
 def test_the_classifier_REJECTS_the_dangerous_shapes(pattern, why) -> None:
     """⭐ The positive control, and the reason this file is not self-congratulatory.
@@ -141,7 +179,9 @@ def test_the_classifier_REJECTS_the_dangerous_shapes(pattern, why) -> None:
     "https://*.claude.ai/*",
     "cursor://*",
     "http://localhost:*",
-    "http://[::1]:*",
+    "http://127.0.0.1:*",
+    "http://[::1]:*",          # urlsplit strips the brackets -> '::1'
+    "https://claude.ai./cb",   # trailing dot is the DNS root: the SAME host
 ])
 def test_the_classifier_ACCEPTS_the_shapes_we_actually_ship(pattern) -> None:
     """The other control. A classifier that rejected everything would pass the test
