@@ -106,7 +106,7 @@ def test_server_instructions_map_sec_form_names_to_codes(mcp_module) -> None:
 
 def test_filing_type_guide_carries_the_translation_table(mcp_module) -> None:
     guide = mcp_module._resource_filing_types.fn()
-    assert "SEC form names are NOT codes" in guide
+    assert "Form names are NOT codes" in guide
     for form in ("10-Q", "20-F", "Form 4", "DEF 14A", "8-K"):
         assert form in guide, f"{form} missing from the translation table"
     # 8-K has no single target: 28 codes over 180d. Guessing one is the error.
@@ -172,7 +172,7 @@ def test_both_surfaces_point_at_source_filing_type(mcp_module) -> None:
 
 def test_instructions_warn_the_code_is_broader_than_the_form(mcp_module) -> None:
     text = mcp_module.mcp.instructions
-    assert "BROADER than the SEC form" in text
+    assert "BROADER than the form" in text
     assert "92% 10-Q" in text
 
 
