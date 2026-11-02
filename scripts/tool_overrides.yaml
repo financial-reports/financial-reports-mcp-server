@@ -81,7 +81,7 @@ companies_financials_retrieve:
     reporting currency. GROUNDEDNESS (critical): report ONLY values present in
     the `periods` this call returns. If `period_count` is 0 or `periods` is
     empty, FinancialFilings has no *structured* financials for this company yet
-    (common for US/SEC issuers — structured data is currently ESEF/EU-derived and
+    (common for US issuers — structured data is currently ESEF/EU-derived and
     being expanded). Do NOT stop and do NOT estimate — FALL BACK to the filing:
     call `filings_list` for this `id` filtered with `type` (or `types`) to an
     annual report (e.g. 10-K, 20-F, or the local annual type) with
