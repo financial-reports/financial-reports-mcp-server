@@ -493,6 +493,17 @@ _MAX_FILING_BYTES = 10_000_000
 # coincidence — and a mutation that moved the batch's value broke nothing.
 _MAX_RESULT_CHARS = 150_000
 
+# MIRRORS A SERVER-SIDE VALIDATOR, so it can drift silently: web's
+# filings/markdown_window.py MAX_QUERY_CHARS, enforced in parse_search(), which
+# raises ValidationError -> 400 above it. Before #166 this tool scanned the
+# document locally and any length worked; now `q` crosses the wire, so an
+# unbounded query turns a local no-op into an upstream 400 after a round trip.
+# Validated HERE instead, so an over-long query costs nothing and the message
+# names the limit. NOT declared in the OpenAPI schema -- `q` is a bare
+# {"type": "string"} in openapi.snapshot.json -- so the snapshot cannot be the
+# source for this number and the drift job cannot see it move.
+_MAX_QUERY_CHARS = 200
+
 _CDN_BASE = (
     "https://cdn.financialreports.eu/financialreports/static/"
     "assets/favicon/new"
@@ -4902,15 +4913,30 @@ _BATCH_OMITTED_NOTICE_CHARS = 400
 
 
 def _md_candidates(raw: str) -> list:
-    """Query spellings to try, best first.
+    """Query spellings to try, THE TYPED ONE FIRST.
 
     Filings render figures with thousands separators ("19,409"), so a query of
     "19409" must also try the comma form or it misses every number in the
     document.
+
+    ⛔ TYPED-FIRST, NOT BARE-FIRST, AND THE ORDER IS LOAD-BEARING TWICE OVER.
+    This returned the bare form first whatever the user typed, so "19,409" was
+    searched as "19409".
+      1. It is wrong on its own terms: web#8990 measured that bare-first
+         returned ONE bare hit on a document holding both forms where TWO
+         literal ones existed. A user who types the separators means them.
+      2. And once the tool asks the API's search endpoint (#166) rather than
+         scanning locally, the server applies its OWN literal-first rule to the
+         `q` IT RECEIVES — so sending the bare form first would make the server
+         search bare-first and silently undo web#8990's fix. The server cannot
+         prefer a spelling it was never sent.
+    The other spelling stays as the FALLBACK, which is the point of the helper.
     """
     bare = raw.replace(",", "")
     if bare.isdigit() and len(bare) >= 4:
-        return [bare, format(int(bare), ",")]
+        comma = format(int(bare), ",")
+        # `raw` first: whichever of the two the caller actually typed.
+        return [raw, bare] if raw == comma else [raw, comma]
     return [raw]
 
 
@@ -4999,61 +5025,145 @@ async def filings_markdown_search(
     item, or a refusal for your plan. A value that is absent or unavailable there is
     not an absent fact, and the figure is usually in the document.
     Case-insensitive. Each hit shows ~440 chars of context and an offset you can pass
-    to filings_markdown_retrieve to read more around it."""
+    to filings_markdown_retrieve to read more around it. `query` is a SUBSTRING, at most
+    200 characters -- search a distinctive phrase, not a whole passage."""
     try:
         _require_auth_context()
         if not isinstance(filing_id, int) or filing_id <= 0:
             raise ToolInputError("filing_id must be a positive integer")
         if not query or not query.strip():
             raise ToolInputError("query must be a non-empty string")
-        url = f"/filings/{filing_id}/markdown/"
-        async with _api_stream_get(url) as response:
-            if response.is_error:  # 4xx/5xx only — 204/206 are not failures
-                body = await response.aread()
-                _raise_upstream_text_error(
-                    response, body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace")
-                )
-            buf = bytearray()
-            doc_truncated = False
-            async for _chunk in response.aiter_bytes():
-                if len(buf) + len(_chunk) > _MAX_FILING_BYTES:
-                    buf.extend(_chunk[: _MAX_FILING_BYTES - len(buf)])
-                    doc_truncated = True
-                    break
-                buf.extend(_chunk)
-        full_text = buf.decode("utf-8", errors="replace")
         raw = query.strip()
+        if len(raw) > _MAX_QUERY_CHARS:
+            raise ToolInputError(
+                f"query must be at most {_MAX_QUERY_CHARS} characters "
+                f"(got {len(raw)}). This is a substring search, so a passage "
+                "that long will not match; search a distinctive phrase from "
+                "it instead."
+            )
         try:
             cap = max(1, min(int(max_hits), 10))
         except (TypeError, ValueError):
             raise ToolInputError("max_hits must be an integer between 1 and 10")
-        # Scan one past the cap so we can say whether it hid anything. ~46-58% of
-        # live calls land exactly ON the cap, so reporting "N match(es)" as a total
-        # is wrong about half the time.
-        found = _md_scan_hits(full_text, raw, cap + 1)
-        more = len(found) > cap
-        hits = found[:cap]
+        # SERVER-SIDE SEARCH (#166). This used to fetch /markdown/ in FULL — up
+        # to _MAX_FILING_BYTES — and scan here, moving 10 MB to return ~440
+        # characters. The API's own endpoint does the same match (its contract:
+        # case-insensitive substring, document order, ~440 chars of context, an
+        # offset for filings_markdown_retrieve, and total_hits over the whole
+        # document), so the bytes stop crossing this hop.
+        #
+        # ⭐ AND IT RETIRES A FALSE-ABSENCE CLASS RATHER THAN RELOCATING ONE: the
+        # byte cap could cut a document, so a miss here was UNKNOWN and had to
+        # be hedged. The server reads the whole document, so a miss is now an
+        # ABSENCE and there is no truncation left to disclose.
+        #
+        # total_hits is also EXACT. Scanning cap+1 could only ever say "more
+        # than cap", and ~46-58% of live calls land exactly ON the cap.
+        #
+        # The thousands-comma fallback stays CLIENT-side because the endpoint
+        # documents no numeric normalisation: a figure renders as "19,409", so a
+        # query of "19409" must try both spellings. One request per candidate,
+        # stopping at the first that hits — free on a filing already read today,
+        # because the day-dedup keys on (user, filing) and not on the endpoint
+        # (web #5691; filing-markdown-search is LEVEL_2, same as the download).
+        payload = None
+        # Each CANDIDATE crosses the wire, not `raw` — so the length bound has to
+        # be applied here too. SPECHT S2 (2/3 phrasings) on the commit that added
+        # the input guard, and it was a defect that guard INTRODUCED: a 151-digit
+        # query is 151 chars and passes, but its thousands-comma spelling is 201
+        # and the server 400s it. Typed-first ordering guarantees `raw` is the
+        # first candidate and `raw` is already <= the bound, so filtering can
+        # never empty the list.
+        candidates = [
+            c for c in dict.fromkeys(_md_candidates(raw))
+            if len(c) <= _MAX_QUERY_CHARS
+        ]
+        for cand in candidates:
+            response = await _api_get(
+                f"/filings/{filing_id}/markdown/search/",
+                params={"q": cand, "max_hits": cap},
+            )
+            if response.is_error:  # 4xx/5xx only — 204/206 are not failures
+                _raise_upstream_text_error(
+                    response, response.text[:_MAX_ERROR_BODY]
+                )
+            payload = response.json()
+            if payload.get("hits"):
+                break
+        hits = [
+            (h.get("offset"), h.get("context") or "")
+            for h in (payload.get("hits") or [])
+        ][:cap]
+        total_hits = payload.get("total_hits")
+        total_chars = payload.get("total_chars")
         record_result_count(len(hits))
         if not hits:
-            if doc_truncated:
-                # The tail was never read, so this is UNKNOWN, not absent.
-                return (
-                    f"No match for {_echo_query(query)} in the first {len(full_text)} chars of filing "
-                    f"{filing_id} — the document was TRUNCATED at the size cap and the rest "
-                    "was NOT searched. Treat this as unknown, not as an absence."
-                )
             return (
-                f"No match for {_echo_query(query)} in filing {filing_id} ({len(full_text)} chars). "
+                f"No match for {_echo_query(query)} in filing {filing_id} "
+                f"({total_chars} chars searched, all of it). "
                 "Try a shorter or different query (e.g. a single key term), or page the "
                 "document with filings_markdown_retrieve."
             )
         suffix = ""
-        if more:
-            suffix += f" — hit cap reached, MORE MATCHES EXIST beyond these {len(hits)}"
-        if doc_truncated:
-            suffix += " (document truncated at the size cap — the tail was not searched)"
+        # ⛔ AN ASYMMETRY THIS CHANGE CREATED, so it is disclosed here rather than
+        # left for the caller to discover. The server searches the WHOLE document;
+        # filings_markdown_retrieve still streams from byte 0 and stops at
+        # _MAX_FILING_BYTES, so an offset past that cap names a passage this tool
+        # found and that tool cannot reach. Measured in prod: 1,586 filings exceed
+        # the cap, the largest at 2.49 GB. Small as a share of 53M rows — but a
+        # long filing is exactly the kind people SEARCH instead of reading, so the
+        # affected population skews toward this tool's traffic, not the average row.
+        # The real fix is to window retrieve on the API's own offset/limit params
+        # (they already exist) — a different tool, so a different PR (#175).
+        # Until then: say so, so the model is not sent to fetch nothing.
+        # ⚠ THE OFFSET IS IN CHARACTERS AND THE CAP IS IN BYTES — they are not
+        # comparable, and the first version of this disclosure compared them
+        # directly (SPECHT 3/3). web's markdown_window.search runs re.finditer
+        # over a `str`, so match.start() is a CHARACTER index; retrieve caps a
+        # bytearray at _MAX_FILING_BYTES. In 2-byte text, character 5.5M is byte
+        # 11M — past the cap, and the naive test called it reachable.
+        #
+        # ⭐ No guessing is needed: UTF-8 bounds the conversion both ways, so the
+        # three cases are EXACT rather than heuristic.
+        #   every char is >= 1 byte  =>  byte_off >= char_off
+        #       char_off >= cap            => certainly unreachable
+        #   every char is <= 4 bytes =>  byte_off <= 4 * char_off
+        #       char_off <  cap // 4       => certainly REACHABLE
+        #   in between                     => depends on this document's density
+        # Keeping the third band separate is the point: collapsing it into one
+        # caveat (the reviewer's suggestion) would warn on hits that are provably
+        # fetchable, which sends the model away from text it can read.
+        #
+        # #175 deletes all three bands by windowing retrieve on the API's own
+        # offset/limit, after which there is no byte cap in the path at all.
+        certain = [o for o, _c in hits if isinstance(o, int) and o >= _MAX_FILING_BYTES]
+        maybe = [
+            o for o, _c in hits
+            if isinstance(o, int) and _MAX_FILING_BYTES // 4 <= o < _MAX_FILING_BYTES
+        ]
+        if certain:
+            suffix += (
+                f" — NOTE: {len(certain)} of these hits are past character "
+                f"{_MAX_FILING_BYTES}, so filings_markdown_retrieve cannot reach "
+                "them yet; the context shown here is the whole passage available"
+            )
+        if maybe:
+            suffix += (
+                f" — NOTE: {len(maybe)} of these hits may be out of reach for "
+                "filings_markdown_retrieve: the offset counts CHARACTERS and that "
+                f"tool stops at {_MAX_FILING_BYTES} BYTES, which is fewer "
+                "characters in non-ASCII text. Try it; the context here is the "
+                "whole passage if it fails"
+            )
+        if isinstance(total_hits, int) and total_hits > len(hits):
+            # Exact, not "more than the cap": the server counted every match, so
+            # the caller learns HOW MANY were hidden rather than that some were.
+            suffix += (
+                f" — hit cap reached, {total_hits} match(es) exist in total, "
+                f"showing the first {len(hits)}"
+            )
         parts = [f"{len(hits)} match(es) for {_echo_query(query)} in filing {filing_id} "
-                 f"(document is {len(full_text)} chars){suffix}:"]
+                 f"(document is {total_chars} chars){suffix}:"]
         for off, span in hits:
             parts.append(f"\\n--- match near offset {off} ---\\n...{span}...")
         return "\\n".join(parts)
