@@ -55,6 +55,21 @@ LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # the same as adding a trusted domain.
 ALLOWED_CUSTOM_SCHEMES = frozenset({"cursor"})
 
+# ⛔ PARSER DIFFERENTIAL. The authority (between `//` and the next `/`) may contain
+# ONLY these characters. Not because urlsplit mis-parses the rest, but because the
+# BROWSER is what follows the redirect, and it does not parse the way Python does:
+#
+#     https://evil.example\@claude.ai/cb
+#         Python urlsplit  -> hostname 'claude.ai'      (classified SAFE)
+#         browser (WHATWG) -> hostname 'evil.example'   (where the code GOES)
+#
+# Round 1 replaced a hand-rolled parser with urlsplit as "the validated parser" —
+# validated against the wrong spec. Picking a better parser does not close this:
+# whichever one we pick, the decision is made by a different one. Restricting
+# inputs to the subset where all parsers AGREE does. Every shipped pattern fits;
+# userinfo (`@`), backslash, percent-encoding and whitespace all fall outside it.
+_AUTHORITY_ALPHABET = frozenset("abcdefghijklmnopqrstuvwxyz0123456789.-*:[]")
+
 
 def classify(pattern: str) -> str:
     """``'safe:<reason>'`` or ``'UNSAFE:<reason>'``. The whole point of this file.
@@ -72,8 +87,10 @@ def classify(pattern: str) -> str:
     validated by someone else. `PROCESS.md` Phase 3.5 §9: the hand-written
     component is an unvalidated instrument until it is measured like a model.
 
-    `urlsplit().hostname` is that parser, and it handles every shape we ship with
-    no placeholder tricks — measured, not assumed: it strips userinfo
+    `urlsplit().hostname` is that parser for the shapes we ship — measured, not
+    assumed. ⚠ NOT for every shape: SPECHT round 3 found one where it disagrees
+    with the browser (see _AUTHORITY_ALPHABET), so it is only trusted AFTER the
+    authority has been restricted to characters all parsers read the same way: it strips userinfo
     (`...@evil.example` -> `evil.example`), excludes query and fragment,
     lowercases (so `CLAUDE.AI.attacker.example` cannot pass as trusted), strips
     IPv6 brackets (`[::1]:*` -> `::1`), and leaves `*` intact in the host so the
@@ -88,6 +105,13 @@ def classify(pattern: str) -> str:
         return f"UNSAFE:unparseable ({exc}), so its reach is unknown"
 
     scheme, hostname = parts.scheme, parts.hostname
+    authority = parts.netloc.lower()
+    bad = sorted(set(authority) - _AUTHORITY_ALPHABET)
+    if bad:
+        return (
+            f"UNSAFE:authority {parts.netloc!r} contains {bad} — characters where "
+            "Python's parser and the browser's can disagree about the host"
+        )
     if not scheme:
         return "UNSAFE:no scheme — a protocol-relative target inherits the page's"
     if not hostname:
@@ -179,6 +203,13 @@ def test_every_shipped_pattern_is_safe(mcp_module) -> None:
     ("ftp://attacker.example/cb", "FTP is a network protocol, not a local app handler"),
     ("wss://attacker.example/cb", "WebSocket to a remote host"),
     ("vscode://attacker.example/cb", "an app scheme we have NOT reviewed"),
+    # ⛔ SPECHT round 3: Python reads 'claude.ai', the BROWSER reads 'evil.example'.
+    # The backslash case above (claude.ai\@evil.example) is the REVERSE direction —
+    # the one where the parsers disagree in our favour — so it never caught this.
+    (r"https://evil.example\@claude.ai/cb", "PARSER DIFFERENTIAL: browser host is evil.example"),
+    ("https://evil.example%2F@claude.ai/cb", "percent-encoded slash inside userinfo"),
+    ("https://user@claude.ai/cb", "any userinfo at all — never legitimate in a redirect pattern"),
+    ("https://claude.ai%2Eevil.example/cb", "percent-encoding in the host"),
 ])
 def test_the_classifier_REJECTS_the_dangerous_shapes(pattern, why) -> None:
     """⭐ The positive control, and the reason this file is not self-congratulatory.
