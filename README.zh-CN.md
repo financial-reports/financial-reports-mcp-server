@@ -21,7 +21,7 @@
 1. 在 [financialfilings.com](https://financialfilings.com/) **注册免费账号**。任何 FinancialFilings 用户都可以免费使用 MCP 连接器，不需要付费套餐。
 2. 在你的 MCP 客户端里**添加连接器**，具体步骤见下文[连接你的客户端](#连接你的客户端)。最常用的两种：
    - **Claude.ai / Claude Desktop**：Settings → Connectors → Add custom connector，URL 填 `https://mcp.financialfilings.com/mcp`
-   - **Claude Code**：`claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp`
+   - **Claude Code**：`claude mcp add --transport http financialfilings https://mcp.financialfilings.com/mcp`
 3. 按提示用 FinancialFilings 账号**登录**，完成。
 
 带截图的完整配置说明：[financialfilings.com/integrations/claude/](https://financialfilings.com/integrations/claude/)。中文介绍页：[financialfilings.com/zh-hans/mcp/](https://financialfilings.com/zh-hans/mcp/)。
@@ -36,6 +36,8 @@
 
 在下面找到你的客户端。如果没有列出，请使用最后的[**通用配置**](#通用配置任意-mcp-客户端)：各客户端的端点和 OAuth 流程完全相同，只是配置文件不同。
 
+如果你在更名前已用 `financialreports` 这个名称添加了服务器，无需任何改动，它会继续正常工作：这个名称只是客户端里的本地标签，服务器并不会读取它。新安装请使用 `financialfilings`。
+
 ### Claude.ai / Claude Desktop
 
 Settings → Connectors → **Add custom connector**，URL 填 `https://mcp.financialfilings.com/mcp`，按提示登录。
@@ -43,7 +45,7 @@ Settings → Connectors → **Add custom connector**，URL 填 `https://mcp.fina
 ### Claude Code
 
 ```bash
-claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp
+claude mcp add --transport http financialfilings https://mcp.financialfilings.com/mcp
 ```
 
 在会话中运行 `/mcp` 完成浏览器登录。
@@ -61,14 +63,14 @@ claude mcp add --transport http financialreports https://mcp.financialfilings.co
 Codex 使用 TOML 配置。添加到 `~/.codex/config.toml`（或项目内的 `.codex/config.toml`）：
 
 ```toml
-[mcp_servers.financialreports]
+[mcp_servers.financialfilings]
 url = "https://mcp.financialfilings.com/mcp"
 ```
 
 然后完成认证。对于支持 OAuth 的服务器，Codex 会打开浏览器登录流程：
 
 ```bash
-codex mcp login financialreports
+codex mcp login financialfilings
 ```
 
 ### Cursor
@@ -92,7 +94,7 @@ codex mcp login financialreports
 ```json
 {
   "mcpServers": {
-    "financialreports": {
+    "financialfilings": {
       "type": "remote",
       "url": "https://mcp.financialfilings.com/mcp"
     }
@@ -108,7 +110,7 @@ codex mcp login financialreports
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "financialreports": {
+    "financialfilings": {
       "type": "remote",
       "url": "https://mcp.financialfilings.com/mcp",
       "enabled": true
@@ -124,7 +126,7 @@ codex mcp login financialreports
 ```json
 {
   "mcpServers": {
-    "financialreports": { "httpUrl": "https://mcp.financialfilings.com/mcp" }
+    "financialfilings": { "httpUrl": "https://mcp.financialfilings.com/mcp" }
   }
 }
 ```
@@ -135,7 +137,7 @@ codex mcp login financialreports
 
 ```yaml
 mcp_servers:
-  financialreports:
+  financialfilings:
     url: "https://mcp.financialfilings.com/mcp"
     auth: oauth
 ```
@@ -147,7 +149,7 @@ mcp_servers:
 ```json
 {
   "mcpServers": {
-    "financialreports": {
+    "financialfilings": {
       "type": "streamable-http",
       "url": "https://mcp.financialfilings.com/mcp"
     }
@@ -167,7 +169,7 @@ mcp_servers:
 |---|---|
 | **ChatGPT / OpenAI** | Settings → Connectors，删除 **FinancialFilings**（如果在更名前就已连接，名称可能显示为旧名），然后用 `https://mcp.financialfilings.com/mcp` 重新添加并登录。 |
 | **Claude.ai / Claude Desktop** | Settings → Connectors，删除 **FinancialFilings**（如果在更名前就已连接，名称可能显示为旧名），然后重新添加并登录。 |
-| **Claude Code / Codex / Cursor / opencode** | 删除并重新添加服务器（例如先 `claude mcp remove financialreports` 再重新添加），或重新运行客户端的登录命令（`codex mcp login financialreports`）。 |
+| **Claude Code / Codex / Cursor / opencode** | 删除并重新添加服务器（例如先 `claude mcp remove financialfilings` 再重新添加），或重新运行客户端的登录命令（`codex mcp login financialfilings`）。如果是在更名前添加的，名称是 `financialreports`，请在这两条命令中改用这个名称。 |
 
 错误页面本身没有说明的两点：
 
@@ -404,7 +406,7 @@ make e2e
 ## 项目状态
 
 - **生产环境**：已上线，地址 `https://mcp.financialfilings.com/mcp`
-- **已收录于**：[Claude 连接器目录](https://claude.ai/directory/financialreports-eu)、[Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp)
+- **已收录于**：[Claude 连接器目录](https://claude.ai/directory/connectors/financialreports-eu)、[Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp)
 - **规范兼容性**：MCP 2025-11-25
 - **已测试客户端**：Claude.ai、Claude Code、Claude Desktop、Cursor、Windsurf。另外为 Codex、Kilo Code、opencode、Gemini CLI 和 Hermes 提供了配置示例（见[连接你的客户端](#连接你的客户端)）。
 
