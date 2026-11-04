@@ -34,6 +34,8 @@ This is a **remote** MCP server — Streamable HTTP with OAuth (PKCE + Dynamic C
 
 Find your client below. If it isn't listed, use the [**Generic**](#generic-any-mcp-client) block at the end — the endpoint and OAuth flow are identical everywhere; only the config file differs.
 
+Already added the server under the old name `financialreports`? Nothing to change, it keeps working: the name is a local label in your client and the server never sees it. New installs use `financialfilings`.
+
 ### Claude.ai / Claude Desktop
 
 Settings → Connectors → **Add custom connector** → URL: `https://mcp.financialfilings.com/mcp`. Sign in when prompted.
@@ -165,7 +167,7 @@ If signing in sends you to a page titled **Client Not Registered** — "The clie
 |---|---|
 | **ChatGPT / OpenAI** | Settings → Connectors → remove **FinancialFilings** (listed as **FinancialReports** if you connected before the rename) → add it back with `https://mcp.financialfilings.com/mcp` and sign in again. |
 | **Claude.ai / Claude Desktop** | Settings → Connectors → remove **FinancialFilings** (listed as **FinancialReports** if you connected before the rename) → re-add and sign in again. |
-| **Claude Code / Codex / Cursor / opencode** | Remove and re-add the server (e.g. `claude mcp remove financialreports`, then re-add), or run the client's login command again (`codex mcp login financialreports`). |
+| **Claude Code / Codex / Cursor / opencode** | Remove and re-add the server (e.g. `claude mcp remove financialfilings`, then re-add), or run the client's login command again (`codex mcp login financialfilings`). If you added it before the rename, its name is `financialreports`: use that name in both commands instead. |
 
 Two things the error page itself doesn't tell you:
 
@@ -407,7 +409,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development se
 ## Project status
 
 - **Production**: live at `https://mcp.financialfilings.com/mcp`
-- **Listed on**: [Claude connector directory](https://claude.ai/directory/financialreports-eu), [Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp)
+- **Listed on**: [Claude connector directory](https://claude.ai/directory/connectors/financialreports-eu), [Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp)
 - **Spec compliance**: MCP 2025-11-25
 - **Tested with**: Claude.ai, Claude Code, Claude Desktop, Cursor, Windsurf. Config snippets also provided for Codex, Kilo Code, opencode, Gemini CLI, and Hermes (see [Connect your client](#connect-your-client)).
 
