@@ -1,7 +1,7 @@
 {
   "name": "financialfilings",
   "displayName": "FinancialFilings",
-  "description": "Official FinancialFilings MCP server and research skill: search listed companies worldwide, read any regulatory filing as Markdown and pull normalised financials. Remote server with OAuth sign-in; free for any FinancialFilings account.",
+  "description": "FinancialFilings MCP server and research skill: find listed companies worldwide, read their annual reports, interim reports and other filings as Markdown, and pull standardised financials and insider transactions. Covers official filings, as published. Remote server, OAuth sign-in with a free FinancialFilings account.",
   "author": {
     "name": "FinancialFilings",
     "email": "support@financialfilings.com",
@@ -12,8 +12,10 @@
   "license": "MIT",
   "keywords": [
     "financial-data",
-    "regulatory-filings",
+    "company-filings",
     "annual-reports",
+    "financial-statements",
+    "insider-transactions",
     "xbrl",
     "esef",
     "company-data",
