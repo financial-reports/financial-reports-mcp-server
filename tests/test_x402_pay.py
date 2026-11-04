@@ -366,3 +366,40 @@ def test_an_oversized_request_body_is_refused_before_parsing(pay, respx_router) 
         resp = client.post("/mcp-pay", content=b"{" + b" " * (70 * 1024) + b"}", headers={
             "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
     assert resp.status_code == 413
+
+
+def test_an_oversized_chunked_body_without_content_length_is_refused(pay, respx_router) -> None:
+    from starlette.testclient import TestClient
+
+    def chunks():
+        yield b"{"
+        for _ in range(70):
+            yield b" " * 1024
+        yield b"}"
+
+    with TestClient(pay.app) as client:
+        resp = client.post("/mcp-pay", content=chunks(), headers={
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+    assert resp.status_code == 413
+
+
+def test_a_small_chunked_body_still_reaches_the_pay_app(pay, respx_router) -> None:
+    from starlette.testclient import TestClient
+
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode()
+    with TestClient(pay.app) as client:
+        resp = client.post("/mcp-pay", content=iter([body[:10], body[10:]]), headers={
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+    assert resp.status_code == 200
+    assert _rpc_result(resp)["result"]["tools"]
+
+
+@pytest.mark.asyncio
+async def test_an_upstream_5xx_detail_is_not_echoed(pay, respx_router) -> None:
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(
+        500, json={"detail": "Traceback at internal-host.local:5432"}))
+    result = await _call(pay, "companies_list", payment=PAYMENT)
+    assert result.isError is True
+    text = result.content[0].text
+    assert "internal-host" not in text and "Traceback" not in text
+    assert "500" in text

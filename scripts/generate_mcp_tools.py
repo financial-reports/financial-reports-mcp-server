@@ -4202,11 +4202,36 @@ async def _root_app(scope: Any, receive: Any, send: Any) -> None:
     """`/mcp-pay` to the pay app, everything else to the `/mcp` app as before."""
     if _pay_http_app is not None and _is_pay_path(scope.get("path", "")):
         # No sign-in here, so bound what an anonymous caller makes us parse.
+        # Content-Length alone is not enough: a chunked body has none, so the
+        # body is read here, counted, and replayed to the pay app.
+        too_large = JSONResponse({"error": "request_too_large"}, status_code=413)
         length = dict(scope.get("headers") or []).get(b"content-length", b"0")
         if not length.isdigit() or int(length) > _X402_MAX_BODY_BYTES:
-            await JSONResponse({"error": "request_too_large"}, status_code=413)(scope, receive, send)
+            await too_large(scope, receive, send)
             return
-        await _pay_http_app(scope, receive, send)
+        if scope.get("type") != "http":
+            await _pay_http_app(scope, receive, send)
+            return
+        body, more = b"", True
+        while more:
+            message = await receive()
+            if message["type"] != "http.request":
+                return  # client went away
+            body += message.get("body", b"")
+            if len(body) > _X402_MAX_BODY_BYTES:
+                await too_large(scope, receive, send)
+                return
+            more = message.get("more_body", False)
+        replayed = False
+
+        async def replay() -> Any:
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
+
+        await _pay_http_app(scope, replay, send)
         return
     await mcp_app(scope, receive, send)
 
@@ -4708,7 +4733,13 @@ def _x402_decode(value: Optional[str]) -> Optional[dict]:
 
 
 def _x402_detail(response: httpx.Response) -> str:
-    """The API's own error text, short. Its x402 refusals put it in `detail`."""
+    """The API's own error text, short. Its x402 refusals put it in `detail`.
+
+    Only a 4xx refusal (402, 403, 409, 429, bad input) carries text a caller can
+    act on; a 5xx or proxy error may carry internals, so it gets a fixed message.
+    """
+    if response.status_code >= 500:
+        return f"upstream error ({response.status_code}); try again later"
     try:
         body = response.json()
     except ValueError:
