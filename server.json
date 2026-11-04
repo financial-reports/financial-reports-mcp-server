@@ -2,9 +2,9 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "com.financialfilings/mcp-server",
   "title": "FinancialFilings",
-  "description": "Official filings as published, XBRL financials and company data for listed companies worldwide",
-  "version": "1.4.121",
-  "websiteUrl": "https://financialfilings.com/mcp/",
+  "description": "Filings and XBRL financials for listed companies worldwide: official filings, as published",
+  "version": "1.4.157",
+  "websiteUrl": "https://financialfilings.com/mcp/?utm_source=mcp-registry&utm_medium=listing",
   "repository": {
     "url": "https://github.com/financial-reports/financial-reports-mcp-server",
     "source": "github"
