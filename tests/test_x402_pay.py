@@ -403,3 +403,32 @@ async def test_an_upstream_5xx_detail_is_not_echoed(pay, respx_router) -> None:
     text = result.content[0].text
     assert "internal-host" not in text and "Traceback" not in text
     assert "500" in text
+
+
+@pytest.mark.asyncio
+async def test_a_bearer_token_in_a_refusal_is_redacted(pay, respx_router) -> None:
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(
+        403, json={"detail": "rejected Bearer abc123xyz9 upstream"}))
+    result = await _call(pay, "companies_list", payment=PAYMENT)
+    assert result.isError is True
+    text = result.content[0].text
+    assert "abc123xyz9" not in text and "403" in text
+
+
+@pytest.mark.asyncio
+async def test_a_field_validation_error_names_the_field(pay, respx_router) -> None:
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(
+        400, json={"page": ["Ensure this value is greater than or equal to 1."]}))
+    result = await _call(pay, "companies_list", payment=PAYMENT)
+    assert result.isError is True
+    assert "page: Ensure this value" in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_on_a_200_is_an_error_not_a_result(pay, respx_router) -> None:
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(
+        200, content=b"<html>proxy error", headers={"Content-Type": "application/json",
+                                                    "PAYMENT-RESPONSE": _b64(SETTLED)}))
+    result = await _call(pay, "companies_list", payment=PAYMENT)
+    assert result.isError is True
+    assert "proxy error" not in result.content[0].text

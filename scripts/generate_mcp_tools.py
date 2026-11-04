@@ -4747,7 +4747,11 @@ def _x402_detail(response: httpx.Response) -> str:
     text = ""
     if isinstance(body, dict):
         text = str(body.get("detail") or body.get("error") or "")
-    return _redact_opaque(text or response.reason_phrase or "error")[:500]
+        if not text:
+            # A validation 400 names the field: {"offset": ["Ensure ..."]}.
+            text = "; ".join(f"{k}: {' '.join(map(str, v)) if isinstance(v, list) else v}"
+                             for k, v in list(body.items())[:5])
+    return _redact_opaque(sanitize_error_detail(text or response.reason_phrase or "error", 500))
 
 
 def _x402_markdown_window(params: dict) -> dict:
@@ -4767,7 +4771,8 @@ def _x402_body(response: httpx.Response) -> str:
         try:
             data = _scrub_response(response.json())
         except ValueError:
-            return response.text
+            # A proxy's error page or a cut-off body is not an answer.
+            raise _ToolError("The API returned a malformed response; try again.") from None
         return f"```json\\n{_json.dumps(data, indent=2, ensure_ascii=False)}\\n```"
     total = response.headers.get("X-Total-Chars")
     if total is None:
