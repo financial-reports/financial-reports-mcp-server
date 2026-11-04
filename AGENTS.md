@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Agent-facing guide for the **FinancialReports MCP server** repo. This file is the cross-harness standard ([agents.md](https://agents.md)) — read by Codex, Cursor, Kilo Code, Gemini CLI, opencode, Zed, Aider, and others. Claude Code reads it too (via `CLAUDE.md`, which imports this file).
+Agent-facing guide for the **FinancialFilings MCP server** repo. This file is the cross-harness standard ([agents.md](https://agents.md)) — read by Codex, Cursor, Kilo Code, Gemini CLI, opencode, Zed, Aider, and others. Claude Code reads it too (via `CLAUDE.md`, which imports this file).
 
 ## What this repo is
 
-The official remote [Model Context Protocol](https://modelcontextprotocol.io) server for the [FinancialReports](https://financialreports.eu) API. It exposes **17 LLM-callable tools by default** (regulatory filings, financials, company data, batch identifier resolution, in-filing search, usage and spend, plus guide tools); set `MCP_FULL_SURFACE=1` to restore the full **55-tool** surface (adds ISIC industry classification, watchlists, webhooks, company merges, security listings, agent account onboarding, and the rest of the reference data). The OpenAPI-derived tools are generated from a committed, reviewed schema snapshot (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build). It runs as a FastAPI host that mounts a FastMCP server behind an AWS Cognito OAuth proxy. Production: `https://mcp.financialfilings.com/mcp`.
+The remote [Model Context Protocol](https://modelcontextprotocol.io) server for the [FinancialFilings](https://financialfilings.com) API. It exposes **17 LLM-callable tools by default** (filings, financials, company data, batch identifier resolution, in-filing search, usage and spend, plus guide tools); set `MCP_FULL_SURFACE=1` to restore the full **55-tool** surface (adds ISIC industry classification, watchlists, webhooks, company merges, security listings, agent account onboarding, and the rest of the reference data). The OpenAPI-derived tools are generated from a committed, reviewed schema snapshot (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build). It runs as a FastAPI host that mounts a FastMCP server behind an AWS Cognito OAuth proxy. Production: `https://mcp.financialfilings.com/mcp`.
 
 ## The one rule that matters: `src/` is generated
 
