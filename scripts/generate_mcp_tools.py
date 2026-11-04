@@ -4776,7 +4776,9 @@ def _x402_body(response: httpx.Response) -> str:
         return f"```json\\n{_json.dumps(data, indent=2, ensure_ascii=False)}\\n```"
     total = response.headers.get("X-Total-Chars")
     if total is None:
-        return response.text
+        # Only the Markdown window is served as text, and it carries
+        # X-Total-Chars; anything else (a proxy's HTML page) is not an answer.
+        raise _ToolError("The API returned an unexpected response; try again.")
     offset = response.headers.get("X-Offset", "0")
     head = f"--- MARKDOWN CONTENT (from char {offset}, {len(response.text)} chars, of {total}) ---\\n"
     next_offset = response.headers.get("X-Next-Offset")

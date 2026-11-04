@@ -432,3 +432,12 @@ async def test_malformed_json_on_a_200_is_an_error_not_a_result(pay, respx_route
     result = await _call(pay, "companies_list", payment=PAYMENT)
     assert result.isError is True
     assert "proxy error" not in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_an_html_200_is_an_error_not_a_result(pay, respx_router) -> None:
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(
+        200, text="<html>internal-proxy-page</html>", headers={"Content-Type": "text/html"}))
+    result = await _call(pay, "companies_list", payment=PAYMENT)
+    assert result.isError is True
+    assert "internal-proxy-page" not in result.content[0].text
