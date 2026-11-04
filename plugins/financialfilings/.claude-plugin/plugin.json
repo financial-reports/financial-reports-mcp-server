@@ -1,7 +1,7 @@
 {
   "name": "financialfilings",
   "displayName": "FinancialFilings",
-  "description": "FinancialFilings MCP server and research skill: search listed companies worldwide, read any regulatory filing as Markdown and pull normalised financials. Remote server with OAuth sign-in; free for any FinancialFilings account.",
+  "description": "Official FinancialFilings MCP server and research skill: search listed companies worldwide, read any regulatory filing as Markdown and pull normalised financials. Remote server with OAuth sign-in; free for any FinancialFilings account.",
   "author": {
     "name": "FinancialFilings",
     "email": "support@financialfilings.com",
