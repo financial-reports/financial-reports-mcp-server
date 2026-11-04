@@ -175,7 +175,7 @@ import re
 import socket
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from functools import wraps
 from typing import Annotated, Any, AsyncIterator, Awaitable, Callable, Literal, Optional
@@ -3135,6 +3135,48 @@ mcp.add_middleware(UsageAnalyticsMiddleware(
 mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
 
 
+# ---------------------------------------------------------------------------
+# x402 pay-per-call MCP at /mcp-pay (MCP_X402_ENABLED=1, off by default)
+# ---------------------------------------------------------------------------
+# A second FastMCP server with NO auth: a caller pays each tool call in USDC
+# under the x402 MCP transport (`_meta["x402/payment"]`). It is a relay, not a
+# seller: every call is one keyless GET to the API, which prices, verifies and
+# settles exactly as for a direct keyless REST call. So there is one price table
+# and no payment keys here. `/mcp` and its OAuth are untouched; with the flag
+# off, nothing below is mounted and `/mcp-pay` is a 404 from the `/mcp` app.
+MCP_X402_ENABLED = os.environ.get("MCP_X402_ENABLED", "0") == "1"
+X402_MCP_PATH = "/mcp-pay"
+
+mcp_pay = FastMCP(
+    name="FinancialFilings (pay per call)",
+    instructions=(
+        "FinancialFilings data, paid per tool call in USDC under x402 (no account, "
+        "no API key). Call a tool without a payment to get its price: the result is "
+        "an x402 PaymentRequired. Retry the same call with the signed payment in "
+        '`_meta["x402/payment"]`; an x402 MCP client does both steps. 1 credit = '
+        "$0.01. Every price quote carries the licence (internal use only, no "
+        "redistribution) and the terms URL; paying accepts them."
+    ),
+)
+_pay_http_app = (
+    mcp_pay.http_app(path=X402_MCP_PATH, stateless_http=True) if MCP_X402_ENABLED else None
+)
+
+# Its own client: never `_api_client`, whose request hook forwards the caller's
+# OAuth credential. A paid request carries the payment and nothing else.
+# No `_api_get` retry either: re-sending a payment would replay its nonce.
+# Transport retries are connect-phase only, before anything reached the API.
+_pay_client = httpx.AsyncClient(
+    base_url=API_BASE_URL,
+    timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=10.0),
+    transport=httpx.AsyncHTTPTransport(retries=2, limits=_API_LIMITS),
+    headers={
+        # Keeps the "FinancialReports-MCP-Server" prefix the admin dashboard filters on.
+        "User-Agent": f"FinancialReports-MCP-Server/{MCP_VERSION} x402-relay",
+    },
+)
+
+
 # Cache static asset bytes in-process so connector probes (Claude, Cursor,
 # ChatGPT) don't trigger one outbound CDN call per probe per replica.
 # Each entry is (bytes, fetched_at). TTL 24h matches the public Cache-Control.
@@ -3242,10 +3284,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     await _usage_emitter.start()
 
     try:
-        async with mcp_app.lifespan(app):
+        # The pay app (MCP_X402_ENABLED) has its own session manager to start.
+        async with mcp_app.lifespan(app), (
+            _pay_http_app.lifespan(app) if _pay_http_app is not None else nullcontext()
+        ):
             yield
     finally:
         await _api_client.aclose()
+        await _pay_client.aclose()
         await _usage_emitter.aclose()
         close = getattr(_oauth_storage, "aclose", None)
         if callable(close):
@@ -3298,7 +3344,11 @@ class _OriginAndProtocolMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable[..., Any]) -> Response:
         path = request.url.path
-        if path == self._PROTECTED_PREFIX or path.startswith(self._PROTECTED_PREFIX + "/"):
+        if (
+            path == self._PROTECTED_PREFIX
+            or path.startswith(self._PROTECTED_PREFIX + "/")
+            or (_pay_http_app is not None and _is_pay_path(path))
+        ):
             origin = request.headers.get("origin")
             if origin and not _origin_allowed(origin):
                 logger.warning("rejecting /mcp request: foreign origin=%r", origin)
@@ -4134,9 +4184,22 @@ async def root_landing() -> HTMLResponse:
     return HTMLResponse(content=_RENDERED_LANDING_HTML, status_code=200)
 
 
+def _is_pay_path(path: str) -> bool:
+    return path == X402_MCP_PATH or path.startswith(X402_MCP_PATH + "/")
+
+
+async def _root_app(scope: Any, receive: Any, send: Any) -> None:
+    """`/mcp-pay` to the pay app, everything else to the `/mcp` app as before."""
+    if _pay_http_app is not None and _is_pay_path(scope.get("path", "")):
+        await _pay_http_app(scope, receive, send)
+        return
+    await mcp_app(scope, receive, send)
+
+
 # IMPORTANT: mount must be the LAST route declaration so the explicit FastAPI
-# routes above take precedence.
-app.mount("/", mcp_app)
+# routes above take precedence. With MCP_X402_ENABLED off this is `mcp_app`
+# exactly as before.
+app.mount("/", _root_app if _pay_http_app is not None else mcp_app)
 '''
 
 
@@ -4511,6 +4574,256 @@ async def {{ func_name }}(
             raise RuntimeError(f"upstream {{ func_name }} returned non-JSON body") from exc
     finally:
         _release_auth_context(resets)
+'''
+
+
+
+# ---------------------------------------------------------------------------
+# x402 pay-per-call templates (served at /mcp-pay when MCP_X402_ENABLED=1)
+# ---------------------------------------------------------------------------
+# The API tools a keyless caller can buy. Each must map to a view the API
+# prices for x402 (Django `users/x402/pricing.py` PRICED_VIEWS) and be a GET:
+# the API sells GETs only. Usage, markdown search (priced after serving) and
+# POST tools are out.
+X402_PAY_TOOLS = (
+    "companies_list",
+    "companies_retrieve",
+    "companies_financials_retrieve",
+    "companies_next_annual_report_retrieve",
+    "filing_categories_list",
+    "filing_types_list",
+    "filings_list",
+    "filings_retrieve",
+    "filings_markdown_retrieve",
+    "isins_list",
+    "isins_retrieve",
+)
+
+X402_PAY_BLOCK = '''
+
+# ---------------------------------------------------------------------------
+# x402 relay for the /mcp-pay tools
+# ---------------------------------------------------------------------------
+import mcp.types as _mcp_types
+from fastmcp.exceptions import ToolError as _ToolError
+from fastmcp.server.dependencies import get_context as _get_context
+from fastmcp.tools.tool import ToolResult as _ToolResult
+
+_X402_PAYMENT_META = "x402/payment"
+_X402_RESPONSE_META = "x402/payment-response"
+# The API refuses a PAYMENT-SIGNATURE header longer than this.
+_X402_MAX_HEADER_CHARS = 16_384
+# A markdown window always fits one tool result, with room for the header line.
+_X402_MD_DEFAULT_LIMIT = 100_000
+_X402_MD_MAX_LIMIT = 140_000
+
+
+class _X402ErrorResult(_ToolResult):
+    """A tool result with `isError` AND `structuredContent`.
+
+    The x402 MCP transport sends PaymentRequired that way. FastMCP 2.14.7's
+    ToolResult has no isError, and a raised ToolError carries text only, so this
+    returns the MCP CallToolResult itself (FastMCP and the MCP SDK pass a
+    CallToolResult through unchanged).
+    """
+
+    def __init__(self, data: dict, meta: Optional[dict] = None) -> None:
+        super().__init__(
+            content=[_mcp_types.TextContent(type="text", text=_json.dumps(data))],
+            structured_content=data,
+            meta=meta,
+        )
+
+    def to_mcp_result(self) -> Any:
+        return _mcp_types.CallToolResult(
+            content=self.content,
+            structuredContent=self.structured_content,
+            isError=True,
+            _meta=self.meta,
+        )
+
+
+def _x402_payment() -> Optional[dict]:
+    """The caller's `_meta["x402/payment"]`, or None."""
+    try:
+        request_context = _get_context().request_context
+    except RuntimeError:
+        return None
+    meta = request_context.meta if request_context is not None else None
+    payment = (getattr(meta, "model_extra", None) or {}).get(_X402_PAYMENT_META)
+    if payment is None:
+        return None
+    if not isinstance(payment, dict):
+        raise _ToolError('_meta["x402/payment"] must be a PaymentPayload object.')
+    return payment
+
+
+def _x402_b64(obj: Any) -> str:
+    return base64.b64encode(_json.dumps(obj, separators=(",", ":")).encode()).decode()
+
+
+def _x402_decode(value: Optional[str]) -> Optional[dict]:
+    if not value or len(value) > _X402_MAX_HEADER_CHARS:
+        return None
+    try:
+        data = _json.loads(base64.b64decode(value.strip(), validate=True))
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _x402_detail(response: httpx.Response) -> str:
+    """The API's own error text, short. Its x402 refusals put it in `detail`."""
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+    text = ""
+    if isinstance(body, dict):
+        text = str(body.get("detail") or body.get("error") or "")
+    return _redact_opaque(text or response.reason_phrase or "error")[:500]
+
+
+def _x402_markdown_window(params: dict) -> dict:
+    """Always ask for a window that fits one tool result."""
+    params = dict(params)
+    limit = params.get("limit")
+    limit = _X402_MD_DEFAULT_LIMIT if limit is None else int(limit)
+    if limit < 1:
+        raise ToolInputError("limit must be >= 1")
+    params["limit"] = min(limit, _X402_MD_MAX_LIMIT)
+    return params
+
+
+def _x402_body(response: httpx.Response) -> str:
+    content_type = response.headers.get("content-type", "")
+    if "json" in content_type:
+        try:
+            data = _scrub_response(response.json())
+        except ValueError:
+            return response.text
+        return f"```json\\n{_json.dumps(data, indent=2, ensure_ascii=False)}\\n```"
+    total = response.headers.get("X-Total-Chars")
+    if total is None:
+        return response.text
+    offset = response.headers.get("X-Offset", "0")
+    head = f"--- MARKDOWN CONTENT (from char {offset}, {len(response.text)} chars, of {total}) ---\\n"
+    next_offset = response.headers.get("X-Next-Offset")
+    if next_offset:
+        head += (
+            f"--- TRUNCATED. Call again with offset={next_offset} to continue "
+            "(each call is a new payment). ---\\n"
+        )
+    return head + "\\n" + response.text
+
+
+async def _x402_relay(url: str, params: dict) -> Any:
+    """One keyless GET to the API, with the caller's payment if they sent one.
+
+    No payment: the API answers 402 and its PaymentRequired goes back as an
+    isError result. With a payment: the API verifies it, serves, settles, and
+    its PAYMENT-RESPONSE goes back in `_meta["x402/payment-response"]`.
+    """
+    payment = _x402_payment()
+    if url.endswith("/markdown/"):
+        params = _x402_markdown_window(params)
+    headers: dict[str, str] = {}
+    if payment is not None:
+        encoded = _x402_b64(payment)
+        if len(encoded) > _X402_MAX_HEADER_CHARS:
+            raise _ToolError('_meta["x402/payment"] is too large to be a payment.')
+        headers["PAYMENT-SIGNATURE"] = encoded
+    try:
+        response = await _pay_client.get(url, params=params, headers=headers)
+    except httpx.HTTPError as exc:
+        logger.warning("x402 relay %s: %s", url, exc.__class__.__name__)
+        message = "The FinancialFilings API could not be reached. Retry later."
+        if payment is not None:
+            message += (
+                " The payment was sent and may still settle: wait a minute before "
+                "retrying with a new payment."
+            )
+        raise _ToolError(message) from None
+
+    settlement = _x402_decode(response.headers.get("PAYMENT-RESPONSE"))
+    meta = {_X402_RESPONSE_META: settlement} if settlement is not None else None
+    logger.info(
+        "x402 relay %s status=%s paid=%s settled=%s",
+        url, response.status_code, payment is not None,
+        settlement.get("success") if settlement else None,
+    )
+    if 200 <= response.status_code < 300:
+        return _ToolResult(content=_x402_body(response), meta=meta)
+    if response.status_code == 402:
+        required = _x402_decode(response.headers.get("PAYMENT-REQUIRED"))
+        if required is not None:
+            return _X402ErrorResult(required, meta=meta)
+        # A settle that definitely failed: nothing was charged and nothing is
+        # served. No `accepts`, so a client does not pay again by itself.
+        return _X402ErrorResult(
+            {"error": _x402_detail(response), "settlement": settlement}, meta=meta
+        )
+    message = f"FinancialFilings API {response.status_code}: {_x402_detail(response)}"
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        message += f" Retry after {retry_after} s."
+    raise _ToolError(message)
+'''
+
+
+PAY_GET_TOOL_TEMPLATE = '''
+@mcp_pay.tool(
+    name="{{ func_name }}",
+    tags={{ tags }},
+    output_schema=None,
+    annotations=ToolAnnotations(
+        title="{{ title }}",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    ),
+)
+async def _pay_{{ func_name }}(
+    {%- for param in params %}
+    {{ param.name }}: {{ param.py_type }}{{ param.default_val }},
+    {%- endfor %}
+) -> Any:
+    """{{ description }}"""
+    try:
+        query_params: dict[str, Any] = {
+            {%- for param in params if param.is_query %}
+            "{{ param.original_name }}": {{ param.name }},
+            {%- endfor %}
+        }
+        {%- for param in params if param.is_query and param.csv_enum %}
+        query_params["{{ param.original_name }}"] = _validate_csv_enum(
+            {{ param.name }},
+            ({% for v in param.csv_enum %}"{{ v }}", {% endfor %}),
+            "{{ param.original_name }}",
+        )
+        {%- endfor %}
+        for _pg_key in ("page_size", "page"):
+            _pg_val = query_params.get(_pg_key)
+            if _pg_val is not None and int(_pg_val) < 1:
+                raise ToolInputError(f"{_pg_key} must be >= 1")
+        if query_params.get("page_size") is not None:
+            query_params["page_size"] = min(int(query_params["page_size"]), _MAX_PAGE_SIZE)
+        path_params: dict[str, str] = {}
+        {%- for param in params if param.is_path %}
+        if {{ param.name }} is not None:
+            path_params["{{ param.original_name }}"] = _validate_path_param(
+                "{{ param.original_name }}", {{ param.name }}
+            )
+        {%- endfor %}
+        url = "{{ path }}"
+        if path_params:
+            url = url.format(**path_params)
+        return await _x402_relay(
+            url, {k: v for k, v in query_params.items() if v is not None}
+        )
+    except ToolInputError as exc:
+        raise _ToolError(str(exc)) from None
 '''
 
 
@@ -6497,6 +6810,8 @@ def main() -> None:
     structured_get_template = env.from_string(STRUCTURED_GET_TOOL_TEMPLATE)
     post_template = env.from_string(POST_TOOL_TEMPLATE)
     markdown_template = env.from_string(MARKDOWN_TOOL_TEMPLATE)
+    pay_template = env.from_string(PAY_GET_TOOL_TEMPLATE)
+    pay_code: list[str] = []
     structured_count = 0
     missing_response_schema: list[str] = []
 
@@ -6549,6 +6864,25 @@ def main() -> None:
             if not title_raw:
                 title_raw = func_name.replace("_", " ").title()
             title = title_raw.replace('"', '\\"')
+
+            if method == "get" and func_name in X402_PAY_TOOLS:
+                # The x402 twin (served at /mcp-pay only when MCP_X402_ENABLED=1):
+                # same name, parameters and description, relayed keyless.
+                pay_params = extract_path_params(operation) + extract_query_params(operation)
+                pay_params.sort(key=lambda p: p["default_val"] != "")
+                # The text tool names its path parameter `filing_id`; the twin
+                # keeps the schema's `id`.
+                pay_description = description.replace("filing_id=", "id=")
+                pay_code.append(
+                    pay_template.render(
+                        func_name=func_name,
+                        description=pay_description,
+                        params=pay_params,
+                        path=path,
+                        tags=tags,
+                        title=title,
+                    )
+                )
 
             if method == "get":
                 # Special-case the markdown retrieve endpoint — needs pagination
@@ -6665,6 +6999,12 @@ def main() -> None:
     # the in-result pointer filings_markdown_retrieve adds on big (>120k) filings.
     generated_code.append(MARKDOWN_SEARCH_TOOL_BLOCK)
     generated_code.append(PROMPTS_BLOCK)
+    missing_pay = sorted(set(X402_PAY_TOOLS) - {t["func_name"] for t in generated_tools})
+    if missing_pay:
+        print(f"X402_PAY_TOOLS not in the schema: {missing_pay}", file=sys.stderr)
+        sys.exit(1)
+    generated_code.append(X402_PAY_BLOCK)
+    generated_code.extend(pay_code)
     generated_code.append(FILE_FOOTER)
 
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)

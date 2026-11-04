@@ -205,6 +205,59 @@ history.
 
 ---
 
+## x402 pay-per-call endpoint (`/mcp-pay`)
+
+Off unless `MCP_X402_ENABLED=1`. With it on, the same service also serves
+`https://mcp.financialfilings.com/mcp-pay`: a second MCP server with **no sign-in**,
+whose tools (the priced GET subset of the default surface, same names and parameters)
+are paid per call in USDC under the x402 MCP transport. `/mcp` and its OAuth are
+unchanged either way; with the flag off, the root mount is exactly the old `mcp_app`.
+
+**What it does.** Each tool call is one keyless GET to `API_BASE_URL`. The API does all
+the payment work, exactly as for a direct keyless REST call: it quotes (a 402 whose
+`PAYMENT-REQUIRED` this server returns as an `isError` result with the PaymentRequired in
+`structuredContent`), verifies the `_meta["x402/payment"]` the caller retries with (sent
+up as `PAYMENT-SIGNATURE`), serves, settles, and its `PAYMENT-RESPONSE` comes back in
+`_meta["x402/payment-response"]`. So there is one price table, the payment ledger is the
+API's, and this service holds no payment keys. A paid call is never retried (that would
+replay its nonce). The API must have x402 on (`X402_ENABLED`, not probe-only) or every
+call answers 403.
+
+**Enable:**
+
+```bash
+gcloud run services update "$SERVICE" --project "$PROJECT_ID" --region "$REGION" \
+  --update-env-vars MCP_X402_ENABLED=1
+```
+
+**Disable:** the same with `MCP_X402_ENABLED=0` (or `--remove-env-vars MCP_X402_ENABLED`).
+
+**Verify** (an unpaid call must come back as a PaymentRequired):
+
+```bash
+curl -sS https://mcp.financialfilings.com/mcp-pay \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"filing_types_list","arguments":{}}}'
+# expect "isError":true and a structuredContent with "x402Version":2 and "accepts"
+```
+
+**Known limits (v1, by design):**
+
+- **Who can pay.** Clients built on an x402 MCP client SDK (`x402` Python
+  `x402.mcp.x402MCPSession`, `@x402/mcp` TypeScript, Go). Hosted assistants (claude.ai,
+  ChatGPT, Cursor, Codex) are not known to sign x402 payments over MCP; untested.
+- **The API sees this service's IP**, not the payer's. Every relayed payment is recorded
+  with the country of the Cloud Run egress, and all relayed callers share the API's
+  per-network x402 limits (`X402_ISSUE_PER_WIDE_IP_MIN` quotes and
+  `X402_VERIFY_PER_WIDE_IP_MIN` verifies a minute per /24). Fixing either needs a
+  trusted relay header on the API side.
+- **No markdown re-read discount.** Each `filings_markdown_retrieve` window is a new
+  payment (100k characters by default, 140k max), as on keyless REST.
+- **No usage analytics.** `UsageAnalyticsMiddleware` is on the `/mcp` server only; the
+  API's payment ledger is the record. Each relayed call logs one `x402 relay` line.
+
+---
+
 ## Runtime facts that constrain the code
 
 Several comments in `scripts/generate_mcp_tools.py` read oddly until you know how the
