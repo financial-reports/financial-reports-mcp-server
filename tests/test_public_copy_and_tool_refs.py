@@ -61,6 +61,12 @@ def test_registry_description_fits_the_limit() -> None:
     assert len(server["description"]) <= REGISTRY_DESCRIPTION_LIMIT
 
 
+def test_registry_description_uses_the_agreed_phrase() -> None:
+    """Lower case, so the listing never opens with "Official" next to our name."""
+    server = json.loads((REPO_ROOT / "server.json").read_text(encoding="utf-8"))
+    assert PHRASE in server["description"]
+
+
 def test_generated_server_names_no_pruned_tool(mcp_module) -> None:
     """A client told about a tool the default surface removes will try to call it.
     Scanning the whole module covers instructions, guides, prompts and errors."""

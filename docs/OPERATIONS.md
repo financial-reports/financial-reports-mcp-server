@@ -268,11 +268,20 @@ work around it by adding the value here.
 
 The server is listed in the official MCP Registry as `com.financialfilings/mcp-server`
 (`https://registry.modelcontextprotocol.io/v0.1/servers?search=financialfilings`). The entry is
-`server.json` at the repo root. Merging or deploying does **not** update it; the registry only
-changes when someone publishes. The namespace is proven by a DNS TXT record
+`server.json` at the repo root. The namespace is proven by a DNS TXT record
 (`v=MCPv1; k=ed25519; …`) on the `financialfilings.com` apex; the matching private key is a Secret Manager
-secret (`$REGISTRY_KEY_SECRET`, named in the internal runbook). To publish a new version (versions are immutable, so bump
-`version` in `server.json` first):
+secret (`$REGISTRY_KEY_SECRET`, named in the internal runbook).
+
+**Publishing is automatic.** Every release the deploy workflow (see "Deploying" in `AGENTS.md`)
+ships also publishes the registry entry: it sets `version` in `server.json` to the release version,
+commits that with the `requirements.txt` bump, then runs `login dns` / `publish` / `logout`. A
+failed publish fails the run and is not retried until the next release (or a forced re-run of
+that workflow). So the registry version matches `/health`, and a change to
+`server.json` (description, `websiteUrl`) goes live with the next release. Merging alone still
+publishes nothing.
+
+To publish by hand (for example to ship a copy fix before the next release; versions are
+immutable, so set a `version` that is not yet in the registry first):
 
 ```bash
 # mcp-publisher: https://github.com/modelcontextprotocol/registry/releases
