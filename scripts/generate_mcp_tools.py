@@ -175,6 +175,7 @@ import re
 import socket
 import time
 import uuid
+import http.cookiejar
 from contextlib import asynccontextmanager, nullcontext
 from contextvars import ContextVar
 from functools import wraps
@@ -3146,6 +3147,8 @@ mcp_app = mcp.http_app(path="/mcp", stateless_http=True)
 # off, nothing below is mounted and `/mcp-pay` is a 404 from the `/mcp` app.
 MCP_X402_ENABLED = os.environ.get("MCP_X402_ENABLED", "0") == "1"
 X402_MCP_PATH = "/mcp-pay"
+# Largest MCP request body the pay endpoint reads; a payment is under 4 KiB.
+_X402_MAX_BODY_BYTES = 64 * 1024
 
 mcp_pay = FastMCP(
     name="FinancialFilings (pay per call)",
@@ -3168,6 +3171,9 @@ _pay_http_app = (
 # Transport retries are connect-phase only, before anything reached the API.
 _pay_client = httpx.AsyncClient(
     base_url=API_BASE_URL,
+    # Shared by every anonymous caller, so it must never keep a cookie: a stored
+    # session cookie would be sent with the next caller's request.
+    cookies=http.cookiejar.CookieJar(policy=http.cookiejar.DefaultCookiePolicy(allowed_domains=[])),
     timeout=httpx.Timeout(connect=5.0, read=60.0, write=10.0, pool=10.0),
     transport=httpx.AsyncHTTPTransport(retries=2, limits=_API_LIMITS),
     headers={
@@ -3351,7 +3357,7 @@ class _OriginAndProtocolMiddleware(BaseHTTPMiddleware):
         ):
             origin = request.headers.get("origin")
             if origin and not _origin_allowed(origin):
-                logger.warning("rejecting /mcp request: foreign origin=%r", origin)
+                logger.warning("rejecting %s request: foreign origin=%r", path, origin)
                 return JSONResponse(
                     {"error": "forbidden_origin", "error_description": f"Origin {origin!r} not allowed"},
                     status_code=403,
@@ -3385,7 +3391,11 @@ class _OriginAndProtocolMiddleware(BaseHTTPMiddleware):
         # negotiated during initialization"; outside an init we echo the
         # server default. FastMCP doesn't surface the per-session value to
         # middleware, so this is best-effort.
-        if path == self._PROTECTED_PREFIX or path.startswith(self._PROTECTED_PREFIX + "/"):
+        if (
+            path == self._PROTECTED_PREFIX
+            or path.startswith(self._PROTECTED_PREFIX + "/")
+            or (_pay_http_app is not None and _is_pay_path(path))
+        ):
             negotiated = request.headers.get("mcp-protocol-version") or DEFAULT_MCP_PROTOCOL_VERSION
             response.headers.setdefault("MCP-Protocol-Version", negotiated)
 
@@ -4191,6 +4201,11 @@ def _is_pay_path(path: str) -> bool:
 async def _root_app(scope: Any, receive: Any, send: Any) -> None:
     """`/mcp-pay` to the pay app, everything else to the `/mcp` app as before."""
     if _pay_http_app is not None and _is_pay_path(scope.get("path", "")):
+        # No sign-in here, so bound what an anonymous caller makes us parse.
+        length = dict(scope.get("headers") or []).get(b"content-length", b"0")
+        if not length.isdigit() or int(length) > _X402_MAX_BODY_BYTES:
+            await JSONResponse({"error": "request_too_large"}, status_code=413)(scope, receive, send)
+            return
         await _pay_http_app(scope, receive, send)
         return
     await mcp_app(scope, receive, send)
@@ -4599,6 +4614,26 @@ X402_PAY_TOOLS = (
     "isins_retrieve",
 )
 
+X402_PAY_DROPPED_PARAMS = frozenset({"on_watchlist"})
+
+# The text tool's description says MCP bills a filing's Markdown once a day and
+# points at the search endpoint; neither holds here, where every window is paid.
+X402_PAY_DESCRIPTIONS = {
+    "filings_markdown_retrieve": (
+        "**Cost:** 6 credits per call (12 for premium filing types), paid per call.\n\n"
+        "Read one window of a filing's processed text as Markdown. Every call is a new "
+        "payment, including the next window of the same filing.\n\n"
+        "`offset` is the character to start at (default 0) and `limit` the number of "
+        "characters (default 100000, at most 140000). The result's first line gives the "
+        "document's total length and, while text remains, the offset to pass next. An "
+        "annual report can run to several hundred thousand characters: read only the "
+        "windows you need.\n\n"
+        "**When NOT to use this tool:** to find filings (use `filings_list`), or for a "
+        "filing whose `processing_status` is not `COMPLETED`: it has no Markdown, and a "
+        "not-found error means none is available."
+    ),
+}
+
 X402_PAY_BLOCK = '''
 
 # ---------------------------------------------------------------------------
@@ -4738,7 +4773,8 @@ async def _x402_relay(url: str, params: dict) -> Any:
     except httpx.HTTPError as exc:
         logger.warning("x402 relay %s: %s", url, exc.__class__.__name__)
         message = "The FinancialFilings API could not be reached. Retry later."
-        if payment is not None:
+        # A connect failure sent nothing; after that, the API may have the payment.
+        if payment is not None and not isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
             message += (
                 " The payment was sent and may still settle: wait a minute before "
                 "retrying with a new payment."
@@ -4753,13 +4789,19 @@ async def _x402_relay(url: str, params: dict) -> Any:
         settlement.get("success") if settlement else None,
     )
     if 200 <= response.status_code < 300:
+        if payment is not None and settlement is None:
+            # The API sets PAYMENT-RESPONSE on every paid 2xx, pending included,
+            # so this request was not served as an x402 one.
+            logger.warning("x402 relay %s: paid call served without PAYMENT-RESPONSE", url)
         return _ToolResult(content=_x402_body(response), meta=meta)
     if response.status_code == 402:
         required = _x402_decode(response.headers.get("PAYMENT-REQUIRED"))
         if required is not None:
             return _X402ErrorResult(required, meta=meta)
         # A settle that definitely failed: nothing was charged and nothing is
-        # served. No `accepts`, so a client does not pay again by itself.
+        # served. The spec wants a PaymentRequired here, but the API sends no new
+        # quote with it; without `accepts` a client does not pay again by itself,
+        # and the next call (unpaid) gets a fresh quote.
         return _X402ErrorResult(
             {"error": _x402_detail(response), "settlement": settlement}, meta=meta
         )
@@ -6868,11 +6910,18 @@ def main() -> None:
             if method == "get" and func_name in X402_PAY_TOOLS:
                 # The x402 twin (served at /mcp-pay only when MCP_X402_ENABLED=1):
                 # same name, parameters and description, relayed keyless.
-                pay_params = extract_path_params(operation) + extract_query_params(operation)
+                # `on_watchlist` filters by the caller's watchlist, which a keyless
+                # caller does not have: always empty, still paid for.
+                pay_params = [
+                    p for p in extract_path_params(operation) + extract_query_params(operation)
+                    if p["original_name"] not in X402_PAY_DROPPED_PARAMS
+                ]
                 pay_params.sort(key=lambda p: p["default_val"] != "")
                 # The text tool names its path parameter `filing_id`; the twin
                 # keeps the schema's `id`.
-                pay_description = description.replace("filing_id=", "id=")
+                pay_description = X402_PAY_DESCRIPTIONS.get(func_name) or (
+                    description.replace("filing_id=", "id=").replace("(filing_id)", "(id)")
+                )
                 pay_code.append(
                     pay_template.render(
                         func_name=func_name,

@@ -100,9 +100,28 @@ async def test_the_pay_server_sells_exactly_the_priced_get_tools(pay) -> None:
     }
 
 
-def test_the_pay_client_carries_no_credential_hook(pay) -> None:
-    assert pay._pay_client is not pay._api_client
-    assert pay._inject_auth not in pay._pay_client.event_hooks["request"]
+@pytest.mark.asyncio
+async def test_a_pay_call_never_forwards_a_credential(pay, respx_router) -> None:
+    # Even with a /mcp caller's token live in this context.
+    route = respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(200, json={}))
+    reset = pay._current_token.set("real-access-token")
+    try:
+        await _call(pay, "companies_list", payment=PAYMENT)
+    finally:
+        pay._current_token.reset(reset)
+    sent = route.calls.last.request
+    assert "authorization" not in sent.headers and "x-api-key" not in sent.headers
+
+
+@pytest.mark.asyncio
+async def test_the_pay_client_never_keeps_a_cookie(pay, respx_router) -> None:
+    # One client serves every anonymous caller: a kept session cookie would
+    # authenticate the next caller as someone else.
+    route = respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(
+        200, json={}, headers={"Set-Cookie": "sessionid=abc; Domain=api.test.invalid; Path=/"}))
+    await _call(pay, "companies_list", payment=PAYMENT)
+    await _call(pay, "companies_list", payment=PAYMENT)
+    assert "cookie" not in route.calls.last.request.headers
 
 
 # --- relay ------------------------------------------------------------------
@@ -138,12 +157,15 @@ async def test_paid_call_forwards_the_payment_and_returns_the_settlement(pay, re
 
 
 @pytest.mark.asyncio
-async def test_a_served_call_without_a_settlement_header_has_no_meta(pay, respx_router) -> None:
-    # The API serves without PAYMENT-RESPONSE when the settle outcome is unknown.
+async def test_a_paid_call_served_without_a_settlement_header_is_logged(pay, respx_router, caplog) -> None:
+    # The API sets PAYMENT-RESPONSE on every paid 2xx (pending included), so its
+    # absence means the request was not served as an x402 one.
     respx_router.get(f"{TEST_API_BASE}/filings/7/").mock(return_value=httpx.Response(200, json={"id": 7}))
-    result = await _call(pay, "filings_retrieve", {"id": 7}, payment=PAYMENT)
+    with caplog.at_level("WARNING"):
+        result = await _call(pay, "filings_retrieve", {"id": 7}, payment=PAYMENT)
     assert result.isError is False
     assert result.meta is None
+    assert "served without PAYMENT-RESPONSE" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -171,20 +193,31 @@ async def test_an_api_refusal_is_an_error_with_its_detail(pay, respx_router) -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("answer", [
-    httpx.Response(503, json={"detail": "busy"}),
-    httpx.ConnectTimeout("t"),
-    httpx.ReadTimeout("t"),
-])
-async def test_a_paid_call_is_never_retried(pay, respx_router, answer) -> None:
-    # A retry would send the same signed payment twice.
-    kwargs = {"side_effect": answer} if isinstance(answer, Exception) else {"return_value": answer}
-    route = respx_router.get(f"{TEST_API_BASE}/companies/").mock(**kwargs)
+async def test_a_paid_call_is_not_retried_on_a_transient_status(pay, respx_router) -> None:
+    # `_api_get` retries a 503 once; a retry here would send the same signed
+    # payment twice. (httpcore's connect-phase retries happen before anything is
+    # sent, and respx patches below them, so they are not visible here.)
+    route = respx_router.get(f"{TEST_API_BASE}/companies/").mock(
+        return_value=httpx.Response(503, json={"detail": "busy"}))
     result = await _call(pay, "companies_list", payment=PAYMENT)
     assert result.isError is True
     assert route.call_count == 1
-    if isinstance(answer, Exception):
-        assert "may still settle" in result.content[0].text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error, payment, may_settle", [
+    (httpx.ReadTimeout("t"), PAYMENT, True),
+    (httpx.ConnectTimeout("t"), PAYMENT, False),
+    (httpx.ConnectError("t"), PAYMENT, False),
+    (httpx.ReadTimeout("t"), None, False),
+])
+async def test_a_transport_error_says_whether_the_payment_may_settle(
+    pay, respx_router, error, payment, may_settle
+) -> None:
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(side_effect=error)
+    result = await _call(pay, "companies_list", payment=payment)
+    assert result.isError is True
+    assert ("may still settle" in result.content[0].text) is may_settle
 
 
 @pytest.mark.asyncio
@@ -259,3 +292,77 @@ def test_the_pay_endpoint_rejects_a_foreign_browser_origin(pay, respx_router) ->
         resp = _rpc(client, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
                     Origin="https://evil.example")
     assert resp.status_code == 403
+
+
+# --- inputs the relay must refuse or shape -------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_path_parameter_is_validated_before_the_call(pay, respx_router) -> None:
+    route = respx_router.route(host="api.test.invalid").mock(return_value=httpx.Response(200, json={}))
+    result = await _call(pay, "isins_retrieve", {"isin": "../../admin"}, payment=PAYMENT)
+    assert result.isError is True
+    assert route.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_payment_is_refused_without_calling_the_api(pay, respx_router) -> None:
+    route = respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(200, json={}))
+    result = await _call(pay, "companies_list", payment={**PAYMENT, "pad": "x" * 20_000})
+    assert result.isError is True and "too large" in result.content[0].text
+    assert route.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_an_upstream_error_body_is_not_echoed(pay, respx_router) -> None:
+    respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(
+        500, text="<html>Traceback internal-secret-path</html>"))
+    result = await _call(pay, "companies_list", payment=PAYMENT)
+    assert result.isError is True
+    assert "internal-secret-path" not in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_hidden_fields_are_scrubbed_from_a_paid_answer(pay, respx_router) -> None:
+    respx_router.get(f"{TEST_API_BASE}/filings/7/").mock(return_value=httpx.Response(
+        200, json={"id": 7, "markdown_url": "https://api.test.invalid/filings/7/markdown/"},
+        headers={"PAYMENT-RESPONSE": _b64(SETTLED)}))
+    result = await _call(pay, "filings_retrieve", {"id": 7}, payment=PAYMENT)
+    assert "markdown_url" not in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_page_size_is_clamped_and_no_markdown_window_is_added(pay, respx_router) -> None:
+    route = respx_router.get(f"{TEST_API_BASE}/companies/").mock(return_value=httpx.Response(200, json={}))
+    await _call(pay, "companies_list", {"page_size": 1000}, payment=PAYMENT)
+    params = route.calls.last.request.url.params
+    assert params["page_size"] == "100"
+    assert "limit" not in params
+
+
+@pytest.mark.asyncio
+async def test_a_markdown_limit_below_one_is_refused(pay, respx_router) -> None:
+    route = respx_router.get(f"{TEST_API_BASE}/filings/9/markdown/").mock(return_value=httpx.Response(200, text=""))
+    result = await _call(pay, "filings_markdown_retrieve", {"id": 9, "limit": 0}, payment=PAYMENT)
+    assert result.isError is True
+    assert route.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_pay_tools_describe_paid_use(pay) -> None:
+    async with Client(pay.mcp_pay) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+    markdown = tools["filings_markdown_retrieve"].description
+    assert "new payment" in markdown and "once per day" not in markdown
+    assert "/markdown/search/" not in markdown
+    assert "filings_markdown_retrieve(filing_id)" not in tools["filings_retrieve"].description
+    for tool in tools.values():
+        assert "on_watchlist" not in tool.inputSchema.get("properties", {}), tool.name
+
+
+def test_an_oversized_request_body_is_refused_before_parsing(pay, respx_router) -> None:
+    from starlette.testclient import TestClient
+
+    with TestClient(pay.app) as client:
+        resp = client.post("/mcp-pay", content=b"{" + b" " * (70 * 1024) + b"}", headers={
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+    assert resp.status_code == 413

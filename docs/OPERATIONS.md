@@ -249,8 +249,19 @@ curl -sS https://mcp.financialfilings.com/mcp-pay \
 - **The API sees this service's IP**, not the payer's. Every relayed payment is recorded
   with the country of the Cloud Run egress, and all relayed callers share the API's
   per-network x402 limits (`X402_ISSUE_PER_WIDE_IP_MIN` quotes and
-  `X402_VERIFY_PER_WIDE_IP_MIN` verifies a minute per /24). Fixing either needs a
-  trusted relay header on the API side.
+  `X402_VERIFY_PER_WIDE_IP_MIN` verifies a minute per /24). Every paid call takes a
+  quote first, so all `/mcp-pay` callers together get about 60 paid calls a minute, and
+  one anonymous client looping unpaid calls can use that budget up for everyone. Signed-in
+  `/mcp` users are not affected (those limits apply to keyless requests only, and the API
+  host has no per-IP edge or nginx limit). Fixing this, and the country, needs a trusted
+  relay header on the API side. Bulk buyers should use keyless REST, which has neither
+  limit shared.
+- **Request size.** A request body over 64 KiB, or with a malformed `Content-Length`, is
+  refused with 413 before it is parsed.
+- **A definite settle failure** comes back as an `isError` result with the API's message
+  and its `PAYMENT-RESPONSE`, but no `accepts`, so x402 clients do not re-pay by
+  themselves; the next (unpaid) call gets a fresh quote.
+- **`on_watchlist` is not offered**: a keyless caller has no watchlist.
 - **No markdown re-read discount.** Each `filings_markdown_retrieve` window is a new
   payment (100k characters by default, 140k max), as on keyless REST.
 - **No usage analytics.** `UsageAnalyticsMiddleware` is on the `/mcp` server only; the
