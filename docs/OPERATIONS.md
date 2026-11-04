@@ -275,7 +275,8 @@ secret (`$REGISTRY_KEY_SECRET`, named in the internal runbook).
 **Publishing is automatic.** Every release the deploy workflow (see "Deploying" in `AGENTS.md`)
 ships also publishes the registry entry: it sets `version` in `server.json` to the release version,
 commits that with the `requirements.txt` bump, then runs `login dns` / `publish` / `logout`. A
-failed publish fails the run. So the registry version matches `/health`, and a change to
+failed publish fails the run and is not retried until the next release (or a forced re-run of
+that workflow). So the registry version matches `/health`, and a change to
 `server.json` (description, `websiteUrl`) goes live with the next release. Merging alone still
 publishes nothing.
 
