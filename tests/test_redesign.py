@@ -29,14 +29,35 @@ def test_pruned_default_surface(mcp_module) -> None:
         "companies_dividends_retrieve",
         # #149/#156 entries, likewise previously unasserted.
         "agent_key_claim", "agent_signup", "filings_document_retrieve",
+        # 2026-11-04 refresh: web#8991's batch endpoint, already served by
+        # the hand-built filings_markdown_search_batch.
+        "filings_markdown_search_create",
     ):
         assert gone not in tools, f"{gone} should be pruned from the default surface"
     for kept in (
         "companies_list", "companies_financials_retrieve",
         "filings_list", "filings_markdown_retrieve", "filing_types_list",
-        "usage_retrieve",
+        "usage_retrieve", "filings_markdown_search_batch",
     ):
         assert kept in tools, f"{kept} must stay on the default surface"
+
+
+def test_batch_search_exclusion_key_names_a_real_operation() -> None:
+    """`not in tools` above cannot catch a misspelt denylist key: the tool would
+    then ship under its real name and the misspelt one would still be absent.
+    So assert the excluded key is an operationId the committed snapshot
+    actually contains, at the path the batch tool calls."""
+    import json
+    from pathlib import Path
+
+    from scripts.generate_mcp_tools import _PRUNED_EXCLUDE
+
+    snapshot = json.loads(
+        (Path(__file__).parent.parent / "scripts" / "openapi.snapshot.json").read_text()
+    )
+    op = snapshot["paths"]["/filings/markdown/search/"]["post"]
+    assert op["operationId"] == "filings_markdown_search_create"
+    assert op["operationId"] in _PRUNED_EXCLUDE
 
 
 def test_guide_tools_and_nav_search_present(mcp_module) -> None:

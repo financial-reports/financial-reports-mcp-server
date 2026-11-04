@@ -137,6 +137,15 @@ _PRUNED_EXCLUDE = {
     "companies_segments_retrieve",
     "companies_splits_retrieve",
     "companies_dividends_retrieve",
+    # Added with the 2026-11-04 refresh, after financial-reports/web#8991 (G6)
+    # published the batch search. `filings_markdown_search_create` is
+    # POST /filings/markdown/search/, the endpoint behind the hand-built
+    # `filings_markdown_search_batch` tool, so a generated copy would put two
+    # tools for one job on the default surface (same ground as
+    # `filings_markdown_search_retrieve` above). The key was read from the drift
+    # report against the live schema, not supplied by hand: this is a denylist,
+    # so a misspelt key would fail open and the tool would ship.
+    "filings_markdown_search_create",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 
