@@ -246,16 +246,11 @@ curl -sS https://mcp.financialfilings.com/mcp-pay \
 - **Who can pay.** Clients built on an x402 MCP client SDK (`x402` Python
   `x402.mcp.x402MCPSession`, `@x402/mcp` TypeScript, Go). Hosted assistants (claude.ai,
   ChatGPT, Cursor, Codex) are not known to sign x402 payments over MCP; untested.
-- **The API sees this service's IP**, not the payer's. Every relayed payment is recorded
-  with the country of the Cloud Run egress, and all relayed callers share the API's
-  per-network x402 limits (`X402_ISSUE_PER_WIDE_IP_MIN` quotes and
-  `X402_VERIFY_PER_WIDE_IP_MIN` verifies a minute per /24). Every paid call takes a
-  quote first, so all `/mcp-pay` callers together get about 60 paid calls a minute, and
-  one anonymous client looping unpaid calls can use that budget up for everyone. Signed-in
-  `/mcp` users are not affected (those limits apply to keyless requests only, and the API
-  host has no per-IP edge or nginx limit). Fixing this, and the country, needs a trusted
-  relay header on the API side. Bulk buyers should use keyless REST, which has neither
-  limit shared.
+- **The API sees this service's IP**, not the payer's. Relayed payments are recorded with
+  the country of the Cloud Run egress, and all relayed callers share the API's
+  per-network x402 limits, so `/mcp-pay` as a whole gets roughly 60 paid calls a minute.
+  Lifting either needs a trusted relay header on the API side. High-volume buyers should
+  use keyless REST directly.
 - **Request size.** A request body over 64 KiB, or with a malformed `Content-Length`, is
   refused with 413 before it is parsed.
 - **A definite settle failure** comes back as an `isError` result with the API's message
