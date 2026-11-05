@@ -6132,9 +6132,24 @@ async def filings_search(
             )
         if not results:
             if page_no > 1:
+                # Past the last page. Only say earlier pages hold results when
+                # count says there are some, and never drop the early-stop
+                # warning here: an empty later page of an incomplete scan is no
+                # more an absence than an empty first page (SPECHT, 3/3).
+                where = (
+                    f"Earlier pages hold the {count} result(s) found."
+                    if isinstance(count, int) and count > 0
+                    else "No visible results were found on any page."
+                )
+                caveat = (
+                    " This search stopped before checking every candidate, so "
+                    "matching filings may still exist: narrow the queries or "
+                    "filters and search again."
+                    if stopped_early else ""
+                )
                 return (
-                    f"No results on page {page_no} for {shown} ({count} result(s) in "
-                    "total). Earlier pages hold them; this page was not billed."
+                    f"No results on page {page_no} for {shown}. {where}"
+                    f"{caveat} This page was not billed."
                 )
             return (
                 f"No filing matched {shown} within these filters (searched: filings "

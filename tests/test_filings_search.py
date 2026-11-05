@@ -175,6 +175,27 @@ async def test_capped_copy_keys_on_scan_complete(
     assert refuse not in out
 
 
+@pytest.mark.parametrize("count, scan_complete, expect, refuse", [
+    (40, True, "Earlier pages hold the 40 result(s)", "may still exist"),
+    (40, False, "may still exist", "No visible results"),
+    (0, False, "may still exist", "Earlier pages hold"),
+    (0, True, "No visible results were found", "may still exist"),
+])
+@pytest.mark.asyncio
+async def test_an_empty_later_page_keeps_the_early_stop_warning(
+    mcp_module, monkeypatch, fake_access_token, respx_router,
+    count, scan_complete, expect, refuse
+):
+    """SPECHT on #191 (3/3): page 2 of an incomplete scan said only "earlier
+    pages hold them", which reads as exhausted pagination."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page(
+        [], count=count, capped=not scan_complete, scan_complete=scan_complete)))
+    out = await _tool(mcp_module)(queries=["revenue"], page=3)
+    assert expect in out
+    assert refuse not in out
+
+
 @pytest.mark.asyncio
 async def test_empty_page_with_a_complete_scan_is_a_real_absence(
     mcp_module, monkeypatch, fake_access_token, respx_router
