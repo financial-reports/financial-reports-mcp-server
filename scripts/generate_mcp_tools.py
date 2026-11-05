@@ -6017,7 +6017,9 @@ def _cross_search_match_lines(match: Any) -> list[str]:
 def _cross_search_result_lines(item: dict) -> list[str]:
     company = item.get("company") or {}
     ftype = item.get("filing_type") or {}
-    released = str(item.get("release_datetime") or "")[:10]
+    # web#9601 indexes filings with no release time too (/filings/ shows them),
+    # so say so rather than print an empty column.
+    released = str(item.get("release_datetime") or "")[:10] or "no release date"
     head = (
         f"- filing {item.get('id')} | {company.get('name') or '?'} "
         f"(company {company.get('id')}) | {ftype.get('code') or '?'} | "

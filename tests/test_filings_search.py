@@ -108,6 +108,18 @@ async def test_truncated_filing_is_disclosed(
 
 
 @pytest.mark.asyncio
+async def test_a_filing_without_a_release_date_says_so(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([
+        {**_filing(1, LITERAL), "release_datetime": None},
+    ])))
+    out = await _tool(mcp_module)(queries=["going concern"])
+    assert "| no release date |" in out
+
+
+@pytest.mark.asyncio
 async def test_capped_says_more_exist_without_claiming_count_is_1000(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
