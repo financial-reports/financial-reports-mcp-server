@@ -60,6 +60,19 @@ def test_batch_search_exclusion_key_names_a_real_operation() -> None:
     assert op["operationId"] in _PRUNED_EXCLUDE
 
 
+def test_batch_search_post_is_annotated_read_only() -> None:
+    """On MCP_FULL_SURFACE=1 the generated batch search would otherwise fall
+    through to the destructive default for POSTs, so read-only-only clients
+    would hide a search and gating clients would confirm every call."""
+    from scripts.generate_mcp_tools import compute_post_annotations
+
+    hints = compute_post_annotations(
+        "filings_markdown_search_create", "/filings/markdown/search/"
+    )
+    assert "readOnlyHint=True" in hints
+    assert "destructiveHint=False" in hints
+
+
 def test_guide_tools_and_nav_search_present(mcp_module) -> None:
     """The guide tools (standing in for the dropped ISIC/reference tools, for
     tool-only clients) and the huge-filing search tool are on the default surface."""

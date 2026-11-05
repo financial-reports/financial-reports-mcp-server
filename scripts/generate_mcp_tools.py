@@ -139,12 +139,15 @@ _PRUNED_EXCLUDE = {
     "companies_dividends_retrieve",
     # Added with the 2026-11-04 refresh, after financial-reports/web#8991 (G6)
     # published the batch search. `filings_markdown_search_create` is
-    # POST /filings/markdown/search/, the endpoint behind the hand-built
-    # `filings_markdown_search_batch` tool, so a generated copy would put two
-    # tools for one job on the default surface (same ground as
-    # `filings_markdown_search_retrieve` above). The key was read from the drift
-    # report against the live schema, not supplied by hand: this is a denylist,
-    # so a misspelt key would fail open and the tool would ship.
+    # POST /filings/markdown/search/. The hand-built
+    # `filings_markdown_search_batch` does the same job but does NOT call it yet:
+    # it downloads each filing via GET /filings/{id}/markdown/ and scans it here.
+    # Moving that tool onto this endpoint is the batch half of #166. Until then,
+    # a generated copy would put two batch-search tools on the default surface,
+    # and the generated one has a generic description, no response cap and none
+    # of the hand-built tool's matched/not-searched disclosure. The key was read
+    # from the drift report against the live schema, not supplied by hand: this
+    # is a denylist, so a misspelt key would fail open and the tool would ship.
     "filings_markdown_search_create",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
@@ -6845,7 +6848,10 @@ def compute_post_annotations(func_name: str, path: str) -> str:
     # destructiveHint=True would make conforming clients confirmation-gate
     # every call, which defeats the point of having it on the curated
     # default surface.
-    if func_name == "companies_resolve_create":
+    # filings_markdown_search_create (POST /filings/markdown/search/) is the
+    # same shape: a POST only because 50 filing ids and three queries do not
+    # fit a query string. It searches and changes nothing.
+    if func_name in ("companies_resolve_create", "filings_markdown_search_create"):
         parts = [
             "readOnlyHint=True",
             "destructiveHint=False",
