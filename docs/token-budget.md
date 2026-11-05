@@ -9,7 +9,7 @@ Total tools registered: **19**
 | `companies_list` | 1057 | 1888 | 736 |
 | `companies_resolve_create` | 2727 | 87 | 702 |
 | `filings_markdown_retrieve` | 2436 | 171 | 651 |
-| `filings_search` | 1789 | 730 | 629 |
+| `filings_search` | 1819 | 730 | 636 |
 | `filings_markdown_search_batch` | 1394 | 202 | 398 |
 | `filings_markdown_search` | 1427 | 164 | 397 |
 | `filings_retrieve` | 1144 | 74 | 304 |
@@ -24,7 +24,7 @@ Total tools registered: **19**
 | `get_fr_industry_classification_isic` | 190 | 33 | 55 |
 | `get_fr_markdown_fetch_strategy` | 187 | 33 | 54 |
 
-**Total approx tokens for `tools/list`: 8357**
+**Total approx tokens for `tools/list`: 8364**
 
 > **Methodology**: token count is approximated as `len(chars) // 4`
 > (per-tool description + JSON-serialized parameter schema). The actual

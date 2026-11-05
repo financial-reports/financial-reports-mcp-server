@@ -5944,9 +5944,13 @@ async def filings_markdown_search_batch(
 #                at most the first `search.max_results` (1000) by relevance;
 #                a page past that is a 400 `search_page_past_cap`
 #   envelope     count = results the caller can SEE within the cap;
-#                search.capped = the INDEX total exceeded the cap, which counts
-#                filings the caller cannot see, so capped can be true while
-#                count < 1000
+#                search.capped (web#9601 5f846a1fe) = more than 1000 visible
+#                results exist OR the scan stopped before the index ran out
+#                (10,000 candidates read or 2 s). So capped means "the search
+#                did not check every candidate", and it can be true with count
+#                below 1000, including count == 0: a broad query whose top
+#                candidates the caller cannot see. An empty CAPPED page is
+#                therefore not an absence.
 #   match        null = snippets not computed (after the first 10 of a page,
 #                or unreadable in time); {query: null, hits: [], total_hits: 0}
 #                = matched the index (stems, accents, CJK) with no literal
@@ -6068,9 +6072,9 @@ async def filings_search(
     (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and period filters are NOT available here;
     use a release-date range.
     An EMPTY result means no filing within the filters matched, among filings with
-    extracted text, within the first 20 MB of each filing's text. Results are capped
-    at the first 1000 by relevance; when more exist the result says so — narrow the
-    queries or filters rather than paging further. Each result's snippets show where
+    extracted text, within the first 20 MB of each filing's text, unless the result
+    says the search stopped early: then matches may exist and you should narrow the
+    queries or filters. At most the first 1000 results by relevance are returned. Each result's snippets show where
     the text matched; only the first 10 results of a page carry snippets.
     Cost: one Markdown request (6 credits, 12 if any filing on the page is a premium
     type) for each page that returns at least one filing. A search with no results
@@ -6111,6 +6115,14 @@ async def filings_search(
         count = payload.get("count")
         record_result_count(len(results))
         shown = ", ".join(_echo_query(v) for v in values)
+        if not results and search.get("capped") and page_no == 1:
+            return (
+                f"No visible filing found for {shown} in the part of the index this "
+                "search checked. It stopped before checking every candidate, so "
+                "matching filings may still exist: this is NOT an absence. Narrow "
+                "the queries or add filters (company, country, type, dates) and "
+                "search again. Nothing was billed."
+            )
         if not results:
             if page_no > 1:
                 return (
@@ -6129,8 +6141,9 @@ async def filings_search(
         ]
         if search.get("capped"):
             lines.append(
-                f"More filings match than the first {cap} by relevance, which is all "
-                "this search can return. Narrow the queries or filters to see the rest."
+                "This search stopped before checking every candidate (it returns at "
+                f"most the first {cap} by relevance), so more matching filings may "
+                "exist. Narrow the queries or filters to reach them."
             )
         if payload.get("next"):
             lines.append(f"More results: call again with page={page_no + 1}.")

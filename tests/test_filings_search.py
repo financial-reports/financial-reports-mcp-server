@@ -131,9 +131,24 @@ async def test_capped_says_more_exist_without_claiming_count_is_1000(
     )))
     out = await _tool(mcp_module)(queries=["revenue"])
     assert out.startswith("740 filing(s) matched")
-    assert "More filings match than the first 1000" in out
+    assert "more matching filings may exist" in out
     assert "at least 1000" not in out
     assert "page=2" in out
+
+
+@pytest.mark.asyncio
+async def test_an_empty_CAPPED_page_is_not_reported_as_an_absence(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """web#9601 5f846a1fe: the scan stops at 10,000 candidates or 2 s. A broad
+    query whose top candidates the caller cannot see returns count=0 with
+    capped=true. "No filing matched" there would be a false absence."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(
+        200, json=_page([], count=0, capped=True)))
+    out = await _tool(mcp_module)(queries=["annual report"])
+    assert "NOT an absence" in out and "may still exist" in out
+    assert "No filing matched" not in out
 
 
 @pytest.mark.asyncio
