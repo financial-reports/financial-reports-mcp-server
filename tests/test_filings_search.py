@@ -228,10 +228,14 @@ async def test_past_cap_400_is_raised_with_its_reason(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
     _auth_as(mcp_module, monkeypatch, fake_access_token)
+    # web#9601 as merged sends a BARE {"detail": ...}: the error code does not
+    # reach the wire until its follow-up adds `type`. So the reason must get
+    # through from `detail` alone.
     respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(
-        400, json={"detail": "search_page_past_cap: narrow q or the filters."}))
-    with pytest.raises(mcp_module.UpstreamHTTPError):
+        400, json={"detail": "Results are capped at the first 1000; narrow q or the filters."}))
+    with pytest.raises(mcp_module.UpstreamHTTPError) as exc:
         await _tool(mcp_module)(queries=["revenue"], page=60, page_size=20)
+    assert "capped at the first 1000" in str(exc.value)
 
 
 @pytest.mark.parametrize("queries, fragment", [
