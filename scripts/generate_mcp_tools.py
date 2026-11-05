@@ -5950,7 +5950,10 @@ async def filings_markdown_search_batch(
 #                did not check every candidate", and it can be true with count
 #                below 1000, including count == 0: a broad query whose top
 #                candidates the caller cannot see. An empty CAPPED page is
-#                therefore not an absence.
+#                therefore not an absence. search.scan_complete (bool, added
+#                on #9601 after 5f846a1fe) says which: false = stopped early.
+#                When it is absent, capped is read as a possible early stop,
+#                the reading that can never produce a false absence.
 #   match        null = snippets not computed (after the first 10 of a page,
 #                or unreadable in time); {query: null, hits: [], total_hits: 0}
 #                = matched the index (stems, accents, CJK) with no literal
@@ -6115,7 +6118,11 @@ async def filings_search(
         count = payload.get("count")
         record_result_count(len(results))
         shown = ", ".join(_echo_query(v) for v in values)
-        if not results and search.get("capped") and page_no == 1:
+        scan_complete = search.get("scan_complete")
+        stopped_early = scan_complete is False or (
+            scan_complete is None and bool(search.get("capped"))
+        )
+        if not results and stopped_early and page_no == 1:
             return (
                 f"No visible filing found for {shown} in the part of the index this "
                 "search checked. It stopped before checking every candidate, so "
@@ -6139,11 +6146,16 @@ async def filings_search(
             f"{count} filing(s) matched {shown} (page {page_no}, {len(results)} shown, "
             "ranked by relevance; scope: filings with extracted text)."
         ]
-        if search.get("capped"):
+        if stopped_early:
             lines.append(
                 "This search stopped before checking every candidate (it returns at "
                 f"most the first {cap} by relevance), so more matching filings may "
                 "exist. Narrow the queries or filters to reach them."
+            )
+        elif search.get("capped"):
+            lines.append(
+                f"More than {cap} filings match; only the first {cap} by relevance "
+                "can be returned. Narrow the queries or filters to see the rest."
             )
         if payload.get("next"):
             lines.append(f"More results: call again with page={page_no + 1}.")

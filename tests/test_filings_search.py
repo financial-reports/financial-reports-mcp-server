@@ -42,11 +42,14 @@ def _filing(fid, match, title="Annual report 2024"):
     }
 
 
-def _page(results, *, count=None, capped=False, next_url=None):
+def _page(results, *, count=None, capped=False, next_url=None, scan_complete=None):
+    search = {"capped": capped, "max_results": 1000, "scope": "filings_with_text"}
+    if scan_complete is not None:
+        search["scan_complete"] = scan_complete
     return {
         "count": len(results) if count is None else count,
         "next": next_url, "previous": None, "results": results,
-        "search": {"capped": capped, "max_results": 1000, "scope": "filings_with_text"},
+        "search": search,
     }
 
 
@@ -149,6 +152,50 @@ async def test_an_empty_CAPPED_page_is_not_reported_as_an_absence(
     out = await _tool(mcp_module)(queries=["annual report"])
     assert "NOT an absence" in out and "may still exist" in out
     assert "No filing matched" not in out
+
+
+@pytest.mark.parametrize("capped, scan_complete, expect, refuse", [
+    (True, True, "More than 1000 filings match", "may exist"),
+    (True, False, "more matching filings may exist", "More than 1000"),
+    (False, False, "more matching filings may exist", "More than 1000"),
+    (False, True, None, "may exist"),
+])
+@pytest.mark.asyncio
+async def test_capped_copy_keys_on_scan_complete(
+    mcp_module, monkeypatch, fake_access_token, respx_router,
+    capped, scan_complete, expect, refuse
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page(
+        [_filing(1, LITERAL)], count=500, capped=capped, scan_complete=scan_complete)))
+    out = await _tool(mcp_module)(queries=["revenue"])
+    assert out.startswith("500 filing(s) matched")
+    if expect:
+        assert expect in out
+    assert refuse not in out
+
+
+@pytest.mark.asyncio
+async def test_empty_page_with_a_complete_scan_is_a_real_absence(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(
+        200, json=_page([], count=0, capped=False, scan_complete=True)))
+    out = await _tool(mcp_module)(queries=["xyzzy"])
+    assert "No filing matched" in out and "NOT an absence" not in out
+
+
+@pytest.mark.asyncio
+async def test_empty_page_with_an_incomplete_scan_is_not_an_absence_even_uncapped(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """scan_complete is the explicit signal; it must win over capped."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(
+        200, json=_page([], count=0, capped=False, scan_complete=False)))
+    out = await _tool(mcp_module)(queries=["annual report"])
+    assert "NOT an absence" in out
 
 
 @pytest.mark.asyncio
