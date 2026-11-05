@@ -5406,7 +5406,8 @@ async def filings_markdown_search(
     passages with their character offsets (e.g. query='going concern'). Use it INSTEAD
     of paging a long filing. Best for what only the document has: disclosures, risk and
     policy language, commitments, auditor and going-concern wording, and the sentence
-    around a number.
+    around a number. Before you have a filing, find the ones that say something
+    with filings_search.
     FOR A COMPANY-AND-PERIOD LINE ITEM — revenue, assets, cash flow, EPS and the rest
     — CALL companies_financials_retrieve FIRST: it returns those as structured values
     with their period and currency, which grepping a document cannot give you.
@@ -5589,6 +5590,8 @@ async def filings_markdown_search_batch(
     """Search ONE query across SEVERAL filings in a single call — use this instead of
     calling filings_markdown_search once per filing when you are checking the same term
     across a set (e.g. the same disclosure across a company's filings, or across peers).
+    To find which filings mention a term at all, use filings_search; this tool checks
+    a set you already have.
     SAME RULE AS THE SINGLE-FILING TOOL: for a company-and-period line item, call
     companies_financials_retrieve first — per company, not as a sweep here, which
     costs a read per filing. Stay here when the question is what a PARTICULAR filing
@@ -5922,6 +5925,238 @@ async def filings_markdown_search_batch(
     except Exception as exc:
         logger.exception("filings_markdown_search_batch failed")
         return _safe_error("filings_markdown_search_batch", exc)
+
+
+# ---------------------------------------------------------------------------
+# CROSS-CORPUS SEARCH — hand-built tool over GET /filings/search/ (web#8004)
+# ---------------------------------------------------------------------------
+# Hand-built rather than generated, for the same reason as the two markdown
+# searches: the generic template would hand the model the raw envelope, and
+# the three `match` states below are exactly the thing a raw envelope lets a
+# model misread as "this filing did not match".
+#
+# Contract (financial-reports/web#9601, read at 6da33bc71 / 758db4314):
+#   q            required, repeatable, OR-ed, <= 5 values of <= 200 chars
+#   filters      only the ones the index mirrors; anything else is a 400
+#                `filter_not_supported_with_q` (fiscal_year / fiscal_period
+#                among them), so this tool exposes only supported ones
+#   pagination   page-number only (cursor is a 400), default 20, max 100,
+#                at most the first `search.max_results` (1000) by relevance;
+#                a page past that is a 400 `search_page_past_cap`
+#   envelope     count = results the caller can SEE within the cap;
+#                search.capped = the INDEX total exceeded the cap, which counts
+#                filings the caller cannot see, so capped can be true while
+#                count < 1000
+#   match        null = snippets not computed (after the first 10 of a page,
+#                or unreadable in time); {query: null, hits: [], total_hits: 0}
+#                = matched the index (stems, accents, CJK) with no literal
+#                occurrence; else literal hits. NONE of them means no match.
+#   503          `search_unavailable`, also on a partial shard answer: an
+#                outage, never an empty result (the shared error path raises)
+#   billing      one Markdown request per PAGE with >= 1 result (12 credits if
+#                any result is a premium type, else 6); an empty page is free;
+#                no dedup, so every page is billed again
+_CROSS_SEARCH_MAX_Q = 5
+_CROSS_SEARCH_MAX_PAGE_SIZE = 100
+
+
+def _cross_search_queries(queries: Any) -> list[str]:
+    """Normalise `queries` to 1..5 stripped strings of <= 200 chars.
+
+    A bare string is accepted as one query: models routinely send one where a
+    list is declared, and rejecting it would cost a round trip for nothing.
+    Duplicates are dropped so they cannot use up the five slots."""
+    if isinstance(queries, str):
+        queries = [queries]
+    if not isinstance(queries, (list, tuple)):
+        raise ToolInputError("queries must be a list of 1 to 5 strings")
+    cleaned = list(dict.fromkeys(
+        q.strip() for q in queries if isinstance(q, str) and q.strip()
+    ))
+    if not cleaned:
+        raise ToolInputError("queries must contain at least one non-empty string")
+    if len(cleaned) > _CROSS_SEARCH_MAX_Q:
+        raise ToolInputError(
+            f"at most {_CROSS_SEARCH_MAX_Q} queries per call (got {len(cleaned)}). "
+            "Keep the term and its most likely translations or synonyms."
+        )
+    too_long = [q for q in cleaned if len(q) > _MAX_QUERY_CHARS]
+    if too_long:
+        raise ToolInputError(
+            f"each query must be at most {_MAX_QUERY_CHARS} characters "
+            f"(got {len(too_long[0])}). Search a distinctive phrase, not a passage."
+        )
+    return cleaned
+
+
+def _cross_search_match_lines(match: Any) -> list[str]:
+    """Render one result's `match`. Every branch says the filing DID match:
+    the index returned it, so no state here is an absence."""
+    if not isinstance(match, dict):
+        return ["    matched; snippets not shown for this result "
+                "(only the first 10 of a page carry them)"]
+    truncated = (
+        " Note: this filing is longer than the 20 MB the index reads, so text "
+        "past that point was not searched."
+        if match.get("truncated") else ""
+    )
+    hits = match.get("hits") or []
+    if not hits:
+        return ["    matched, but no exact-phrase snippet (the index also matches "
+                "word stems, accent-folded and CJK-segmented forms)." + truncated]
+    lines = [
+        f"    {match.get('total_hits')} literal occurrence(s) of "
+        f"{_echo_query(match.get('query') or '')}." + truncated
+    ]
+    for hit in hits:
+        snippet = " ".join(str(hit.get("snippet") or "").split())
+        lines.append(f"    @offset {hit.get('offset')}: {snippet}")
+    return lines
+
+
+def _cross_search_result_lines(item: dict) -> list[str]:
+    company = item.get("company") or {}
+    ftype = item.get("filing_type") or {}
+    released = str(item.get("release_datetime") or "")[:10]
+    head = (
+        f"- filing {item.get('id')} | {company.get('name') or '?'} "
+        f"(company {company.get('id')}) | {ftype.get('code') or '?'} | "
+        f"{released} | {item.get('title') or ''}"
+    )
+    return [head, *_cross_search_match_lines(item.get("match"))]
+
+
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="Search Text Across All Filings",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+@subscription_required
+async def filings_search(
+    queries: list[str],
+    company: Optional[int] = None,
+    include_predecessors: Optional[bool] = None,
+    countries: Optional[str] = None,
+    languages: Optional[str] = None,
+    types: Optional[str] = None,
+    release_datetime_from: Optional[str] = None,
+    release_datetime_to: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> str:
+    """Find WHICH filings, and which companies, say something: one full-text search
+    across the text of every filing, ranked by relevance. Use it for "which companies
+    disclosed X", "who mentions Y", "filings that discuss Z" — questions where you do
+    not yet know the filing. Once you have a filing, search INSIDE it with
+    filings_markdown_search. For a company-and-period line item (revenue, assets, EPS)
+    call companies_financials_retrieve instead.
+    `queries`: 1 to 5 phrases, OR-ed, each at most 200 characters. Filings are in
+    many languages, so pass the term AND its translations into the languages of the
+    markets you care about, plus close synonyms, as separate entries (e.g.
+    ["going concern", "continuité d'exploitation", "Unternehmensfortführung"]).
+    Matching folds case and accents and also matches word stems.
+    Filters (all optional, combinable): company (internal id; include_predecessors
+    adds the issuers it succeeded), countries / languages (comma-separated ISO codes),
+    types (comma-separated filing type codes), release_datetime_from / _to
+    (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and period filters are NOT available here;
+    use a release-date range.
+    An EMPTY result means no filing within the filters matched, among filings with
+    extracted text, within the first 20 MB of each filing's text. Results are capped
+    at the first 1000 by relevance; when more exist the result says so — narrow the
+    queries or filters rather than paging further. Each result's snippets show where
+    the text matched; only the first 10 results of a page carry snippets.
+    Cost: one Markdown request (6 credits, 12 if any filing on the page is a premium
+    type) for each page that returns at least one filing. A search with no results
+    bills nothing. Every page is billed separately, so fetch further pages only when
+    you need them."""
+    try:
+        _require_auth_context()
+        values = _cross_search_queries(queries)
+        try:
+            page_no = max(1, int(page))
+            size = max(1, min(int(page_size), _CROSS_SEARCH_MAX_PAGE_SIZE))
+        except (TypeError, ValueError):
+            raise ToolInputError("page and page_size must be integers")
+        if include_predecessors and company is None:
+            raise ToolInputError("include_predecessors needs company")
+        params: list[tuple[str, Any]] = [("q", v) for v in values]
+        for name, value in (
+            ("company", company),
+            ("include_predecessors", include_predecessors),
+            ("countries", countries),
+            ("languages", languages),
+            ("types", types),
+            ("release_datetime_from", release_datetime_from),
+            ("release_datetime_to", release_datetime_to),
+        ):
+            if value is None or value == "":
+                continue
+            if isinstance(value, bool):
+                value = "true" if value else "false"
+            params.append((name, value))
+        params += [("page", page_no), ("page_size", size)]
+        response = await _api_get("/filings/search/", params=params)
+        if response.is_error:
+            _raise_upstream_text_error(response, response.text[:_MAX_ERROR_BODY])
+        payload = response.json()
+        results = payload.get("results") or []
+        search = payload.get("search") or {}
+        count = payload.get("count")
+        record_result_count(len(results))
+        shown = ", ".join(_echo_query(v) for v in values)
+        if not results:
+            if page_no > 1:
+                return (
+                    f"No results on page {page_no} for {shown} ({count} result(s) in "
+                    "total). Earlier pages hold them; this page was not billed."
+                )
+            return (
+                f"No filing matched {shown} within these filters (searched: filings "
+                "with extracted text, the first 20 MB of each). Nothing was billed. "
+                "Try translations or synonyms as extra queries, or widen the filters."
+            )
+        cap = search.get("max_results") or 1000
+        lines = [
+            f"{count} filing(s) matched {shown} (page {page_no}, {len(results)} shown, "
+            "ranked by relevance; scope: filings with extracted text)."
+        ]
+        if search.get("capped"):
+            lines.append(
+                f"More filings match than the first {cap} by relevance, which is all "
+                "this search can return. Narrow the queries or filters to see the rest."
+            )
+        if payload.get("next"):
+            lines.append(f"More results: call again with page={page_no + 1}.")
+        parts: list[str] = []
+        budget = _MAX_RESULT_CHARS - sum(len(x) + 1 for x in lines) - 200
+        omitted = 0
+        for item in results:
+            block = "\\n".join(_cross_search_result_lines(item))
+            if len(block) + 1 > budget:
+                omitted += 1
+                continue
+            budget -= len(block) + 1
+            parts.append(block)
+        if omitted:
+            lines.append(
+                f"{omitted} result(s) on this page are not shown: they did match, "
+                f"but the result is limited to {_MAX_RESULT_CHARS} characters. Use a "
+                "smaller page_size."
+            )
+        return "\\n".join(lines + parts)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
+    except ToolInputError as exc:
+        return _safe_error("filings_search", exc)
+    except Exception as exc:
+        logger.exception("filings_search failed")
+        return _safe_error("filings_search", exc)
 
 '''
 

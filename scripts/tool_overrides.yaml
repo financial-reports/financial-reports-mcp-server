@@ -140,7 +140,9 @@ filings_list:
   when_not_to_use: >
     Don't use to get filing content — use `filings_markdown_retrieve`
     after getting the filing ID. Don't use for financial KPIs — use
-    `companies_financials_retrieve`.
+    `companies_financials_retrieve`. Don't use `search` to find filings that
+    DISCUSS a topic: it matches titles and company names only. Use
+    `filings_search`, which searches the filings' text.
   examples:
     - user_says: "Apple's most recent 10-K"
       parameters: "company=<id>, type='10-K', ordering='-release_datetime', page_size=1"
