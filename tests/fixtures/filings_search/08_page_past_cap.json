@@ -1,0 +1,14 @@
+{
+ "recorded_at": "2026-11-06T07:09:14+00:00",
+ "note": null,
+ "query": "q=annual+report&page_size=25&page=41",
+ "status": 400,
+ "headers": {
+  "Content-Type": "application/json; charset=utf-8"
+ },
+ "body": {
+  "detail": "Full-text results are capped at the first 1000 by relevance and this page is past that point. More matches may exist: narrow q or the filters.",
+  "type": "search_page_past_cap",
+  "resolution": "Narrow q or the filters so the matches you need rank in the first pages."
+ }
+}
