@@ -2220,6 +2220,9 @@ _RATE_LIMIT_KINDS = {
     "daily_spend_cap_reached": "spend_cap_daily",
     "monthly_spend_ceiling_reached": "spend_ceiling_monthly",
     "burst_limit_exceeded": "burst_limit",
+    # GET /filings/search/ only (web cross_search.SearchBusy): the in-flight
+    # search cap, not an account limit. Retryable, Retry-After 2, never billed.
+    "search_busy": "search_busy",
 }
 
 # The 429s that retrying cannot fix within the current period. These get the
@@ -2702,6 +2705,13 @@ def _upstream_hint(
                 f"message below.{link} Message for the user: " + upstream_copy
             )
         wait = f" Retry after {retry_after}s." if retry_after else ""
+        if error_kind == "search_busy":
+            return (
+                "The search service is busy: too many full-text searches are "
+                "running right now. This is not "
+                "an account limit and nothing was billed: retry shortly, running "
+                "at most two searches at a time." + wait
+            )
         return "Rate limited by the FinancialFilings API — wait a moment and retry." + wait
     if status >= 500:
         # The server already retried once before surfacing this (see _api_get),
@@ -6110,6 +6120,19 @@ async def filings_search(
             params.append((name, value))
         params += [("page", page_no), ("page_size", size)]
         response = await _api_get("/filings/search/", params=params)
+        shown = ", ".join(_echo_query(v) for v in values)
+        if response.status_code == 404:
+            # A page past the last is a 404 page_out_of_range on this endpoint
+            # (prod recording 13), not a missing resource. Any other 404 stays
+            # an error below.
+            body = _parse_upstream_json(response.text[:_MAX_ERROR_BODY]) or {}
+            detail = body.get("detail")
+            if body.get("type") == "page_out_of_range" and isinstance(detail, str):
+                return (
+                    f"No results on page {page_no} for {shown}: "
+                    f"{sanitize_error_detail(detail, max_len=_MAX_UPSTREAM_COPY)} "
+                    "Earlier pages hold the results. This page was not billed."
+                )
         if response.is_error:
             _raise_upstream_text_error(response, response.text[:_MAX_ERROR_BODY])
         payload = response.json()
@@ -6117,7 +6140,6 @@ async def filings_search(
         search = payload.get("search") or {}
         count = payload.get("count")
         record_result_count(len(results))
-        shown = ", ".join(_echo_query(v) for v in values)
         scan_complete = search.get("scan_complete")
         stopped_early = scan_complete is False or (
             scan_complete is None and bool(search.get("capped"))

@@ -259,6 +259,84 @@ async def test_past_cap_400_is_raised_with_its_reason(
     assert "capped at the first 1000" in str(exc.value)
 
 
+# Live bodies from web master (users/exceptions.py _coded_hint,
+# filings/api_pagination.py _past_the_end, filings/cross_search.py SearchBusy);
+# prod recording 13 confirmed the 404 for a page past the last one.
+PAST_END = {
+    "detail": "Invalid page. Page 3 is past the end of the results: this request matches about 25.",
+    "type": "page_out_of_range",
+    "resolution": "The results ended before this page. Follow `next` until it is null "
+                  "instead of computing the last page from `count`, which can be an estimate.",
+}
+BUSY = {
+    "detail": "Too many full-text searches are running right now. Retry in a few seconds.",
+    "type": "search_busy",
+    "resolution": "Too many searches are running right now. Retry after the Retry-After "
+                  "seconds, and run at most a couple of searches at a time per account.",
+}
+
+
+@pytest.mark.asyncio
+async def test_a_page_past_the_last_is_a_result_not_a_missing_resource(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """The live endpoint answers a page past the last with 404 page_out_of_range.
+    Through the shared path that read "the requested resource does not exist —
+    check the id", which tells the model its SEARCH was wrong."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(404, json=PAST_END))
+    out = await _tool(mcp_module)(queries=["going concern"], page=3, page_size=20)
+    assert "No results on page 3" in out
+    assert "matches about 25" in out
+    assert "not billed" in out
+    assert "does not exist" not in out
+
+
+@pytest.mark.asyncio
+async def test_any_other_404_stays_an_error(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """A 404 that is not page_out_of_range (the endpoint gone, a flag closed)
+    must not be read as "past the last page"."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(404, json={"detail": "Not found."}))
+    with pytest.raises(mcp_module.UpstreamHTTPError):
+        await _tool(mcp_module)(queries=["going concern"], page=3)
+
+
+@pytest.mark.asyncio
+async def test_search_busy_is_retried_once_then_says_busy_not_rate_limited(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """429 search_busy (in-flight cap, Retry-After 2, unbilled) is not an account
+    limit: it is retried once, and if still busy the model is told to retry,
+    not that the account is rate limited."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(
+        429, json=BUSY, headers={"Retry-After": "2"}))
+    with pytest.raises(mcp_module.UpstreamHTTPError) as exc:
+        await _tool(mcp_module)(queries=["going concern"])
+    assert route.call_count == 2, "Retry-After 2 is within the retry cap"
+    msg = str(exc.value)
+    assert "busy" in msg and "not an account limit" in msg
+    assert "Retry after 2s" in msg
+    assert "Rate limited" not in msg
+    assert exc.value.error_kind == "search_busy"
+
+
+@pytest.mark.asyncio
+async def test_search_busy_then_free_returns_results(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(side_effect=[
+        httpx.Response(429, json=BUSY, headers={"Retry-After": "2"}),
+        httpx.Response(200, json=_page([_filing(1, LITERAL)])),
+    ])
+    out = await _tool(mcp_module)(queries=["going concern"])
+    assert "filing 1" in out
+
+
 @pytest.mark.parametrize("queries, fragment", [
     ([], "at least one"),
     (["  "], "at least one"),
