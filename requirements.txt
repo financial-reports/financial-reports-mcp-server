@@ -8,7 +8,7 @@
 # be removed and re-added. A range re-resolved on every image rebuild, so dev ran
 # 2.13.3 while prod ran 2.14.7. Keep this exact; bump deliberately, and diff
 # fastmcp/server/auth/oauth_proxy.py first. 3.x exists — do not move without an audit.
-fastmcp==2.14.7
+fastmcp==3.2.0
 
 # HTTP host
 fastapi>=0.115.0
