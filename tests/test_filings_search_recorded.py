@@ -84,8 +84,14 @@ async def test_a_page_past_the_last_does_not_claim_earlier_pages_hold_results(
 ):
     """Recording 13: page 3 of a search that matched about 0. The tool used to
     add "Earlier pages hold the results", which this recording contradicts."""
-    respx_router.get(SEARCH_URL).mock(return_value=_response("13_page_past_last_page"))
-    out = await _tool(authed)(queries=["going concern"], company=390, page=3, page_size=25)
+    route = respx_router.get(SEARCH_URL).mock(return_value=_response("13_page_past_last_page"))
+    # The recording filtered with type=10-K-ESEF; the tool's only type filter
+    # is the plural `types`, which the endpoint accepts as an equivalent.
+    out = await _tool(authed)(
+        queries=["going concern"], company=390, types="10-K-ESEF", page=3, page_size=25,
+    )
+    params = route.calls.last.request.url.params
+    assert params["company"] == "390" and params["types"] == "10-K-ESEF"
     assert "No results on page 3" in out
     assert "matches about 0" in out
     assert "earlier pages hold" not in out.lower()
