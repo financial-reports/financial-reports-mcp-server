@@ -290,6 +290,9 @@ async def test_a_page_past_the_last_is_a_result_not_a_missing_resource(
     assert "matches about 25" in out
     assert "not billed" in out
     assert "does not exist" not in out
+    # The 404 does not say whether the scan was complete, so an early-stopped
+    # search must not read as exhausted (SPECHT S2 at b515ab6).
+    assert "does not show that every candidate was searched" in out
 
 
 @pytest.mark.asyncio

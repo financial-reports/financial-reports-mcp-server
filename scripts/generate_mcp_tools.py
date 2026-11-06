@@ -6131,7 +6131,12 @@ async def filings_search(
                 return (
                     f"No results on page {page_no} for {shown}: "
                     f"{sanitize_error_detail(detail, max_len=_MAX_UPSTREAM_COPY)} "
-                    "Earlier pages hold the results. This page was not billed."
+                    "Earlier pages hold the results. This page was not billed. "
+                    # The 404 carries no scan_complete, and an early-stopped
+                    # search pages out the same way (SPECHT 2/3).
+                    "A page past the end does not show that every candidate was "
+                    "searched: if an earlier page said the search stopped early, "
+                    "more matches may exist, so narrow the queries or filters."
                 )
         if response.is_error:
             _raise_upstream_text_error(response, response.text[:_MAX_ERROR_BODY])
