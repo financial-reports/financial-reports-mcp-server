@@ -1022,6 +1022,21 @@ if _oauth_storage is not None and MCP_CLIENT_STORE_URL:
 # explicit list makes the policy auditable for Anthropic's connector
 # review and prevents accidental regression if FastMCP's default ever
 # flips back to localhost-only.
+# ⛔ SECURITY CONTROL, not a convenience list. This is the ONLY thing mitigating
+# the FastMCP OAuthProxy confused-deputy advisory (high; fixed in fastmcp>=3.2.0,
+# we pin 2.14.7 — see requirements.txt on why that upgrade needs an audit) while
+# `require_authorization_consent=False` below. OAuthProxy._handle_idp_callback
+# does not verify that the browser presenting state+code is the one that
+# consented, and dynamic client registration is on — so an attacker can register
+# their own client freely, and the ONLY thing stopping them receiving a victim's
+# authorization code is that they cannot name a redirect_uri they control.
+#
+# ⇒ ADDING AN ENTRY IS A SECURITY DECISION: it means "anyone who can serve
+# content on this domain may receive our users' auth codes." Guarded by
+# tests/test_redirect_allowlist_guard.py, which pins the trusted registrable
+# domains deliberately — a new client must edit that set, so the decision is
+# reviewed rather than appended. Plaintext http is here for loopback ONLY, where
+# the code lands on the victim's own machine and cannot reach a remote attacker.
 ALLOWED_CLIENT_REDIRECT_URI_PATTERNS = [
     # Anthropic — current and legacy hostnames.
     "https://claude.ai/api/mcp/auth_callback",
