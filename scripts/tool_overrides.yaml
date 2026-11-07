@@ -198,6 +198,23 @@ filings_markdown_retrieve:
       parameters: "filing_id=<id>, offset=0, limit=50000"
       notes: "Summarize specific sections — don't dump the whole document"
 
+filings_markdown_search_create:
+  # Off the default surface (_PRUNED_EXCLUDE); emitted only with
+  # MCP_FULL_SURFACE=1. SPECHT S2 on 728d676, verified against the code: the
+  # upstream description says the `X-Credits-Charged` header is the actual
+  # charge, and that is true for a direct HTTP caller — but an MCP tool
+  # response carries only the JSON body (`_format_response` returns
+  # `_scrub_response(response.json())`), so no model can read that header.
+  # The upstream text is left unchanged; the MCP-specific limit is stated here.
+  when_not_to_use: >
+    Don't present `billed_credits` as the amount charged. It is the list price
+    BEFORE the once-per-day markdown dedup, and the `X-Credits-Charged` header
+    that carries the actual charge is NOT returned to MCP clients — so on a
+    repeat search the real charge can be 0 while `billed_credits` still shows
+    the list price. Quote it as an upper bound, or call `usage_retrieve` for
+    actual spend. Prefer `filings_markdown_search_batch`: it is the supported
+    batch search and this raw endpoint exists for direct API callers.
+
 filing_types_list:
   when_to_use: >
     Call when the user names a form or report type that is not in the
