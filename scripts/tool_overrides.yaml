@@ -137,10 +137,11 @@ filings_list:
     (`document_url` on default rows, `document` on view=full rows); if it is
     null, say no file link is available yet. A null status is not a reason
     to switch.
-    EMPTY IS NOT ABSENT: an empty `results` carrying a `history_window`
-    object means those filings exist but are not retrievable on this plan —
-    report the restriction and its cutoff, never "there are no filings".
-    Same for any other disclosure object beside an empty `results`.
+    EMPTY IS NOT PROOF OF ABSENCE: an empty `results` carrying a
+    `history_window` object means the plan's cutoff hides anything older, so
+    report the cutoff as a limit — never a bare "there are no filings", and
+    never that matches exist either; the response proves neither. Same for any
+    other disclosure object beside an empty `results`.
   when_not_to_use: >
     Don't use to get filing content — use `filings_markdown_retrieve`
     after getting the filing ID. Don't use for financial KPIs — use

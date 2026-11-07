@@ -38,12 +38,39 @@ from __future__ import annotations
 import inspect
 import re
 
-RESTRICTION_WORDS = re.compile(
-    r"not retrievable|outside this plan|outside the plan|plan restriction"
-    r"|restricted|not available on this plan",
+# The guidance must name the LIMIT and the CUTOFF...
+LIMIT_WORDS = re.compile(r"cutoff", re.IGNORECASE)
+ABSENCE_RULE = re.compile(r"empty is not proof of absence", re.IGNORECASE)
+# ...and must NOT resurrect either over-claim. Both directions are defects:
+# asserting absence is #168; asserting existence is what SPECHT caught on
+# 79b83fc. `history_window` supports neither.
+# NEGATION-AWARE on purpose. A bare substring search here is the same defect
+# this repo keeps paying for — a text pattern matches MENTIONS as well as
+# OCCURRENCES — and it caught the corrected guidance itself: the sentence
+# "never that matches exist either" contains "matches exist" while asserting
+# the opposite. So a phrase only counts as an over-claim when no negation
+# precedes it within a short window.
+_OVERCLAIM_PHRASES = (
+    r"those filings exist",
+    r"the filings exist",
+    r"filings exist but",
+    r"matches exist",
+    r"are not retrievable on this plan",
+)
+_NEGATED = re.compile(
+    r"(?:never|not|no|don't|do not|neither|nor)\W+(?:\w+\W+){0,3}$",
     re.IGNORECASE,
 )
-ABSENCE_RULE = re.compile(r"empty is not absent", re.IGNORECASE)
+
+
+def _affirmative_overclaims(text: str) -> list[str]:
+    """Over-claim phrases that are ASSERTED, not negated."""
+    hits = []
+    for phrase in _OVERCLAIM_PHRASES:
+        for m in re.finditer(phrase, text, re.IGNORECASE):
+            if not _NEGATED.search(text[max(0, m.start() - 48):m.start()]):
+                hits.append(m.group(0))
+    return hits
 
 
 def _description(mcp_module, name: str) -> str:
@@ -68,11 +95,45 @@ def test_the_rule_names_history_window_and_what_it_means(mcp_module):
         "filings_list's description no longer names `history_window`, the "
         "disclosure object the 200-with-empty-results case carries (#168)."
     )
-    assert RESTRICTION_WORDS.search(desc), (
-        "filings_list's description names `history_window` but no longer says "
-        "the filings are unretrievable on this plan rather than nonexistent "
-        "(#168). A field name without its meaning is what the model ignored."
+    assert LIMIT_WORDS.search(desc), (
+        "filings_list's description names `history_window` but no longer tells "
+        "the model to report the plan's cutoff (#168). A field name without "
+        "its meaning is what the model ignored in the first place."
     )
+
+
+def test_the_guidance_claims_neither_existence_nor_absence(mcp_module):
+    """The over-correction must not come back.
+
+    SPECHT caught the first wording at 3/3 passes: it said the filings "exist
+    but are not retrievable on this plan". The schema's own description of
+    `history_window` forbids that — it "does not by itself prove that this
+    particular result set lost rows" — so a query with no matches at all can
+    produce the same pairing. Asserting absence and asserting existence are
+    both defects, and this pins the second one.
+    """
+    desc = _description(mcp_module, "filings_list")
+    hits = _affirmative_overclaims(desc)
+    assert not hits, (
+        f"filings_list's description asserts that matching filings EXIST: {hits!r}. "
+        "`history_window` does not establish that — its own schema description "
+        "says it 'does not by itself prove that this particular result set lost "
+        "rows'. Report the cutoff as a limit and claim neither existence nor "
+        "absence."
+    )
+
+
+def test_the_overclaim_detector_itself_discriminates(mcp_module):
+    """The negation-aware check must fire on an assertion and not on a denial.
+
+    Without this, the guard is one bad regex away from being either vacuous or
+    permanently red — and it was briefly the second: it flagged the corrected
+    guidance because "never that matches exist" CONTAINS "matches exist".
+    """
+    asserted = "an empty result means those filings exist but are restricted"
+    denied = "report the cutoff as a limit, and never that matches exist either"
+    assert _affirmative_overclaims(asserted), "detector missed a real over-claim"
+    assert not _affirmative_overclaims(denied), "detector fired on a denial"
 
 
 def test_the_404_path_keeps_its_own_copy(mcp_module):
