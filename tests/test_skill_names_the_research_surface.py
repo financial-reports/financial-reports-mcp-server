@@ -57,14 +57,33 @@ def _skill_text() -> str:
     return SKILL.read_text(encoding="utf-8")
 
 
+def _tools_table() -> str:
+    """Just the `## Tools` section — the table a model reads to pick a tool.
+
+    SPECHT caught the first version of this file searching the WHOLE skill
+    (S3 on 0c6350e, 2/3 passes, verified by reproducing its mutation): deleting
+    `filings_search`'s table row while leaving the Pitfalls paragraph intact
+    left every test green, because the name still appeared somewhere in the
+    file. The docstring claimed to pin the Tools table and the code pinned
+    file-wide presence — the check was looser than the claim made from it.
+    """
+    text = _skill_text()
+    _, _, after = text.partition("## Tools")
+    assert after, "the skill no longer has a `## Tools` section"
+    section, _, _ = after.partition("\n## ")
+    return section
+
+
 def test_the_skill_names_every_research_tool(mcp_module) -> None:
     """A tool we serve but never mention is a silently worse answer."""
-    text = _skill_text()
-    missing = sorted(t for t in _research_surface(mcp_module) if t not in text)
+    table = _tools_table()
+    missing = sorted(t for t in _research_surface(mcp_module) if t not in table)
     assert not missing, (
-        f"skills/financial-filings-research/SKILL.md never names {missing}. "
-        "The default surface serves them, so a model loading this skill will "
-        "reach for a worse tool instead. Add them to the Tools table."
+        f"the `## Tools` table in skills/financial-filings-research/SKILL.md "
+        f"never names {missing}. The default surface serves them, so a model "
+        "loading this skill will reach for a worse tool instead. A mention "
+        "elsewhere in the file does not count — the table is what a model "
+        "reads to pick a tool."
     )
 
 
@@ -110,3 +129,29 @@ def test_the_skill_warns_that_search_matches_names_not_text(mcp_module) -> None:
         "filing text — the warning `filings_list`'s own description carries."
     )
     assert "filings_search" in text
+
+
+def test_the_coverage_check_reads_the_table_and_not_the_whole_file(mcp_module) -> None:
+    """SPECHT's mutation, encoded so the blindness cannot return.
+
+    A tool named only in Pitfalls must NOT satisfy the coverage check. Without
+    this, a later refactor back to a file-wide search would pass every other
+    test here and silently stop pinning the table.
+    """
+    table = _tools_table()
+    whole = _skill_text()
+    sentinel = "filings_search"
+    assert sentinel in table, "precondition: the table names filings_search"
+
+    # Simulate the row being dropped while the Pitfalls mention survives.
+    table_without = table.replace(sentinel, "REMOVED")
+    assert sentinel not in table_without
+    assert sentinel in whole.replace(table, table_without), (
+        "precondition: filings_search is also mentioned outside the table, "
+        "which is what made the file-wide search blind"
+    )
+    missing = sorted(t for t in _research_surface(mcp_module) if t not in table_without)
+    assert sentinel in missing, (
+        "the coverage check is reading the whole file again, not the `## Tools` "
+        "table: a tool mentioned only in Pitfalls should count as missing."
+    )
