@@ -30,7 +30,8 @@ Full parameters in `references/tool-cheatsheet.md`.
 | Resolve many identifiers | `companies_resolve_create` (batch; beats a loop) |
 | ISIN → company | `isins_retrieve`; `isins_list` for dual listings |
 | Get filings | `filings_list` → `filings_retrieve` → `filings_markdown_retrieve` |
-| Search inside a filing | `filings_markdown_search` |
+| Which filings mention X | `filings_search` (full-text across the corpus) |
+| Search inside a filing | `filings_markdown_search`; `filings_markdown_search_batch` for one query across several filings |
 | Financials | `companies_financials_retrieve` |
 | Next report due | `companies_next_annual_report_retrieve` |
 | Filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` |
@@ -165,6 +166,11 @@ belongs on `source_filing_type`, not `type`.
   50k characters, at most 150k per call). On the truncation marker, call again
   with the `offset` it gives; stop once you have the section you need.
   `filings_retrieve` returns the original document URL.
+- **`search=` matches names, not filing text.** `filings_list?search=` and
+  `companies_list?search=` match titles and company names only. For "which
+  filings mention X", use `filings_search`, which searches the filings' text.
+  A boolean string in `search=` is matched literally against titles and
+  returns nothing.
 - **Account status.** If a tool returns a gate response pointing at the
   FinancialFilings site, the account needs attention — surface the link and stop.
   Don't retry-loop.
