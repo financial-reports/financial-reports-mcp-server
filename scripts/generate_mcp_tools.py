@@ -5636,7 +5636,8 @@ async def filings_markdown_search_batch(
     calling filings_markdown_search once per filing when you are checking the same term
     across a set you already hold (e.g. the same disclosure across a company's filings).
     To find WHICH filings or companies mention it, call filings_search first: it
-    searches every filing in one call, and this tool only the ones you list.
+    searches the indexed text of all filings in one call (heed its warning if it
+    stopped early), and this tool only the ones you list.
     SAME RULE AS THE SINGLE-FILING TOOL: for a company-and-period line item, call
     companies_financials_retrieve first — per company, not as a sweep here, which
     costs a read per filing. Stay here when the question is what a PARTICULAR filing
