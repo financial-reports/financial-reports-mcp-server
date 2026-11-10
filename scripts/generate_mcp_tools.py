@@ -4698,6 +4698,23 @@ X402_PAY_DESCRIPTIONS = {
     ),
 }
 
+# The twins reuse the /mcp descriptions, which route text search to tools the
+# pay surface does not sell (`filings_search`). A paying agent told to call one
+# gets an unknown-tool error, so those sentences are rewritten for the twin.
+# test_pay_tools_name_no_tool_the_pay_surface_does_not_serve fails on any new
+# reference, so a reworded override cannot slip past these exact matches.
+X402_PAY_REWRITES = (
+    ("Returns metadata only; it does not read filing text, so to find filings by "
+     "what they say, use `filings_search`.",
+     "Returns metadata only; it does not read filing text."),
+    ("it matches titles and company names only. Use `filings_search`, which "
+     "searches the filings' text.",
+     "it matches titles and company names only."),
+    ("To find filings by what they say, use `filings_search`; by metadata, use "
+     "`filings_list`.",
+     "To find filings, use `filings_list`."),
+)
+
 X402_PAY_BLOCK = '''
 
 # ---------------------------------------------------------------------------
@@ -6017,7 +6034,12 @@ def _cross_search_queries(queries: Any, query: Any = None) -> list[str]:
                 parsed = _json.loads(text)
             except ValueError:
                 parsed = None
-        queries = parsed if isinstance(parsed, list) else [queries]
+        # Only a list that holds a query is read as one: "[2023]" is a search
+        # for that footnote-style string, not an empty list of numbers.
+        has_text = isinstance(parsed, list) and any(
+            isinstance(q, str) and q.strip() for q in parsed
+        )
+        queries = parsed if has_text else [queries]
     if not isinstance(queries, (list, tuple)):
         raise ToolInputError("queries must be a list of 1 to 5 strings")
     if query is not None:
@@ -6062,7 +6084,12 @@ def _cross_search_ordering(ordering: Any) -> Optional[str]:
     if not isinstance(ordering, str):
         raise ToolInputError("ordering must be a string, e.g. '-added_to_platform'")
     fields = [f.strip() for f in ordering.split(",") if f.strip()]
-    bad = [f for f in fields if f.lstrip("-") not in _CROSS_SEARCH_ORDERING_FIELDS]
+    # One leading "-" at most: DRF strips one, so "--id" would reach it as the
+    # unknown field "-id" and be dropped just as silently.
+    bad = [
+        f for f in fields
+        if (f[1:] if f.startswith("-") else f) not in _CROSS_SEARCH_ORDERING_FIELDS
+    ]
     if bad:
         raise ToolInputError(
             f"unknown ordering field {bad[0]!r}. Use one of "
@@ -6267,9 +6294,15 @@ async def filings_search(
                 "Try translations or synonyms as extra queries, or widen the filters."
             )
         cap = search.get("max_results") or 1000
+        # The endpoint orders by the FIRST field; relevance is the default. Say
+        # which one this page used, or a date-ordered page reads as a ranking.
+        if order is None or order.split(",")[0].lstrip("-") == "relevance":
+            order_note = "ranked by relevance"
+        else:
+            order_note = f"ordered by {order} among the first {cap} matches by relevance"
         lines = [
             f"{count} filing(s) matched {shown} (page {page_no}, {len(results)} shown, "
-            "ranked by relevance; scope: filings with extracted text)."
+            f"{order_note}; scope: filings with extracted text)."
         ]
         if stopped_early:
             lines.append(
@@ -6287,11 +6320,12 @@ async def filings_search(
         parts: list[str] = []
         budget = _MAX_RESULT_CHARS - sum(len(x) + 1 for x in lines) - 200
         omitted = 0
-        # What the agent was SHOWN, in rank order, for usage analytics: filing ids
-        # only (a company id is one join away), so an id's position in
-        # returned_ids is its rank on this page and the next filing the agent
-        # opens can be scored against it. The tool returns a str, so the
-        # middleware cannot infer these from the payload.
+        # What the agent was SHOWN, for usage analytics, in the order shown:
+        # filing ids only (a company id is one join away; filings_list's rows
+        # interleave both). The order is the page's order, which is relevance
+        # unless `ordering` (logged with the call) said otherwise; a result cut
+        # for length is left out, and only the first 50 are kept. The tool
+        # returns a str, so the middleware cannot infer these from the payload.
         shown_ids: list[Any] = []
         shown_countries: set[str] = set()
         for item in results:
@@ -6485,16 +6519,17 @@ async def find_filing_section(
         "filing_id and offset=<the best hit's offset, minus a little> to read "
         "the section around it. Do NOT page the filing from offset 0.\\n"
         f"   SHORTCUT: `filings_search` with queries=[\\"{section_keyword}\\", "
-        "<its translations>], company=<id>, types=<mapped> finds every filing "
-        "of that type from this company that mentions it, ranked, with "
-        "snippets. Use it when the newest filing has no hit or no Markdown, "
-        "and say you answered from an older filing.\\n"
+        "<its translations>], company=<id>, types=<mapped>, "
+        "ordering=\\"-release_datetime\\" lists this company's filings of that "
+        "type that mention it, newest first, with snippets. Use it when the newest filing has no hit or no Markdown: "
+        "say so first, then name the older filing you answered from.\\n"
         f"5. Return ONLY the markdown excerpt containing "
         f"'{section_keyword}', plus 2 paragraphs of surrounding context. "
-        "Cite filing type and publication date. If the keyword and its "
-        f"synonyms are not in the filing, say 'Section matching "
-        f"\\"{section_keyword}\\" not found in filing <id>' — do NOT "
-        "fabricate content from training data."
+        "Cite filing type and publication date. If neither the keyword nor "
+        f"the synonyms you tried occur in the filing, say 'Section matching "
+        f"\\"{section_keyword}\\" not found in filing <id> (searched the whole "
+        "filing for: <the terms you tried>)' — do NOT fabricate content from "
+        "training data."
     )
     return [
         PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
@@ -7477,6 +7512,8 @@ def main() -> None:
                 pay_description = X402_PAY_DESCRIPTIONS.get(func_name) or (
                     description.replace("filing_id=", "id=").replace("(filing_id)", "(id)")
                 )
+                for main_text, pay_text in X402_PAY_REWRITES:
+                    pay_description = pay_description.replace(main_text, pay_text)
                 pay_code.append(
                     pay_template.render(
                         func_name=func_name,

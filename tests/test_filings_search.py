@@ -432,6 +432,8 @@ async def _call(mcp_module, args):
         # A list sent JSON-encoded is that list, not one literal query.
         ({"queries": '["going concern", "継続企業の前提"]'}, ["going concern", "継続企業の前提"]),
         ({"queries": "[unclosed"}, ["[unclosed"]),
+        # Valid JSON, but no query in it: a footnote-style search string.
+        ({"queries": "[2023]"}, ["[2023]"]),
     ],
 )
 async def test_query_and_a_bare_string_are_accepted_through_real_dispatch(
@@ -497,7 +499,7 @@ async def test_unset_ordering_is_not_sent(mcp_module, monkeypatch, fake_access_t
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bad", ["-added_to_plaform", "title", "relevance,-date"])
+@pytest.mark.parametrize("bad", ["-added_to_plaform", "title", "relevance,-date", "--id"])
 async def test_an_unknown_ordering_field_is_refused_locally(
     mcp_module, monkeypatch, fake_access_token, respx_router, bad
 ):
@@ -603,3 +605,37 @@ async def test_an_empty_search_records_no_ids_and_does_not_leak_into_the_next_ca
     assert first["returned_ids"] == [9]
     assert second["returned_ids"] == [] and second["result_countries"] == []
     assert second["result_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ordering", "expected"),
+    [
+        (None, "ranked by relevance;"),
+        ("-relevance", "ranked by relevance;"),
+        ("relevance,-release_datetime", "ranked by relevance;"),
+        ("-added_to_platform", "ordered by -added_to_platform among the first 1000 matches by relevance;"),
+        ("-release_datetime,relevance", "ordered by -release_datetime,relevance among the first 1000"),
+    ],
+)
+async def test_the_header_names_the_ordering_the_page_used(
+    mcp_module, monkeypatch, fake_access_token, respx_router, ordering, expected
+):
+    """A date-ordered page headed "ranked by relevance" reads as a ranking."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    out = await _tool(mcp_module)(queries=["going concern"], ordering=ordering)
+    assert expected in out.splitlines()[0]
+
+
+@pytest.mark.asyncio
+async def test_a_non_string_query_is_refused_locally(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Direct-call path; through the wire pydantic refuses it first."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _tool(mcp_module)(queries=["a"], query=7)
+    assert "query must be a string" in out
+    assert not route.called

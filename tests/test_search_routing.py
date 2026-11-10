@@ -176,6 +176,7 @@ async def test_find_filing_section_searches_instead_of_paging(mcp_module) -> Non
 async def test_find_filing_section_offers_the_filings_search_shortcut(mcp_module) -> None:
     text = await _render_find_filing_section(mcp_module)
     assert '`filings_search` with queries=["supply chain", <its translations>], company=<id>' in text
+    assert 'ordering="-release_datetime" lists this company\'s filings' in text
     # The prompt asks for the MOST RECENT filing, so an answer from an older one
     # must say so.
-    assert "say you answered from an older filing" in text
+    assert "say so first, then name the older filing you answered from" in text
