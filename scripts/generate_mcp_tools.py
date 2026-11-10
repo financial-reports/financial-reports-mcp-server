@@ -6294,8 +6294,10 @@ async def filings_search(
                 "Try translations or synonyms as extra queries, or widen the filters."
             )
         cap = search.get("max_results") or 1000
-        # The endpoint orders by the FIRST field; relevance is the default. Say
-        # which one this page used, or a date-ordered page reads as a ranking.
+        # The endpoint applies every valid field in order (relevance is the
+        # default; naming it anywhere keeps it in the chain). Name the ordering
+        # this page used, or a date-ordered page reads as a ranking. Only a
+        # LEADING relevance is a ranking; any other lead reorders the capped set.
         if order is None or order.split(",")[0].lstrip("-") == "relevance":
             order_note = "ranked by relevance"
         else:
@@ -6517,11 +6519,16 @@ async def find_filing_section(
         "once or twice with the section's usual heading or a synonym, in the "
         "filing's language. Then `filings_markdown_retrieve` with that "
         "filing_id and offset=<the best hit's offset, minus a little> to read "
-        "the section around it. Do NOT page the filing from offset 0.\\n"
+        "the section around it. Do NOT page the filing from offset 0. If the "
+        "search result NOTES a hit is past what filings_markdown_retrieve can "
+        "reach, do not retrieve it: quote the search context and say only that "
+        "passage was available.\\n"
         f"   SHORTCUT: `filings_search` with queries=[\\"{section_keyword}\\", "
         "<its translations>], company=<id>, types=<mapped>, "
         "ordering=\\"-release_datetime\\" lists this company's filings of that "
-        "type that mention it, newest first, with snippets. Use it when the newest filing has no hit or no Markdown: "
+        "type that mention it, newest first among its top matches by relevance "
+        "(the result header names that set), with snippets. It does "
+        "not decide which filing is newest; step 3 does. Use it when the newest filing has no hit or no Markdown: "
         "say so first, then name the older filing you answered from.\\n"
         f"5. Return ONLY the markdown excerpt containing "
         f"'{section_keyword}', plus 2 paragraphs of surrounding context. "

@@ -180,3 +180,21 @@ async def test_find_filing_section_offers_the_filings_search_shortcut(mcp_module
     # The prompt asks for the MOST RECENT filing, so an answer from an older one
     # must say so.
     assert "say so first, then name the older filing you answered from" in text
+
+
+@pytest.mark.asyncio
+async def test_find_filing_section_does_not_retrieve_an_unreachable_hit(mcp_module) -> None:
+    # filings_markdown_search NOTES hits past filings_markdown_retrieve's cap;
+    # retrieving at such an offset returns an empty window (SPECHT on #200).
+    text = await _render_find_filing_section(mcp_module)
+    assert "past what filings_markdown_retrieve can reach, do not retrieve it" in text
+    assert "quote the search context" in text
+
+
+@pytest.mark.asyncio
+async def test_find_filing_section_shortcut_does_not_decide_the_newest(mcp_module) -> None:
+    # The date ordering only reorders the relevance-capped set, so the newest
+    # matching filing can be outside it; filings_list (step 3) decides newest.
+    text = await _render_find_filing_section(mcp_module)
+    assert "newest first among its top matches by relevance" in text
+    assert "It does not decide which filing is newest; step 3 does." in text
