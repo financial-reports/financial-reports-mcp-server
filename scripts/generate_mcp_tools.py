@@ -209,6 +209,7 @@ from src.usage_analytics import (
     record_result_count,
     record_returned_entities,
     record_tool_error,
+    _ENTITY_CAP,
     sanitize_error_detail,
 )
 
@@ -4712,7 +4713,8 @@ X402_PAY_REWRITES = (
      "it matches titles and company names only."),
     ("To find filings by what they say, use `filings_search`; by metadata, use "
      "`filings_list`.",
-     "To find filings, use `filings_list`."),
+     "Search by filing text is not available here; to find filings by metadata, "
+     "use `filings_list`."),
 )
 
 X402_PAY_BLOCK = '''
@@ -6341,7 +6343,9 @@ async def filings_search(
             parts.append(block)
             shown_ids.append(item.get("id"))
             company_row = item.get("company")
-            if isinstance(company_row, dict):
+            # Countries of the RECORDED ids only (the first _ENTITY_CAP), as the
+            # structured tools' _extract_entities does (SPECHT on #200).
+            if isinstance(company_row, dict) and len(shown_ids) <= _ENTITY_CAP:
                 shown_countries.add(company_row.get("country_code"))
         record_returned_entities(shown_ids, shown_countries)
         if omitted:

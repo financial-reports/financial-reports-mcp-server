@@ -592,6 +592,29 @@ async def test_results_cut_for_length_are_not_recorded_as_shown(
 
 
 @pytest.mark.asyncio
+async def test_countries_come_only_from_the_recorded_ids(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    # ids are capped at 50; a market seen only in result 51 must not be
+    # attributed to the recorded ids (SPECHT on #200).
+    from fastmcp import Client
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    rows = [_filing_in(i, "US") for i in range(1, 51)] + [_filing_in(51, "JP")]
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page(rows)))
+    monkeypatch.setattr(mcp_module, "_MAX_RESULT_CHARS", 10_000_000)
+    captured: list[dict] = []
+    monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
+
+    async with Client(mcp_module.mcp) as client:
+        await client.call_tool("filings_search", {"queries": ["x"]})
+
+    ev = [e for e in captured if e["name"] == "filings_search"][-1]
+    assert ev["returned_ids"] == list(range(1, 51))
+    assert ev["result_countries"] == ["US"]
+
+
+@pytest.mark.asyncio
 async def test_an_empty_search_records_no_ids_and_does_not_leak_into_the_next_call(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
