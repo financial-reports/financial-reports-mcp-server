@@ -512,6 +512,14 @@ async def test_an_unknown_ordering_field_is_refused_locally(
     assert not route.called
 
 
+def test_punctuation_only_ordering_is_unset(mcp_module) -> None:
+    # "," names no field; sent as "" the endpoint ranks by relevance while the
+    # header would claim "ordered by  among ..." (SPECHT on #200).
+    assert mcp_module._cross_search_ordering(",") is None
+    assert mcp_module._cross_search_ordering(" , ,") is None
+    assert mcp_module._cross_search_ordering("-id,") == "-id"
+
+
 @pytest.mark.parametrize("field", sorted(
     ["relevance", "release_datetime", "added_to_platform", "id", "filing_type_confidence"]
 ))

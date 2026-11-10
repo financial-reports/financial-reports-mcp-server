@@ -6097,7 +6097,8 @@ def _cross_search_ordering(ordering: Any) -> Optional[str]:
             f"{', '.join(sorted(_CROSS_SEARCH_ORDERING_FIELDS))}, with a leading "
             "'-' for descending (e.g. '-added_to_platform')."
         )
-    return ",".join(fields)
+    # Punctuation only (",") names no field: unset, so the header says relevance.
+    return ",".join(fields) or None
 
 
 def _cross_search_match_lines(match: Any) -> list[str]:
