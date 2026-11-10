@@ -6519,7 +6519,7 @@ async def find_filing_section(
         "call and returns each hit with a character offset. No hit: retry "
         "once or twice with the section's usual heading or a synonym, in the "
         "filing's language. Then `filings_markdown_retrieve` with that "
-        "filing_id and offset=<the best hit's offset, minus a little> to read "
+        "filing_id and offset=max(0, <the best hit's offset> - 200) to read "
         "the section around it. Do NOT page the filing from offset 0. If the "
         "search result NOTES a hit is past what filings_markdown_retrieve can "
         "reach, do not retrieve it: quote the search context and say only that "

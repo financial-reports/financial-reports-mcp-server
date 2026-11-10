@@ -198,3 +198,11 @@ async def test_find_filing_section_shortcut_does_not_decide_the_newest(mcp_modul
     text = await _render_find_filing_section(mcp_module)
     assert "newest first among its top matches by relevance" in text
     assert "It does not decide which filing is newest; step 3 does." in text
+
+
+@pytest.mark.asyncio
+async def test_find_filing_section_offset_never_goes_negative(mcp_module) -> None:
+    # filings_markdown_retrieve rejects a negative offset; a hit near 0 minus
+    # "a little" would fail the read (SPECHT on #200).
+    text = await _render_find_filing_section(mcp_module)
+    assert "offset=max(0, <the best hit's offset> - 200)" in text
