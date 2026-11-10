@@ -402,3 +402,271 @@ def test_tool_is_on_the_default_surface_and_read_only(mcp_module) -> None:
     desc = tool.description or ""
     for claim in ("translations", "first 20 MB", "nothing", "Every page is billed"):
         assert claim in desc, f"description lost: {claim!r}"
+
+
+# --- forgiving input through REAL dispatch (web#8004 routing PR) ---------------
+#
+# The bare-string test above calls the function directly, which skips FastMCP's
+# argument validation. Through the wire, `queries: list[str]` refused a bare
+# string, and an unknown `query` argument was refused too: one real call failed
+# that way. These go through the in-memory Client, so they test what a client
+# actually gets.
+
+async def _call(mcp_module, args):
+    from fastmcp import Client
+
+    async with Client(mcp_module.mcp) as client:
+        result = await client.call_tool("filings_search", args)
+    return result.content[0].text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("args", "expected_q"),
+    [
+        ({"query": "going concern"}, ["going concern"]),
+        ({"queries": "going concern"}, ["going concern"]),
+        ({"queries": ["going concern"], "query": "Unternehmensfortführung"},
+         ["going concern", "Unternehmensfortführung"]),
+        ({"queries": ["going concern"], "query": "going concern"}, ["going concern"]),
+        # A list sent JSON-encoded is that list, not one literal query.
+        ({"queries": '["going concern", "継続企業の前提"]'}, ["going concern", "継続企業の前提"]),
+        ({"queries": "[unclosed"}, ["[unclosed"]),
+        # Valid JSON, but no query in it: a footnote-style search string.
+        ({"queries": "[2023]"}, ["[2023]"]),
+    ],
+)
+async def test_query_and_a_bare_string_are_accepted_through_real_dispatch(
+    mcp_module, monkeypatch, fake_access_token, respx_router, args, expected_q
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    out = await _call(mcp_module, args)
+    assert "filing 1" in out
+    assert route.calls.last.request.url.params.get_list("q") == expected_q
+
+
+@pytest.mark.asyncio
+async def test_no_query_at_all_is_refused_locally(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _call(mcp_module, {"countries": "FR"})
+    assert "at least one non-empty string" in out
+    assert not route.called
+
+
+@pytest.mark.asyncio
+async def test_query_and_queries_together_still_respect_the_five_limit(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _call(mcp_module, {"queries": ["a", "b", "c", "d", "e"], "query": "f"})
+    assert "at most 5 queries" in out
+    assert not route.called
+
+
+@pytest.mark.asyncio
+async def test_added_to_platform_bounds_and_ordering_are_forwarded(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    await _tool(mcp_module)(
+        queries=["going concern"],
+        added_to_platform_from="2026-11-09T00:00:00Z",
+        added_to_platform_to="2026-11-10T00:00:00Z",
+        ordering=" -added_to_platform , relevance ",
+    )
+    params = route.calls.last.request.url.params
+    assert params["added_to_platform_from"] == "2026-11-09T00:00:00Z"
+    assert params["added_to_platform_to"] == "2026-11-10T00:00:00Z"
+    assert params["ordering"] == "-added_to_platform,relevance"
+
+
+@pytest.mark.asyncio
+async def test_unset_ordering_is_not_sent(mcp_module, monkeypatch, fake_access_token, respx_router):
+    """Relevance is the endpoint's default; sending nothing keeps the rerank on."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    await _tool(mcp_module)(queries=["going concern"], ordering="  ")
+    assert "ordering" not in route.calls.last.request.url.params
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["-added_to_plaform", "title", "relevance,-date", "--id"])
+async def test_an_unknown_ordering_field_is_refused_locally(
+    mcp_module, monkeypatch, fake_access_token, respx_router, bad
+):
+    """The endpoint DROPS an unknown field and answers in relevance order, which
+    reads as ordered when it is not."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _tool(mcp_module)(queries=["x"], ordering=bad)
+    assert "unknown ordering field" in out and "added_to_platform" in out
+    assert not route.called
+
+
+def test_punctuation_only_ordering_is_unset(mcp_module) -> None:
+    # "," names no field; sent as "" the endpoint ranks by relevance while the
+    # header would claim "ordered by  among ..." (SPECHT on #200).
+    assert mcp_module._cross_search_ordering(",") is None
+    assert mcp_module._cross_search_ordering(" , ,") is None
+    assert mcp_module._cross_search_ordering("-id,") == "-id"
+
+
+@pytest.mark.parametrize("field", sorted(
+    ["relevance", "release_datetime", "added_to_platform", "id", "filing_type_confidence"]
+))
+def test_every_endpoint_ordering_field_is_accepted_both_ways(mcp_module, field) -> None:
+    """Enumerate the domain: each field the endpoint orders by, ascending and
+    descending, passes the local check unchanged."""
+    assert mcp_module._cross_search_ordering(field) == field
+    assert mcp_module._cross_search_ordering(f"-{field}") == f"-{field}"
+
+
+# --- returned ids reach usage analytics (REPORT rank 2) -------------------------
+
+def _filing_in(fid, country, match=LITERAL):
+    row = _filing(fid, match)
+    row["company"]["country_code"] = country
+    return row
+
+
+@pytest.mark.asyncio
+async def test_a_search_records_its_ranked_filing_ids_and_countries(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """filings_search returns a str, so the middleware cannot read ids off the
+    payload: all 94 search events through 2026-11-09 logged returned_ids=[].
+    Through the real middleware, the event must carry the filing ids in the
+    order shown, and the markets they came from."""
+    from fastmcp import Client
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page(
+        [_filing_in(31, "jp"), _filing_in(7, "KR"), _filing_in(12, "JP"), _filing_in(5, None)]
+    )))
+    captured: list[dict] = []
+    monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
+
+    async with Client(mcp_module.mcp) as client:
+        await client.call_tool("filings_search", {"queries": ["going concern", "継続企業の前提"]})
+
+    events = [e for e in captured if e["name"] == "filings_search" and e["kind"] == "tool"]
+    assert events, "no analytics event captured for the search call"
+    ev = events[-1]
+    assert ev["status"] == "ok"
+    assert ev["returned_ids"] == [31, 7, 12, 5], "ids must be the filing ids, in rank order"
+    assert ev["result_countries"] == ["JP", "KR"]
+    assert ev["result_count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_results_cut_for_length_are_not_recorded_as_shown(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    from fastmcp import Client
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    big = dict(LITERAL, hits=[{"offset": 1, "snippet": "x" * 3000}])
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page(
+        [_filing_in(1, "FR"), _filing_in(2, "DE", match=big), _filing_in(3, "IT")]
+    )))
+    monkeypatch.setattr(mcp_module, "_MAX_RESULT_CHARS", 1500)
+    captured: list[dict] = []
+    monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
+
+    async with Client(mcp_module.mcp) as client:
+        out = (await client.call_tool("filings_search", {"queries": ["x"]})).content[0].text
+
+    assert "1 result(s) on this page are not shown" in out
+    ev = [e for e in captured if e["name"] == "filings_search"][-1]
+    assert ev["returned_ids"] == [1, 3]
+    assert ev["result_countries"] == ["FR", "IT"]
+
+
+@pytest.mark.asyncio
+async def test_countries_come_only_from_the_recorded_ids(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    # ids are capped at 50; a market seen only in result 51 must not be
+    # attributed to the recorded ids (SPECHT on #200).
+    from fastmcp import Client
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    rows = [_filing_in(i, "US") for i in range(1, 51)] + [_filing_in(51, "JP")]
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page(rows)))
+    monkeypatch.setattr(mcp_module, "_MAX_RESULT_CHARS", 10_000_000)
+    captured: list[dict] = []
+    monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
+
+    async with Client(mcp_module.mcp) as client:
+        await client.call_tool("filings_search", {"queries": ["x"]})
+
+    ev = [e for e in captured if e["name"] == "filings_search"][-1]
+    assert ev["returned_ids"] == list(range(1, 51))
+    assert ev["result_countries"] == ["US"]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_search_records_no_ids_and_does_not_leak_into_the_next_call(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    from fastmcp import Client
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(side_effect=[
+        httpx.Response(200, json=_page([_filing_in(9, "US")])),
+        httpx.Response(200, json=_page([], scan_complete=True)),
+    ])
+    captured: list[dict] = []
+    monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
+
+    async with Client(mcp_module.mcp) as client:
+        await client.call_tool("filings_search", {"queries": ["a"]})
+        await client.call_tool("filings_search", {"queries": ["b"]})
+
+    first, second = [e for e in captured if e["name"] == "filings_search"][-2:]
+    assert first["returned_ids"] == [9]
+    assert second["returned_ids"] == [] and second["result_countries"] == []
+    assert second["result_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ordering", "expected"),
+    [
+        (None, "ranked by relevance;"),
+        ("-relevance", "ranked by relevance;"),
+        ("relevance,-release_datetime", "ranked by relevance;"),
+        ("-added_to_platform", "ordered by -added_to_platform among the first 1000 matches by relevance;"),
+        ("-release_datetime,relevance", "ordered by -release_datetime,relevance among the first 1000"),
+    ],
+)
+async def test_the_header_names_the_ordering_the_page_used(
+    mcp_module, monkeypatch, fake_access_token, respx_router, ordering, expected
+):
+    """A date-ordered page headed "ranked by relevance" reads as a ranking."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    out = await _tool(mcp_module)(queries=["going concern"], ordering=ordering)
+    assert expected in out.splitlines()[0]
+
+
+@pytest.mark.asyncio
+async def test_a_non_string_query_is_refused_locally(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Direct-call path; through the wire pydantic refuses it first."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _tool(mcp_module)(queries=["a"], query=7)
+    assert "query must be a string" in out
+    assert not route.called

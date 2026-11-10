@@ -207,7 +207,9 @@ from src.usage_analytics import (
     build_emitter_from_env,
     current_call_id,
     record_result_count,
+    record_returned_entities,
     record_tool_error,
+    _ENTITY_CAP,
     sanitize_error_detail,
 )
 
@@ -1518,30 +1520,38 @@ mcp = FastMCP(
         "transactions, ESG/climate reports, prospectuses) and normalized "
         "financials for tens of thousands of listed companies in the US, "
         "EU, UK, APAC and LATAM. Use this server whenever the user names a public "
-        "company, ticker, or ISIN; cites a filing type; or asks for a "
+        "company, ticker, or ISIN; cites a filing type; asks which filings "
+        "mention a topic; or asks for a "
         "financial line item, peer comparison, or industry screen.\\n\\n"
-        "SLASH COMMANDS (prefer these over hand-assembled tool chains):\\n"
-        "  /compare_financials_yoy — YoY deltas across two fiscal years\\n"
-        "  /find_filing_section — pull a named section from a filing\\n"
-        "  /summarize_recent_filings — dated briefing of recent filings\\n\\n"
         "CORE RULES:\\n"
-        "1. Resolve company first: companies_list (name/ticker) or "
-        "isins_retrieve (ISIN) → use the returned internal integer id "
-        "for per-company tools (NOT the ticker or ISIN itself).\\n"
-        "2. Currency: always display the reporting currency next to "
+        # Topic before company (web#8004). Measured 2026-11-01..09: agents faked a
+        # corpus search by running filings_markdown_search over filing after
+        # filing (119 users) while this block named filings_search 0 times and
+        # routed all discovery through filings_list. Rule 1 must sit inside the
+        # 4096-char client cap, which is why SLASH COMMANDS moved to the end
+        # (test_sourcing_disclosure_178 pins both).
+        "1. Topic search (\\"which filings or companies mention / disclose / "
+        "discuss X\\") → filings_search with the term + translations as "
+        "separate queries, up to 5 (zh/ja/ko too if no country filter) → "
+        "filings_markdown_search on the hits. One known filing: "
+        "filings_markdown_search; line items: companies_financials_retrieve.\\n"
+        "2. Company named → resolve it first: companies_list "
+        "(name/ticker) or isins_retrieve (ISIN) → use the returned internal "
+        "integer id for per-company tools (NOT the ticker or ISIN itself).\\n"
+        "3. Currency: always display the reporting currency next to "
         "every monetary value. Never aggregate USD/EUR/CHF/etc. without "
         "explicit FX conversion.\\n"
-        "3. Periods: always state the fiscal period and period_end_date "
+        "4. Periods: always state the fiscal period and period_end_date "
         "with financial data. \\"Last year\\" is ambiguous — name the "
         "fiscal period you returned.\\n"
-        "4. Provenance: call the data \\"official filings, as published\\", "
+        "5. Provenance: call the data \\"official filings, as published\\", "
         "also when asked where it comes from. Never name a "
         "regulator or filing authority, or describe a filing by where it was "
         "filed. Titles and `source_filing_type` carry form labels: translate "
         "them (Form 4 -> insider transaction report, 13G -> major shareholder "
         "filing, 6-K -> company announcement, 10-Q -> quarterly report, 8-K -> "
         "current report) unless the user asked about that form.\\n"
-        "5. Filing type codes (most common — pass via `type` for one code, "
+        "6. Filing type codes (most common — pass via `type` for one code, "
         "or `types` for a comma-separated list, "
         "on filings_list):\\n"
         "     10-K       Annual Report (US, plus 20-F filings)\\n"
@@ -1551,7 +1561,7 @@ mcp = FastMCP(
         "     MDA        Management Discussion & Analysis\\n"
         "     DIRS       Director's Dealing (insider transactions)\\n"
         "   Form names are NOT codes; an unknown code is rejected with a 400 "
-        "that names it (read the 400 — it suggests a replacement): "
+        "that names it and suggests a replacement: "
         "10-Q -> IR, 20-F -> 10-K, Form 4 -> DIRS, DEF 14A proxy -> PSI "
         "(NOT the code spelled `DEF 14A`), 8-K -> no single code.\\n"
         "   These codes are BROADER than the form: `IR` is 92% 10-Q, the "
@@ -1564,7 +1574,7 @@ mcp = FastMCP(
         "than asserting one. Form 4 needs this: titles name the form only 9% "
         "of the time, and `DIRS` is only 88.6% Form 4 (8.9% is Form 3, an "
         "initial-ownership snapshot, NOT a transaction).\\n"
-        "6. Ambiguity / scope: ask the user to disambiguate when a search "
+        "7. Ambiguity / scope: ask the user to disambiguate when a search "
         "returns multiple plausible matches. Refuse out-of-scope queries "
         "(stock prices, analyst consensus, sentiment) plainly — do not "
         "burn tool calls hunting.\\n\\n"
@@ -1572,14 +1582,23 @@ mcp = FastMCP(
         "  fr://guide/filing-types — all 30 codes (ESG, governance, M&A, "
         "dividends, transcripts).\\n"
         "  fr://guide/industry-classification — ISIC hierarchy + peer-query "
-        "recipe (sector / peer queries).\\n"
+        "recipe.\\n"
         "  fr://guide/markdown-strategy — filings_markdown_retrieve fallback "
         "(values missing from the normalised financials).\\n\\n"
         "CANONICAL WORKFLOWS (one-liners; full recipes in the resources):\\n"
-        "  resolve → filings_list (type=…) → filings_markdown_retrieve → summarize\\n"
-        "  resolve → companies_financials_retrieve → if value missing, "
+        "  which filings / companies mention X → filings_search (term + "
+        "translations as separate queries, up to 5, + country/type/date "
+        "filters) → filings_markdown_search(filing_id, term) on the hits → "
+        "summarize\\n"
+        "  named company → resolve → filings_list (type=…) → "
+        "filings_markdown_retrieve → summarize\\n"
+        "  named company → resolve → companies_financials_retrieve → if value missing, "
         "fr://guide/markdown-strategy\\n"
-        "  industry/peer queries → fr://guide/industry-classification"
+        "  industry/peer queries → fr://guide/industry-classification\\n\\n"
+        "SLASH COMMANDS (prefer these over hand-assembled tool chains):\\n"
+        "  /compare_financials_yoy — YoY deltas across two fiscal years\\n"
+        "  /find_filing_section — pull a named section from a filing\\n"
+        "  /summarize_recent_filings — dated briefing of recent filings"
     ),
     auth=auth_provider,
     # Multi-size icons let connector renderers pick the right resolution.
@@ -4680,6 +4699,24 @@ X402_PAY_DESCRIPTIONS = {
     ),
 }
 
+# The twins reuse the /mcp descriptions, which route text search to tools the
+# pay surface does not sell (`filings_search`). A paying agent told to call one
+# gets an unknown-tool error, so those sentences are rewritten for the twin.
+# test_pay_tools_name_no_tool_the_pay_surface_does_not_serve fails on any new
+# reference, so a reworded override cannot slip past these exact matches.
+X402_PAY_REWRITES = (
+    ("Returns metadata only; it does not read filing text, so to find filings by "
+     "what they say, use `filings_search`.",
+     "Returns metadata only; it does not read filing text."),
+    ("it matches titles and company names only. Use `filings_search`, which "
+     "searches the filings' text.",
+     "it matches titles and company names only."),
+    ("To find filings by what they say, use `filings_search`; by metadata, use "
+     "`filings_list`.",
+     "Search by filing text is not available here; to find filings by metadata, "
+     "use `filings_list`."),
+)
+
 X402_PAY_BLOCK = '''
 
 # ---------------------------------------------------------------------------
@@ -5599,9 +5636,10 @@ async def filings_markdown_search_batch(
 ) -> str:
     """Search ONE query across SEVERAL filings in a single call — use this instead of
     calling filings_markdown_search once per filing when you are checking the same term
-    across a set (e.g. the same disclosure across a company's filings, or across peers).
-    To find which filings mention a term at all, use filings_search; this tool checks
-    a set you already have.
+    across a set you already hold (e.g. the same disclosure across a company's filings).
+    To find WHICH filings or companies mention it, call filings_search first: it
+    searches the indexed text of all filings in one call (heed its warning if it
+    stopped early), and this tool only the ones you list.
     SAME RULE AS THE SINGLE-FILING TOOL: for a company-and-period line item, call
     companies_financials_retrieve first — per company, not as a sweep here, which
     costs a read per filing. Stay here when the question is what a PARTICULAR filing
@@ -5977,21 +6015,48 @@ _CROSS_SEARCH_MAX_Q = 5
 _CROSS_SEARCH_MAX_PAGE_SIZE = 100
 
 
-def _cross_search_queries(queries: Any) -> list[str]:
-    """Normalise `queries` to 1..5 stripped strings of <= 200 chars.
+def _cross_search_queries(queries: Any, query: Any = None) -> list[str]:
+    """Normalise `queries` (plus the singular `query`) to 1..5 stripped strings
+    of <= 200 chars.
 
     A bare string is accepted as one query: models routinely send one where a
-    list is declared, and rejecting it would cost a round trip for nothing.
-    Duplicates are dropped so they cannot use up the five slots."""
+    list is declared, and rejecting it would cost a round trip for nothing. The
+    tool's signature has to admit both shapes too, or FastMCP's own validation
+    refuses the call before this runs. `query` is the argument name of the
+    per-filing search tools, and one real filings_search call failed on it, so
+    it is taken as one more query. A string that is a JSON array (some clients
+    encode lists that way) is read as that list, not searched as a literal
+    '["a", "b"]'. Duplicates are dropped so they cannot use up the five slots."""
+    if queries is None:
+        queries = []
     if isinstance(queries, str):
-        queries = [queries]
+        parsed = None
+        text = queries.strip()
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = _json.loads(text)
+            except ValueError:
+                parsed = None
+        # Only a list that holds a query is read as one: "[2023]" is a search
+        # for that footnote-style string, not an empty list of numbers.
+        has_text = isinstance(parsed, list) and any(
+            isinstance(q, str) and q.strip() for q in parsed
+        )
+        queries = parsed if has_text else [queries]
     if not isinstance(queries, (list, tuple)):
         raise ToolInputError("queries must be a list of 1 to 5 strings")
+    if query is not None:
+        if not isinstance(query, str):
+            raise ToolInputError("query must be a string; pass several as `queries`")
+        queries = [*queries, query]
     cleaned = list(dict.fromkeys(
         q.strip() for q in queries if isinstance(q, str) and q.strip()
     ))
     if not cleaned:
-        raise ToolInputError("queries must contain at least one non-empty string")
+        raise ToolInputError(
+            "queries must contain at least one non-empty string "
+            '(e.g. queries=["going concern", "Unternehmensfortführung"])'
+        )
     if len(cleaned) > _CROSS_SEARCH_MAX_Q:
         raise ToolInputError(
             f"at most {_CROSS_SEARCH_MAX_Q} queries per call (got {len(cleaned)}). "
@@ -6004,6 +6069,38 @@ def _cross_search_queries(queries: Any) -> list[str]:
             f"(got {len(too_long[0])}). Search a distinctive phrase, not a passage."
         )
     return cleaned
+
+
+# The endpoint's ordering fields: the filing list's plus `relevance` (the
+# default). DRF silently DROPS an unknown field and falls back to relevance, so
+# a misspelt `-added_to_plaform` would come back looking ordered and not be.
+# Checked here instead, where the refusal can name the valid values.
+_CROSS_SEARCH_ORDERING_FIELDS = frozenset({
+    "relevance", "release_datetime", "added_to_platform", "id", "filing_type_confidence",
+})
+
+
+def _cross_search_ordering(ordering: Any) -> Optional[str]:
+    """`ordering` checked against the endpoint's fields, or None when unset."""
+    if ordering is None or (isinstance(ordering, str) and not ordering.strip()):
+        return None
+    if not isinstance(ordering, str):
+        raise ToolInputError("ordering must be a string, e.g. '-added_to_platform'")
+    fields = [f.strip() for f in ordering.split(",") if f.strip()]
+    # One leading "-" at most: DRF strips one, so "--id" would reach it as the
+    # unknown field "-id" and be dropped just as silently.
+    bad = [
+        f for f in fields
+        if (f[1:] if f.startswith("-") else f) not in _CROSS_SEARCH_ORDERING_FIELDS
+    ]
+    if bad:
+        raise ToolInputError(
+            f"unknown ordering field {bad[0]!r}. Use one of "
+            f"{', '.join(sorted(_CROSS_SEARCH_ORDERING_FIELDS))}, with a leading "
+            "'-' for descending (e.g. '-added_to_platform')."
+        )
+    # Punctuation only (",") names no field: unset, so the header says relevance.
+    return ",".join(fields) or None
 
 
 def _cross_search_match_lines(match: Any) -> list[str]:
@@ -6057,7 +6154,7 @@ def _cross_search_result_lines(item: dict) -> list[str]:
 )
 @subscription_required
 async def filings_search(
-    queries: list[str],
+    queries: Optional[list[str] | str] = None,
     company: Optional[int] = None,
     include_predecessors: Optional[bool] = None,
     countries: Optional[str] = None,
@@ -6065,8 +6162,12 @@ async def filings_search(
     types: Optional[str] = None,
     release_datetime_from: Optional[str] = None,
     release_datetime_to: Optional[str] = None,
+    added_to_platform_from: Optional[str] = None,
+    added_to_platform_to: Optional[str] = None,
+    ordering: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
+    query: Optional[str] = None,
 ) -> str:
     """Find WHICH filings, and which companies, say something: one full-text search
     across the text of every filing, ranked by relevance. Use it for "which companies
@@ -6074,16 +6175,25 @@ async def filings_search(
     not yet know the filing. Once you have a filing, search INSIDE it with
     filings_markdown_search. For a company-and-period line item (revenue, assets, EPS)
     call companies_financials_retrieve instead.
-    `queries`: 1 to 5 phrases, OR-ed, each at most 200 characters. Filings are in
-    many languages, so pass the term AND its translations into the languages of the
-    markets you care about, plus close synonyms, as separate entries (e.g.
+    `queries`: 1 to 5 phrases, OR-ed, each at most 200 characters (a single `query`
+    string is accepted too). Filings are in many languages, so pass the term AND its
+    translations into the languages of the markets you care about, plus close
+    synonyms, as separate entries (e.g.
     ["going concern", "continuité d'exploitation", "Unternehmensfortführung"]).
+    With NO country filter, also pass Chinese, Japanese and Korean phrasings of the
+    term as separate entries, within the 5: an English query and its native-language
+    phrasing find different filings, not the same ones in another language.
     Matching folds case and accents and also matches word stems.
     Filters (all optional, combinable): company (internal id; include_predecessors
     adds the issuers it succeeded), countries / languages (comma-separated ISO codes),
-    types (comma-separated filing type codes), release_datetime_from / _to
-    (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and period filters are NOT available here;
-    use a release-date range.
+    types (comma-separated filing type codes), release_datetime_from / _to and
+    added_to_platform_from / _to (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and period
+    filters are NOT available here; use a release-date range.
+    `ordering`: relevance (default), or release_datetime, added_to_platform, id,
+    filing_type_confidence, with "-" for descending. It reorders the first 1000
+    matches by relevance, it does not reach past them; filters do.
+    WHAT IS NEW SINCE MY LAST CHECK: added_to_platform_from=<time of the last check>
+    with ordering="-added_to_platform".
     An EMPTY result means no filing within the filters matched, among filings with
     extracted text, within the first 20 MB of each filing's text, unless the result
     says the search stopped early: then matches may exist and you should narrow the
@@ -6095,7 +6205,8 @@ async def filings_search(
     you need them."""
     try:
         _require_auth_context()
-        values = _cross_search_queries(queries)
+        values = _cross_search_queries(queries, query)
+        order = _cross_search_ordering(ordering)
         try:
             page_no = max(1, int(page))
             size = max(1, min(int(page_size), _CROSS_SEARCH_MAX_PAGE_SIZE))
@@ -6112,6 +6223,9 @@ async def filings_search(
             ("types", types),
             ("release_datetime_from", release_datetime_from),
             ("release_datetime_to", release_datetime_to),
+            ("added_to_platform_from", added_to_platform_from),
+            ("added_to_platform_to", added_to_platform_to),
+            ("ordering", order),
         ):
             if value is None or value == "":
                 continue
@@ -6184,9 +6298,17 @@ async def filings_search(
                 "Try translations or synonyms as extra queries, or widen the filters."
             )
         cap = search.get("max_results") or 1000
+        # The endpoint applies every valid field in order (relevance is the
+        # default; naming it anywhere keeps it in the chain). Name the ordering
+        # this page used, or a date-ordered page reads as a ranking. Only a
+        # LEADING relevance is a ranking; any other lead reorders the capped set.
+        if order is None or order.split(",")[0].lstrip("-") == "relevance":
+            order_note = "ranked by relevance"
+        else:
+            order_note = f"ordered by {order} among the first {cap} matches by relevance"
         lines = [
             f"{count} filing(s) matched {shown} (page {page_no}, {len(results)} shown, "
-            "ranked by relevance; scope: filings with extracted text)."
+            f"{order_note}; scope: filings with extracted text)."
         ]
         if stopped_early:
             lines.append(
@@ -6204,6 +6326,14 @@ async def filings_search(
         parts: list[str] = []
         budget = _MAX_RESULT_CHARS - sum(len(x) + 1 for x in lines) - 200
         omitted = 0
+        # What the agent was SHOWN, for usage analytics, in the order shown:
+        # filing ids only (a company id is one join away; filings_list's rows
+        # interleave both). The order is the page's order, which is relevance
+        # unless `ordering` (logged with the call) said otherwise; a result cut
+        # for length is left out, and only the first 50 are kept. The tool
+        # returns a str, so the middleware cannot infer these from the payload.
+        shown_ids: list[Any] = []
+        shown_countries: set[str] = set()
         for item in results:
             block = "\\n".join(_cross_search_result_lines(item))
             if len(block) + 1 > budget:
@@ -6211,6 +6341,13 @@ async def filings_search(
                 continue
             budget -= len(block) + 1
             parts.append(block)
+            shown_ids.append(item.get("id"))
+            company_row = item.get("company")
+            # Countries of the RECORDED ids only (the first _ENTITY_CAP), as the
+            # structured tools' _extract_entities does (SPECHT on #200).
+            if isinstance(company_row, dict) and len(shown_ids) <= _ENTITY_CAP:
+                shown_countries.add(company_row.get("country_code"))
+        record_returned_entities(shown_ids, shown_countries)
         if omitted:
             lines.append(
                 f"{omitted} result(s) on this page are not shown: they did match, "
@@ -6346,8 +6483,8 @@ async def compare_financials_yoy(
         "concern, segment data, climate disclosures, etc.) from a "
         "company's most recent filing of a given type. Use instead of "
         "fetching the full markdown and grepping manually — this prompt "
-        "handles pagination correctly and refuses to fabricate when the "
-        "section is absent."
+        "searches the filing instead of paging it and refuses to fabricate "
+        "when the section is absent."
     ),
 )
 async def find_filing_section(
@@ -6355,7 +6492,8 @@ async def find_filing_section(
     filing_type: str,
     section_keyword: str,
 ) -> list[PromptMessage]:
-    """Guide the assistant through resolve → list → markdown → grep."""
+    """Guide the assistant through resolve → list → in-filing search → read
+    around the hit, with a filings_search shortcut across the company's filings."""
     instructions = (
         f"Find the section in {ticker_or_name}'s most recent {filing_type} "
         f"that discusses '{section_keyword}'.\\n\\n"
@@ -6381,17 +6519,30 @@ async def find_filing_section(
         "so do NOT make it a selection gate: if it is null or absent, just "
         "proceed. Treat it only as "
         "an explanation if a markdown fetch then comes back empty.\\n"
-        "4. `filings_markdown_retrieve` for that filing_id. The response "
-        "is paginated — call with increasing offset until you locate the "
-        "section, the truncation marker is gone, or you have made 10 calls. "
-        "Stop at the cap and report that the section was not found in the "
-        "portion read.\\n"
+        f"4. `filings_markdown_search` with filing_id=<that id>, "
+        f"query=\\"{section_keyword}\\". It searches the WHOLE filing in one "
+        "call and returns each hit with a character offset. No hit: retry "
+        "once or twice with the section's usual heading or a synonym, in the "
+        "filing's language. Then `filings_markdown_retrieve` with that "
+        "filing_id and offset=max(0, <the best hit's offset> - 200) to read "
+        "the section around it. Do NOT page the filing from offset 0. If the "
+        "search result NOTES a hit is past what filings_markdown_retrieve can "
+        "reach, do not retrieve it: quote the search context and say only that "
+        "passage was available.\\n"
+        f"   SHORTCUT: `filings_search` with queries=[\\"{section_keyword}\\", "
+        "<its translations>], company=<id>, types=<mapped>, "
+        "ordering=\\"-release_datetime\\" lists this company's filings of that "
+        "type that mention it, newest first among its top matches by relevance "
+        "(the result header names that set), with snippets. It does "
+        "not decide which filing is newest; step 3 does. Use it when the newest filing has no hit or no Markdown: "
+        "say so first, then name the older filing you answered from.\\n"
         f"5. Return ONLY the markdown excerpt containing "
         f"'{section_keyword}', plus 2 paragraphs of surrounding context. "
-        "Cite filing type and publication date. If the keyword is not "
-        f"present after exhausting all pages, say 'Section matching "
-        f"\\"{section_keyword}\\" not found in filing <id> after "
-        "<n> pages' — do NOT fabricate content from training data."
+        "Cite filing type and publication date. If neither the keyword nor "
+        f"the synonyms you tried occur in the filing, say 'Section matching "
+        f"\\"{section_keyword}\\" not found in filing <id> (searched the whole "
+        "filing for: <the terms you tried>)' — do NOT fabricate content from "
+        "training data."
     )
     return [
         PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
@@ -7374,6 +7525,8 @@ def main() -> None:
                 pay_description = X402_PAY_DESCRIPTIONS.get(func_name) or (
                     description.replace("filing_id=", "id=").replace("(filing_id)", "(id)")
                 )
+                for main_text, pay_text in X402_PAY_REWRITES:
+                    pay_description = pay_description.replace(main_text, pay_text)
                 pay_code.append(
                     pay_template.render(
                         func_name=func_name,

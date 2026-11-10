@@ -441,3 +441,19 @@ async def test_an_html_200_is_an_error_not_a_result(pay, respx_router) -> None:
     result = await _call(pay, "companies_list", payment=PAYMENT)
     assert result.isError is True
     assert "internal-proxy-page" not in result.content[0].text
+
+
+@pytest.mark.asyncio
+async def test_pay_tools_name_no_tool_the_pay_surface_does_not_serve(pay) -> None:
+    """The twins reuse the /mcp descriptions, which route text search to
+    `filings_search` and in-filing search to `filings_markdown_search`. Neither
+    is sold here, so a paying agent told to call one gets an unknown-tool error."""
+    import re
+
+    async with Client(pay.mcp_pay) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+    served = set(tools)
+    known = set(pay.mcp._tool_manager._tools) | served
+    for name, tool in tools.items():
+        named = set(re.findall(r"\b([a-z]+(?:_[a-z]+)+)\b", tool.description or "")) & known
+        assert named <= served, f"{name} names tools the pay surface lacks: {sorted(named - served)}"

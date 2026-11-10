@@ -12,7 +12,12 @@ import pytest
 # Add a row here whenever a new @mcp.prompt() lands in scripts/generate_mcp_tools.py.
 EXPECTED_PROMPTS: dict[str, set[str]] = {
     "compare_financials_yoy": {"companies_list", "companies_financials_retrieve"},
-    "find_filing_section": {"companies_list", "filings_list", "filings_markdown_retrieve"},
+    # filings_markdown_search replaced the 10-call markdown_retrieve paging and
+    # filings_search is the across-filings shortcut (web#8004 routing).
+    "find_filing_section": {
+        "companies_list", "filings_list", "filings_markdown_search",
+        "filings_markdown_retrieve", "filings_search",
+    },
     "summarize_recent_filings": {"companies_list", "filings_list"},
 }
 
