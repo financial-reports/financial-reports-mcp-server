@@ -29,6 +29,7 @@ Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default sur
 | Resolve many identifiers at once | `companies_resolve_create` (batch; prefer over a loop of `companies_list`) |
 | Resolve an ISIN | `isins_retrieve` (ISIN → company); `isins_list` for a company's dual listings |
 | Which filings or companies mention X | `filings_search` (the term plus its translations as separate queries, up to 5, plus country/type/date filters) → `filings_markdown_search` on the hits. `filings_list` matches metadata and titles, never filing text |
+| Which companies mention X (a list of companies, not filings) | `filings_search` with `group_by="company"`: one row per company with its matching-filing count, first and last release date and best-matching filing, counted over the first `max_results` matches (raise it, up to 10000, for a broad screen). Then `filings_search` with `company=<id>`, or `companies=<id,id,…>` for a basket, to read those companies' hits |
 | Get filings | `filings_list` → `filings_retrieve` → `filings_markdown_retrieve` for content |
 | Search inside a large filing | `filings_markdown_search` (don't fetch 10 MB to find one section); `filings_markdown_search_batch` for one query across a set you already hold |
 | Get financials | `companies_financials_retrieve` (annual or quarterly, normalized line items) |
