@@ -670,3 +670,404 @@ async def test_a_non_string_query_is_refused_locally(
     out = await _tool(mcp_module)(queries=["a"], query=7)
     assert "query must be a string" in out
     assert not route.called
+
+
+# --- max_results, group_by=company and companies (web#10008, web#10016) --------
+#
+# Bodies built from web master 082cfe9c6 (filings/cross_search.py,
+# filings/cross_search_group.py): a grouped page's `search` carries group_by,
+# filings_grouped and message on top of the filing envelope, and its rows are
+# ROW_FIELDS. All through real Client dispatch, so FastMCP's own argument
+# validation runs first, as it does for a client.
+
+GROUPED_MSG = (
+    "Grouped over the first 1000 matching filings you can see, by relevance (at most "
+    "max_results=1000): hit_count, first_release_datetime and last_release_datetime count "
+    "only those filings. More filings may match (search.capped is true), so a company's "
+    "counts can be higher and more companies may exist: raise max_results or narrow q or "
+    "the filters."
+)
+
+
+def _company_row(cid, country="DE", hits=3, best=None, isin="DE0007164600"):
+    return {
+        "company_id": cid, "company_name": f"Company {cid}", "country_code": country,
+        "isin": isin, "hit_count": hits,
+        "first_release_datetime": "2021-03-01T08:00:00Z",
+        "last_release_datetime": "2025-02-10T08:00:00Z",
+        "best_filing_id": 5000 + cid if best is None else best,
+    }
+
+
+def _grouped(rows, *, grouped=40, capped=False, scan_complete=True, cap=1000,
+             message="Grouped over ... That is every matching filing you can see.", next_url=None):
+    search = {"capped": capped, "scan_complete": scan_complete, "max_results": cap,
+              "scope": "filings_with_text", "types_resolved": [], "group_by": "company",
+              "filings_grouped": grouped}
+    if message is not None:
+        search["message"] = message
+    return {"count": len(rows), "next": next_url, "previous": None, "results": rows,
+            "search": search}
+
+
+def _capture(mcp_module, monkeypatch):
+    captured: list[dict] = []
+    monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
+    return captured
+
+
+def _last_event(captured):
+    return [e for e in captured if e["name"] == "filings_search" and e["kind"] == "tool"][-1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("sent", "wire"), [(5000, "5000"), (1, "1"), (10000, "10000"), ("250", "250")])
+async def test_max_results_is_forwarded(
+    mcp_module, monkeypatch, fake_access_token, respx_router, sent, wire
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    await _call(mcp_module, {"queries": ["going concern"], "max_results": sent})
+    assert route.calls.last.request.url.params["max_results"] == wire
+
+
+@pytest.mark.asyncio
+async def test_unset_max_results_group_by_and_companies_are_not_sent(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """Unset keeps the endpoint's defaults (cap 1000, filing rows, no basket)."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    await _call(mcp_module, {"queries": ["x"], "group_by": " ", "companies": ""})
+    params = route.calls.last.request.url.params
+    for name in ("max_results", "group_by", "companies"):
+        assert name not in params
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [0, 10001, -5, "0", "1e3", "10001"])
+async def test_max_results_out_of_range_is_refused_locally(
+    mcp_module, monkeypatch, fake_access_token, respx_router, bad
+):
+    """The endpoint answers these with a 400; refusing here names the range
+    and costs no round trip."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    from fastmcp import Client
+    from fastmcp.exceptions import ToolError
+
+    async with Client(mcp_module.mcp) as client:
+        try:
+            result = await client.call_tool("filings_search", {"queries": ["x"], "max_results": bad})
+            out = result.content[0].text
+        except ToolError as exc:  # FastMCP's own type check ("1e3" is not an int)
+            out = str(exc)
+    assert "max_results" in out
+    assert not route.called
+
+
+def test_max_results_bool_is_refused(mcp_module) -> None:
+    # True is an int to Python; the endpoint would read "true" as a 400.
+    with pytest.raises(mcp_module.ToolInputError):
+        mcp_module._cross_search_max_results(True)
+    assert mcp_module._cross_search_max_results(" 42 ") == 42
+    assert mcp_module._cross_search_max_results(None) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("cap", "raise_hint"), [(5000, True), (10000, False)])
+async def test_the_header_reads_the_cap_the_endpoint_served(
+    mcp_module, monkeypatch, fake_access_token, respx_router, cap, raise_hint
+):
+    """The header quotes `search.max_results`, and only offers a raise below
+    the ceiling (raising past 10000 is a 400)."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([_filing(1, LITERAL)], count=cap, capped=True, scan_complete=True)
+    body["search"]["max_results"] = cap
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["x"], "max_results": cap,
+                                   "ordering": "-release_datetime"})
+    assert f"More than {cap} filings match; only the first {cap}" in out
+    assert f"among the first {cap} matches by relevance" in out.splitlines()[0]
+    assert ("raise max_results (up to 10000)" in out) is raise_hint
+
+
+@pytest.mark.asyncio
+async def test_the_header_quotes_the_served_cap_not_the_sent_one(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """An endpoint that did not apply max_results served the default; quoting
+    the sent value would overstate what was searched."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(
+        200, json=_page([_filing(1, LITERAL)], count=1000, capped=True, scan_complete=True)))
+    out = await _call(mcp_module, {"queries": ["x"], "max_results": 5000})
+    assert "More than 1000 filings match; only the first 1000" in out
+    assert "5000" not in out
+
+
+@pytest.mark.asyncio
+async def test_group_by_company_is_forwarded_and_rendered_as_company_rows(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_grouped(
+        [_company_row(7, "DE", hits=12, best=901), _company_row(3, "JP", hits=1, isin=None)],
+        grouped=13, message="Grouped over the first 13 matching filings you can see.",
+    )))
+    out = await _call(mcp_module, {"queries": ["going concern"], "group_by": " Company "})
+    assert route.calls.last.request.url.params["group_by"] == "company"
+    lines = out.splitlines()
+    assert lines[0].startswith("2 company(ies) with filings matching")
+    assert "best match first" in lines[0]
+    assert "counted over the first 13 matching filing(s)" in out
+    assert "Search note: Grouped over the first 13 matching filings you can see." in out
+    row7 = next(line for line in lines if line.startswith("- company 7 "))
+    for part in ("Company 7", "| DE |", "ISIN DE0007164600", "12 matching filing(s)",
+                 "first 2021-03-01, last 2025-02-10", "best match: filing 901"):
+        assert part in row7, part
+    row3 = next(line for line in lines if line.startswith("- company 3 "))
+    assert "ISIN none" in row3 and "| JP |" in row3
+    assert "count can be higher" not in out, "an uncapped, complete group is every match"
+    assert "not over every match" not in out
+    assert "counted over the first 13 matching filing(s) you can see: every match" in out
+    assert "filing 901 |" not in out, "rows rendered as filings"
+
+
+@pytest.mark.asyncio
+async def test_a_capped_group_says_counts_may_be_higher(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_grouped(
+        [_company_row(7)], grouped=1000, capped=True, scan_complete=True, message=GROUPED_MSG)))
+    out = await _call(mcp_module, {"queries": ["x"], "group_by": "company"})
+    assert "counted over the first 1000 matching filing(s)" in out
+    assert "(max_results=1000), not over every match" in out
+    assert "More than 1000 filings match, so a company's count can be higher" in out
+    assert "raise max_results (up to 10000)" in out
+    assert "Search note: Grouped over the first 1000" in out
+
+
+@pytest.mark.asyncio
+async def test_an_early_stopped_group_says_more_may_exist(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_grouped(
+        [_company_row(7)], grouped=40, capped=True, scan_complete=False, message=None)))
+    out = await _call(mcp_module, {"queries": ["x"], "group_by": "company"})
+    assert "stopped before checking every candidate" in out
+    assert "not over every match" in out
+    assert "a company's count can be higher and more companies may exist" in out
+    assert "Search note" not in out
+
+
+@pytest.mark.asyncio
+async def test_a_group_without_filings_grouped_falls_back_to_the_cap(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _grouped([_company_row(7)], cap=500)
+    del body["search"]["filings_grouped"]
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["x"], "group_by": "company", "max_results": 500})
+    assert "counted over at most the first 500 matching filings" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["filing", "country", "company,filing"])
+async def test_an_unknown_group_by_is_refused_locally(
+    mcp_module, monkeypatch, fake_access_token, respx_router, bad
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _call(mcp_module, {"queries": ["x"], "group_by": bad})
+    assert 'group_by takes one value: "company"' in out
+    assert not route.called
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("ordering", "refused"), [
+    ("-release_datetime", True),
+    ("relevance,-added_to_platform", True),
+    ("id", True),
+    ("relevance", False),
+    ("-relevance", False),
+])
+async def test_group_by_takes_no_ordering_but_relevance(
+    mcp_module, monkeypatch, fake_access_token, respx_router, ordering, refused
+):
+    """The endpoint answers any other ordering with 400 invalid_group_by."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_grouped([_company_row(7)])))
+    out = await _call(mcp_module, {"queries": ["x"], "group_by": "company", "ordering": ordering})
+    assert ("ordering is not available with group_by" in out) is refused
+    assert route.called is (not refused)
+
+
+@pytest.mark.asyncio
+async def test_group_by_ignored_by_the_endpoint_renders_filings_and_says_so(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """An endpoint that does not know group_by answers with filings. Read as
+    company rows they would print as '?' and log filing ids as companies."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page(
+        [_filing_in(31, "JP")])))
+    captured = _capture(mcp_module, monkeypatch)
+    out = await _call(mcp_module, {"queries": ["x"], "group_by": "company"})
+    assert "1 filing(s) matched" in out and "- filing 31 |" in out
+    assert 'group_by="company" was not applied by the endpoint' in out
+    assert _last_event(captured)["returned_ids"] == [31]
+
+
+@pytest.mark.asyncio
+async def test_a_group_records_the_company_ids_shown_and_their_markets(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """In company mode the rows ARE companies: the event's ids are company ids,
+    in the order shown, never the rows' best_filing_id."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_grouped([
+        _company_row(7, "de", best=901), _company_row(3, "JP", best=902),
+        _company_row(11, None, best=903),
+    ])))
+    captured = _capture(mcp_module, monkeypatch)
+    await _call(mcp_module, {"queries": ["x"], "group_by": "company"})
+    ev = _last_event(captured)
+    assert ev["status"] == "ok"
+    assert ev["returned_ids"] == [7, 3, 11]
+    assert ev["result_countries"] == ["DE", "JP"]
+    assert ev["result_count"] == 3
+    # The key survives sanitising, so a grouped call is visible; its VALUE is
+    # <redacted> until both analytics allowlists add group_by (follow-up).
+    assert "group_by" in ev["arguments"]
+
+
+@pytest.mark.asyncio
+async def test_a_group_does_not_record_rows_cut_for_length_or_past_the_cap(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    rows = [_company_row(i, "US") for i in range(1, 51)] + [_company_row(51, "JP")]
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_grouped(rows)))
+    captured = _capture(mcp_module, monkeypatch)
+    await _call(mcp_module, {"queries": ["x"], "group_by": "company"})
+    ev = _last_event(captured)
+    assert ev["returned_ids"] == list(range(1, 51))
+    assert ev["result_countries"] == ["US"]
+
+    long_row = _company_row(2, "DE")
+    long_row["company_name"] = "N" * 3000
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_grouped(
+        [_company_row(1, "FR"), long_row, _company_row(3, "IT")])))
+    monkeypatch.setattr(mcp_module, "_MAX_RESULT_CHARS", 1800)
+    out = await _call(mcp_module, {"queries": ["x"], "group_by": "company"})
+    assert "1 result(s) on this page are not shown" in out
+    ev = _last_event(captured)
+    assert ev["returned_ids"] == [1, 3]
+    assert ev["result_countries"] == ["FR", "IT"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("sent", "wire"), [
+    ([12, 345], "12,345"),
+    (" 12, 345 ,12,", "12,345"),
+    ("[12, 345]", "12,345"),
+    (["12", "345"], "12,345"),
+    ("7", "7"),
+])
+async def test_companies_is_forwarded_comma_separated(
+    mcp_module, monkeypatch, fake_access_token, respx_router, sent, wire
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    await _call(mcp_module, {"queries": ["x"], "companies": sent})
+    assert route.calls.last.request.url.params["companies"] == wire
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("bad", "expected"), [
+    ("12,abc", "not 'abc'"),
+    ("12,-3", "not '-3'"),
+    ("0", "not '0'"),
+    ("12;34", "not '12;34'"),
+    ("[1, 2", "not '[1'"),
+    (",".join(str(i) for i in range(1, 52)), "at most 50 company ids (got 51)"),
+])
+async def test_bad_companies_are_refused_locally(
+    mcp_module, monkeypatch, fake_access_token, respx_router, bad, expected
+):
+    """A token that is not an id is refused, never dropped: dropping it would
+    widen the search past the basket the caller asked for."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _call(mcp_module, {"queries": ["x"], "companies": bad})
+    assert "companies takes" in out and expected in out
+    assert not route.called
+
+
+def test_fifty_companies_pass_and_duplicates_do_not_count(mcp_module) -> None:
+    ids = list(range(1, 51))
+    assert mcp_module._cross_search_companies(ids + ids) == ids
+    assert mcp_module._cross_search_companies([]) is None
+    with pytest.raises(mcp_module.ToolInputError):
+        mcp_module._cross_search_companies([True])
+    with pytest.raises(mcp_module.ToolInputError):
+        mcp_module._cross_search_companies("[1.5]")
+    # Direct calls only (the wire schema takes a list or a string).
+    assert mcp_module._cross_search_companies(7) == [7]
+
+
+@pytest.mark.asyncio
+async def test_include_predecessors_works_with_companies_alone(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    await _call(mcp_module, {"queries": ["x"], "companies": [12, 34], "include_predecessors": True})
+    params = route.calls.last.request.url.params
+    assert params["companies"] == "12,34" and params["include_predecessors"] == "true"
+
+    route.reset()
+    out = await _call(mcp_module, {"queries": ["x"], "include_predecessors": True})
+    assert "include_predecessors needs company or companies" in out
+    assert not route.called
+
+
+def test_the_description_teaches_max_results_and_the_basket_mode(mcp_module) -> None:
+    desc = mcp_module.mcp._tool_manager._tools["filings_search"].description or ""
+    flat = " ".join(desc.split())
+    assert "`max_results` (1 to 10000, default 1000)" in flat
+    assert 'Raise it for broad screens and "how many companies / filings" questions' in flat
+    assert "costs nothing extra per page" in flat and "slower" in flat
+    assert 'WHICH COMPANIES MENTION X: group_by="company"' in flat
+    assert "then filings_search with company=<id> (or companies=<ids>)" in flat
+    assert "companies (up to 50 internal ids" in flat
+    assert "first 1000 matches by relevance" not in flat, "the cap is max_results now"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("body", "page", "expected", "absent"), [
+    (_grouped([], grouped=0, message="No matching filing you can see was found."), 1,
+     "No filing matched", "may still exist"),
+    (_grouped([], grouped=0, capped=True, scan_complete=False, message=None), 1,
+     "this is NOT an absence", "No filing matched"),
+    (_grouped([], grouped=40, capped=True, scan_complete=False, message=None), 3,
+     "matching filings may still exist", "No filing matched"),
+])
+async def test_an_empty_group_page_reads_as_the_filing_search_does(
+    mcp_module, monkeypatch, fake_access_token, respx_router, body, page, expected, absent
+):
+    """The empty paths do not depend on the row shape: an empty grouped page is
+    an absence only when the scan was complete, as for filings."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["x"], "group_by": "company", "page": page})
+    assert expected in out and absent not in out

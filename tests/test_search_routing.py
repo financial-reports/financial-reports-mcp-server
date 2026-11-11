@@ -66,6 +66,15 @@ def test_the_topic_rule_reaches_the_model_under_the_client_cap(mcp_module) -> No
     assert "zh/ja/ko" in delivered
 
 
+def test_the_topic_rule_names_group_by_company_for_which_companies(mcp_module) -> None:
+    """ "Which companies mention X" is answered by one grouped search
+    (web#10016), not by reading company names off pages of filings. Inside
+    rule 1, so it sits under the client cap with the rest of the rule."""
+    rule = _rule(mcp_module, 1)
+    assert 'group_by="company" for companies' in rule
+    assert rule.index("filings_search") < rule.index("group_by")
+
+
 def test_the_topic_rule_keeps_over_routing_in_check(mcp_module) -> None:
     """One known filing stays on the in-filing search; line items stay on the
     structured financials. Without these the new rule would pull per-filing and
