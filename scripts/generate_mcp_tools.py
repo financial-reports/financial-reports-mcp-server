@@ -5010,7 +5010,8 @@ def _resource_filing_types() -> str:
     return (
         "# FinancialFilings filing-type codes (30 total)\\n\\n"
         "Pass these via the `type` query param (or `types` for several) on "
-        "`filings_list`. The first column is the code; the third is the "
+        "`filings_list`, or via `types` on `filings_search`. The first column "
+        "is the code; the third is the "
         "FinancialFilings taxonomy category.\\n\\n"
         "## Form names are NOT codes — translate first\\n\\n"
         "These codes are a cross-jurisdiction taxonomy, not form names. "
@@ -6331,7 +6332,9 @@ async def filings_search(
     Filters (all optional, combinable): company (internal id) or companies (up to
     50 internal ids, a list or comma-separated: filings of any of them);
     include_predecessors adds the issuers each one succeeded; countries / languages
-    (comma-separated ISO codes), types (comma-separated filing type codes),
+    (comma-separated ISO codes), types (comma-separated FinancialFilings filing
+    type codes — a cross-jurisdiction taxonomy, NOT form names; an unrecognised
+    one is rejected, so call get_fr_filing_type_taxonomy to translate first),
     release_datetime_from / _to and added_to_platform_from / _to
     (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and period filters are NOT available here;
     use a release-date range.
