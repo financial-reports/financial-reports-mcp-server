@@ -166,11 +166,12 @@ belongs on `source_filing_type`, not `type`.
   50k characters, at most 150k per call). On the truncation marker, call again
   with the `offset` it gives; stop once you have the section you need.
   `filings_retrieve` returns the original document URL.
-- **`search=` matches names, not filing text.** `filings_list?search=` and
-  `companies_list?search=` match titles and company names only. For "which
-  filings mention X", use `filings_search`, which searches the filings' text.
-  A boolean string in `search=` is matched literally against titles and
-  returns nothing.
+- **`search=` never matches filing TEXT.** `filings_list?search=` matches
+  filing titles and company names. `companies_list?search=` matches company
+  name, former names, ticker, and LEI/ISIN from the start — so `AAPL` or an
+  ISIN prefix is a valid lookup there. Neither searches inside a filing: for
+  "which filings mention X", use `filings_search`. A boolean string in
+  `search=` is matched literally and returns nothing.
 - **Account status.** If a tool returns a gate response pointing at the
   FinancialFilings site, the account needs attention — surface the link and stop.
   Don't retry-loop.

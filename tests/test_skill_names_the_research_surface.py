@@ -57,6 +57,21 @@ def _skill_text() -> str:
     return SKILL.read_text(encoding="utf-8")
 
 
+def _tools_named_in_table() -> set[str]:
+    """WHOLE backticked tool names in the `## Tools` section.
+
+    SPECHT caught the substring bug (S3 on 7fdc2f7, 1/3 passes, reproduced
+    before acting): a plain `in` test let `filings_markdown_search` be
+    satisfied by `filings_markdown_search_batch`, which CONTAINS it. Deleting
+    the single-filing tool's entry therefore left all five tests green.
+
+    That is the SECOND time this file's check was looser than its own claim —
+    first whole-file vs the table, now substring vs whole name. Both times the
+    docstring described the stricter check.
+    """
+    return set(re.findall(r"`([a-z][a-z0-9_]*)`", _tools_table()))
+
+
 def _tools_table() -> str:
     """Just the `## Tools` section — the table a model reads to pick a tool.
 
@@ -76,8 +91,8 @@ def _tools_table() -> str:
 
 def test_the_skill_names_every_research_tool(mcp_module) -> None:
     """A tool we serve but never mention is a silently worse answer."""
-    table = _tools_table()
-    missing = sorted(t for t in _research_surface(mcp_module) if t not in table)
+    named = _tools_named_in_table()
+    missing = sorted(_research_surface(mcp_module) - named)
     assert not missing, (
         f"the `## Tools` table in skills/financial-filings-research/SKILL.md "
         f"never names {missing}. The default surface serves them, so a model "
@@ -124,9 +139,15 @@ def test_the_skill_warns_that_search_matches_names_not_text(mcp_module) -> None:
     outranks a tool description, so a skill that omits this quietly overrides it.
     """
     text = _skill_text().lower()
-    assert "titles and company names only" in text, (
-        "the skill no longer warns that `search=` matches names rather than "
-        "filing text — the warning `filings_list`'s own description carries."
+    # Pin the SUBSTANCE, not a phrasing. The first version asserted the literal
+    # "titles and company names only", which SPECHT then showed to be FALSE of
+    # `companies_list?search=` (it also matches ticker and LEI/ISIN prefixes).
+    # A test that pins exact wording makes correcting that wording look like a
+    # regression — so it anchors on the claim that is true and load-bearing:
+    # `search=` never reaches filing text, and `filings_search` is the route.
+    assert "never matches filing text" in text or "not filing text" in text, (
+        "the skill no longer warns that `search=` does not reach filing text — "
+        "the warning `filings_list`'s own description carries."
     )
     assert "filings_search" in text
 
