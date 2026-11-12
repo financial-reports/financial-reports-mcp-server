@@ -108,7 +108,9 @@ Search ONE filing's markdown and get back only the matching passages.
 
 Key params: `filing_id`, `query` (a SUBSTRING, at most 200 characters), `max_hits`.
 
-Returns: hits with ~440 characters of context each and a character `offset` you can pass to `filings_markdown_retrieve` to read further around it.
+Returns: hits with ~440 characters of context each and a character `offset`. Within reach, that offset reads further around the hit via `filings_markdown_retrieve`.
+
+Pitfall: the offset is NOT always reachable. The server searches the whole document; `filings_markdown_retrieve` still stops at 10,000,000 bytes, so a hit past that names a passage this tool found and that one cannot fetch (1,586 filings in prod exceed the cap). The result SAYS which case you are in — read its NOTE rather than guessing, and when it says a hit is out of reach, use the ~440 characters of context here, which is the whole passage available. Tracked as #175; it disappears once retrieve windows on the API's own offset/limit.
 
 Pitfall: use this INSTEAD of paging a long filing, but only once you HAVE the filing — to find which filings say something, use `filings_search`. `query` is a substring, not a phrase matcher: search a distinctive phrase, not a whole passage.
 
