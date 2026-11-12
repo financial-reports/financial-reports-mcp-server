@@ -170,8 +170,10 @@ belongs on `source_filing_type`, not `type`.
   filing titles and company names. `companies_list?search=` matches company
   name, former names, ticker, and LEI/ISIN from the start — so `AAPL` or an
   ISIN prefix is a valid lookup there. Neither searches inside a filing: for
-  "which filings mention X", use `filings_search`. A boolean string in
-  `search=` is matched literally and returns nothing.
+  "which filings mention X", use `filings_search`. Whitespace-separated terms
+  are AND-ed, NOT matched as a phrase, so `annual report` also matches
+  "Annual Interim Report"; boolean operators are not parsed, so `A AND B`
+  requires a literal `AND` too and finds nothing.
 - **Account status.** If a tool returns a gate response pointing at the
   FinancialFilings site, the account needs attention — surface the link and stop.
   Don't retry-loop.

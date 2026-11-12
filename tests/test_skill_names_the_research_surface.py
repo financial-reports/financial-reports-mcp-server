@@ -89,6 +89,22 @@ def _tools_table() -> str:
     return section
 
 
+CHEATSHEET = REPO_ROOT / "skills/financial-filings-research/references/tool-cheatsheet.md"
+
+
+def _tools_with_a_cheatsheet_entry() -> set[str]:
+    """Tools that have their OWN `### \u0060name\u0060` entry in the cheatsheet.
+
+    A HEADING, not a mention. `filings_markdown_search` appeared in the
+    cheatsheet before this guard existed \u2014 inside another tool's pitfall
+    paragraph \u2014 and a grep for the name therefore said it was documented
+    while the parameter reference had no entry for it. A mention is not an
+    occurrence.
+    """
+    text = CHEATSHEET.read_text(encoding="utf-8")
+    return set(re.findall(r"^### `([a-z][a-z0-9_]*)`", text, re.M))
+
+
 def test_the_skill_names_every_research_tool(mcp_module) -> None:
     """A tool we serve but never mention is a silently worse answer."""
     named = _tools_named_in_table()
@@ -152,27 +168,72 @@ def test_the_skill_warns_that_search_matches_names_not_text(mcp_module) -> None:
     assert "filings_search" in text
 
 
-def test_the_coverage_check_reads_the_table_and_not_the_whole_file(mcp_module) -> None:
+def test_the_coverage_check_reads_the_table_and_not_the_whole_file(
+    mcp_module, monkeypatch
+) -> None:
     """SPECHT's mutation, encoded so the blindness cannot return.
 
     A tool named only in Pitfalls must NOT satisfy the coverage check. Without
     this, a later refactor back to a file-wide search would pass every other
     test here and silently stop pinning the table.
+
+    SPECHT then caught this test ITSELF (S3 on ce21ff6, 1/3 passes, reproduced
+    before acting). Two defects, and both made it a control that could not
+    fail:
+
+      1. It applied the mutation to a local string and asked `in table_without`
+         directly, never calling `_tools_named_in_table()`. Changing that
+         helper back to scanning the whole file left this test green — the one
+         regression it exists to catch.
+      2. The `in` it used was the SUBSTRING comparison the helper had just been
+         fixed to stop using, so the test re-implemented the bug it guards.
+
+    Both are gone. The mutation is applied to `_tools_table`, so the real
+    parser runs over it, and the assertion reads that parser's output as a set
+    of whole names.
     """
-    table = _tools_table()
-    whole = _skill_text()
     sentinel = "filings_search"
-    assert sentinel in table, "precondition: the table names filings_search"
+    assert sentinel in _tools_named_in_table(), (
+        "precondition: the table names filings_search"
+    )
 
     # Simulate the row being dropped while the Pitfalls mention survives.
-    table_without = table.replace(sentinel, "REMOVED")
-    assert sentinel not in table_without
-    assert sentinel in whole.replace(table, table_without), (
+    table_without = _tools_table().replace(sentinel, "REMOVED")
+    assert sentinel in _skill_text().replace(_tools_table(), table_without), (
         "precondition: filings_search is also mentioned outside the table, "
         "which is what made the file-wide search blind"
     )
-    missing = sorted(t for t in _research_surface(mcp_module) if t not in table_without)
+
+    monkeypatch.setattr(
+        "tests.test_skill_names_the_research_surface._tools_table",
+        lambda: table_without,
+    )
+
+    # Through the real parser, exactly as the coverage test computes it.
+    missing = _research_surface(mcp_module) - _tools_named_in_table()
     assert sentinel in missing, (
         "the coverage check is reading the whole file again, not the `## Tools` "
         "table: a tool mentioned only in Pitfalls should count as missing."
+    )
+
+
+def test_every_tool_the_table_names_has_a_cheatsheet_entry(mcp_module) -> None:
+    """SKILL.md says "Full parameters in `references/tool-cheatsheet.md`".
+
+    That sentence is a promise, and SPECHT found it broken (S4 on ce21ff6):
+    the table had just started recommending `filings_search` and
+    `filings_markdown_search_batch`, and neither had an entry \u2014 so an agent
+    that followed the pointer could not find `queries` or `filing_ids`.
+    `filings_markdown_search` was missing too, which the finding did not say.
+
+    The table and the reference now move together or this fails.
+    """
+    promised = _tools_named_in_table() & _default_surface(mcp_module)
+    documented = _tools_with_a_cheatsheet_entry()
+    missing = sorted(promised - documented)
+    assert not missing, (
+        f"the Tools table recommends {missing}, SKILL.md promises full "
+        "parameters in references/tool-cheatsheet.md, and the cheatsheet has "
+        "no `### ` entry for them. A mention inside another tool's paragraph "
+        "does not count."
     )
