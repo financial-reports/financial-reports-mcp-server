@@ -110,3 +110,52 @@ def test_the_taxonomy_tool_is_on_the_default_surface(mcp_module) -> None:
     """
     tools = mcp_module.mcp._tool_manager._tools
     assert TAXONOMY_TOOL in tools
+
+
+def test_the_guide_scopes_its_search_recipes_to_filings_list(mcp_module) -> None:
+    """Widening the guide's audience without scoping its recipes is a defect.
+
+    SPECHT caught it 3/3 on `0de8131` — unanimous, and correct on both halves.
+    Telling `filings_search` callers to read this guide hands them a document
+    whose 10-Q recipe is `IR` plus `search="10-Q"` and whose verification step
+    is "read `source_filing_type` on the row". `filings_search` has neither.
+    An agent following the recipe makes an invalid call; one following the
+    verification step has no field to read.
+
+    The pointer was still right — the CODE TABLE is what a `filings_search`
+    caller needs, and it is the only part of the guide that was ever going to
+    help them. So the fix scopes the recipes rather than withdrawing the
+    pointer.
+    """
+    guide = mcp_module._resource_filing_types.fn()
+    header, _, _ = guide.partition("These codes are a cross-jurisdiction taxonomy")
+    assert "filings_list` only" in header or "`filings_list` only" in header, (
+        "the guide no longer says its `search=` recipes are filings_list-only"
+    )
+    assert "source_filing_type" in header
+
+
+def test_the_scoping_claim_still_matches_the_tool_signatures(mcp_module) -> None:
+    """The guide asserts two facts about `filings_search`. Pin them to the code.
+
+    A prose claim about another tool's interface rots the moment that interface
+    changes, and the guide is the one place a model is told to trust it. If
+    `filings_search` ever grows a `search` parameter, this fails here rather
+    than in a user's session.
+    """
+    import inspect
+
+    search_params = set(
+        inspect.signature(mcp_module.filings_search.fn).parameters
+    )
+    list_params = set(inspect.signature(mcp_module.filings_list.fn).parameters)
+
+    assert "search" not in search_params, (
+        "filings_search grew a `search` parameter — the taxonomy guide says it "
+        "has none, and says so to steer agents to filings_list"
+    )
+    assert "types" in search_params, "filings_search lost `types`"
+    # The control: the claim is a CONTRAST, so the other side has to hold too.
+    assert "search" in list_params, (
+        "filings_list lost `search` — the guide's recipes are written for it"
+    )
