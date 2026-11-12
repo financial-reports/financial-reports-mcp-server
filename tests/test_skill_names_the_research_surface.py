@@ -118,10 +118,54 @@ def test_the_skill_names_every_research_tool(mcp_module) -> None:
     )
 
 
+# A backticked name in the skill is a TOOL name or a PARAMETER name, and only
+# the first kind belongs in the complement check below. The discriminator is
+# name SHAPE: every tool is either a `get_fr_*` guide tool or ends in one of the
+# OpenAPI operation suffixes, while `release_datetime_from`, `on_watchlist` and
+# `source_filing_type` are none of those.
+#
+# SPECHT caught the first version missing the `get_fr_*` arm (S3 on 0fb3ae8,
+# reproduced before acting): the suffix list alone matches none of the three
+# guide tools, which are precisely the three this PR newly recommends. The
+# complement claimed the fix could not overshoot and could not see the overshoot
+# this PR was in a position to make.
+#
+# The shape test is a heuristic, so it gets a control: see
+# test_the_tool_name_matcher_can_see_every_served_tool.
+_TOOL_NAME_IN_PROSE = re.compile(
+    r"`(get_fr_[a-z0-9_]+|[a-z][a-z0-9_]*(?:_list|_retrieve|_create|_search|_batch))`"
+)
+
+
+def test_the_tool_name_matcher_can_see_every_served_tool(mcp_module) -> None:
+    """The control for the heuristic below, and the reason it cannot go blind again.
+
+    The complement check can only flag a name it MATCHES, so a tool whose name
+    fits no known shape is invisible to it — silently, and in the reassuring
+    direction. Rather than trusting the pattern, assert it covers the surface we
+    actually serve. The day a tool lands with a new naming shape, this fails
+    here instead of the complement quietly narrowing.
+    """
+    blind = sorted(
+        name
+        for name in _default_surface(mcp_module)
+        if not _TOOL_NAME_IN_PROSE.fullmatch(f"`{name}`")
+    )
+    assert not blind, (
+        f"the tool-name matcher cannot see {blind}, so the complement check "
+        "below is blind to them: the skill could recommend one that we stop "
+        "serving and no test would fail. Widen _TOOL_NAME_IN_PROSE."
+    )
+
+
 def test_the_skill_names_no_tool_we_do_not_serve(mcp_module) -> None:
-    """The complement, so the fix for the above cannot overshoot."""
+    """The complement, so the fix for the above cannot overshoot.
+
+    Deliberately file-wide, unlike the coverage check: recommending a tool we
+    do not serve is wrong wherever it appears, not only in the Tools table.
+    """
     served = _default_surface(mcp_module)
-    named = set(re.findall(r"`([a-z][a-z0-9_]*(?:_list|_retrieve|_create|_search|_batch))`", _skill_text()))
+    named = set(_TOOL_NAME_IN_PROSE.findall(_skill_text()))
     unknown = sorted(n for n in named if n not in served)
     assert not unknown, (
         f"the skill names tools the default surface does not serve: {unknown}"
