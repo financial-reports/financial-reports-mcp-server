@@ -244,6 +244,47 @@ async def test_markdown_search_hit_count_reaches_analytics_through_real_middlewa
     assert ev["arguments"]["query"] == query
 
 
+def test_record_returned_entities_keeps_only_the_shapes_structured_tools_emit() -> None:
+    usage_analytics._tool_returned_entities.set(None)
+    usage_analytics.record_returned_entities(
+        [3, True, "US0378331005", None, 2.5, 7] + list(range(100, 200)),
+        ["jp", "JP", "kr", None, "x", "toolong", 5],
+    )
+    ids, countries = usage_analytics._tool_returned_entities.get()
+    assert ids[:3] == [3, "US0378331005", 7], "bool / None / float must be dropped, order kept"
+    assert len(ids) == usage_analytics._ENTITY_CAP
+    assert countries == ["JP", "KR"]
+
+
+@pytest.mark.asyncio
+async def test_recorded_entities_override_text_inference_and_do_not_leak(monkeypatch) -> None:
+    monkeypatch.setattr(usage_analytics, "get_access_token", lambda: None)
+    emitter = _FakeEmitter()
+    mw = UsageAnalyticsMiddleware(emitter)
+
+    async def search(_):
+        usage_analytics.record_returned_entities([11, 12], ["DE"])
+        return "2 filing(s) matched ..."
+
+    async def plain(_):
+        return "some text"
+
+    async def failing(_):
+        usage_analytics.record_returned_entities([13], ["FR"])
+        record_tool_error("ToolInputError", "bad")
+        return "Error: bad"
+
+    await mw.on_call_tool(_fake_context("filings_search"), search)
+    await mw.on_call_tool(_fake_context("filings_search"), plain)
+    await mw.on_call_tool(_fake_context("filings_search"), failing)
+
+    assert (emitter.events[0]["returned_ids"], emitter.events[0]["result_countries"]) == ([11, 12], ["DE"])
+    assert (emitter.events[1]["returned_ids"], emitter.events[1]["result_countries"]) == ([], [])
+    # An error event reports no returned entities, as with result_count.
+    assert emitter.events[2]["status"] == "error"
+    assert emitter.events[2]["returned_ids"] == []
+
+
 # --- 6. response_bytes is the text the client receives (#127) ---------------
 #
 # FastMCP wraps a `str` return as structured_content={"result": <text>}, so
