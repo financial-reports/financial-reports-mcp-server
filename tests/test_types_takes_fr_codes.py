@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import pytest
 
-
 TAXONOMY_TOOL = "get_fr_filing_type_taxonomy"
 
 # Measured on origin/main 2026-11-12 against the 30-code table in
