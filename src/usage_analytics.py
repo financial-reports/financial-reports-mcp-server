@@ -615,6 +615,43 @@ def record_result_count(count: int) -> None:
         logger.debug("record_result_count skipped", exc_info=True)
 
 
+# --- text-tool returned entities ---------------------------------------------
+#
+# Same gap as the count above, for `returned_ids` / `result_countries`:
+# `_extract_entities` can only read a STRUCTURED result, and filings_search
+# returns prose, so every one of its events logged returned_ids=[] (94 of 94,
+# 2026-11-01..09). Without the ids nothing can say which of the ranked results an
+# agent went on to open, so ranking quality cannot be measured from the table. A
+# text tool that knows what it showed stashes the ids here, in the order shown;
+# the middleware prefers them over shape inference.
+_tool_returned_entities: ContextVar[Optional[tuple]] = ContextVar(
+    "_tool_returned_entities", default=None
+)
+
+
+def record_returned_entities(ids: Any, countries: Any = ()) -> None:
+    """Record the entity ids the current text-tool call showed, in order, and the
+    distinct country codes among them.
+
+    Kept to the shapes `_extract_entities` emits, so a text tool's event reads
+    like a structured tool's: ints or strings (never bool), at most _ENTITY_CAP
+    ids, countries upper-cased 2-3 letter codes, sorted. Anything else is dropped,
+    not logged. Never raises.
+    """
+    try:
+        clean_ids = [
+            i for i in (ids or ())
+            if isinstance(i, (int, str)) and not isinstance(i, bool)
+        ][:_ENTITY_CAP]
+        clean_countries = sorted({
+            c.upper() for c in (countries or ())
+            if isinstance(c, str) and 2 <= len(c) <= 3
+        })
+        _tool_returned_entities.set((clean_ids, clean_countries))
+    except Exception:
+        logger.debug("record_returned_entities skipped", exc_info=True)
+
+
 # --- middleware: capture tool + prompt calls ---
 
 @dataclass(frozen=True)
@@ -1132,6 +1169,7 @@ class UsageAnalyticsMiddleware(Middleware):
         started = time.monotonic()
         _tool_error.set(None)  # clear any value carried over within this context
         _tool_result_count.set(None)  # same: a stale count must not leak into this event
+        _tool_returned_entities.set(None)  # and the same for returned ids
         call_id_token = _call_id.set(uuid.uuid4().hex)
         await self._resolve_client_info(context)
         status, err, result = "ok", _ErrorInfo(), None
@@ -1185,6 +1223,9 @@ class UsageAnalyticsMiddleware(Middleware):
             # The tool's own count beats inference from the payload shape.
             metrics["result_count"] = recorded_count
             metrics["has_data"] = recorded_count > 0
+        recorded_entities = _tool_returned_entities.get()
+        if kind == "tool" and status == "ok" and recorded_entities is not None:
+            metrics["returned_ids"], metrics["result_countries"] = recorded_entities
         session_id = ""
         try:
             fc = getattr(context, "fastmcp_context", None)

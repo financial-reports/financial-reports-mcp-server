@@ -124,9 +124,9 @@ companies_financials_retrieve:
 
 filings_list:
   when_to_use: >
-    Use to search and filter regulatory filings across companies.
-    Supports filtering by company, filing type, category, country,
-    date range. Returns metadata — not filing content.
+    List filings by metadata: company, filing type, category, country,
+    dates. Returns metadata only; it does not read filing text, so to find
+    filings by what they say, use `filings_search`.
     VIEW: both views carry `processing_status`. `view='full'` adds more
     metadata fields and is larger, so pass it only when you need those
     fields. Never gate filing selection on `processing_status`: a null value
@@ -169,8 +169,8 @@ filings_retrieve:
     from `filings_markdown_retrieve(filing_id)`, not from a URL.
   when_not_to_use: >
     Don't use for the actual filing content — use
-    `filings_markdown_retrieve`. Don't use to search for filings —
-    use `filings_list`.
+    `filings_markdown_retrieve`. To find filings by what they say, use
+    `filings_search`; by metadata, use `filings_list`.
   examples:
     - user_says: "Show me the source PDF for this filing"
       parameters: "id=<filing_id>"
@@ -189,8 +189,8 @@ filings_markdown_retrieve:
     document was truncated rather than paginating a long filing
     indefinitely against the request budget.
   when_not_to_use: >
-    Don't use to search for filings — use `filings_list` first. Not
-    every filing has Markdown content. If a `filings_list` row shows a
+    To find filings by what they say, use `filings_search`; by metadata,
+    use `filings_list`. Not every filing has Markdown content. If a `filings_list` row shows a
     `processing_status` other than `"COMPLETED"`, that filing has no Markdown
     available (it may still be processing, or may never get any) — if the
     user asked for THAT filing (e.g. the latest), say so rather than silently

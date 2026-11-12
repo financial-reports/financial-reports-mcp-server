@@ -207,7 +207,9 @@ from src.usage_analytics import (
     build_emitter_from_env,
     current_call_id,
     record_result_count,
+    record_returned_entities,
     record_tool_error,
+    _ENTITY_CAP,
     sanitize_error_detail,
 )
 
@@ -1518,30 +1520,39 @@ mcp = FastMCP(
         "transactions, ESG/climate reports, prospectuses) and normalized "
         "financials for tens of thousands of listed companies in the US, "
         "EU, UK, APAC and LATAM. Use this server whenever the user names a public "
-        "company, ticker, or ISIN; cites a filing type; or asks for a "
+        "company, ticker, or ISIN; cites a filing type; asks which filings "
+        "mention a topic; or asks for a "
         "financial line item, peer comparison, or industry screen.\\n\\n"
-        "SLASH COMMANDS (prefer these over hand-assembled tool chains):\\n"
-        "  /compare_financials_yoy — YoY deltas across two fiscal years\\n"
-        "  /find_filing_section — pull a named section from a filing\\n"
-        "  /summarize_recent_filings — dated briefing of recent filings\\n\\n"
         "CORE RULES:\\n"
-        "1. Resolve company first: companies_list (name/ticker) or "
-        "isins_retrieve (ISIN) → use the returned internal integer id "
-        "for per-company tools (NOT the ticker or ISIN itself).\\n"
-        "2. Currency: always display the reporting currency next to "
+        # Topic before company (web#8004). Measured 2026-11-01..09: agents faked a
+        # corpus search by running filings_markdown_search over filing after
+        # filing (119 users) while this block named filings_search 0 times and
+        # routed all discovery through filings_list. Rule 1 must sit inside the
+        # 4096-char client cap, which is why SLASH COMMANDS moved to the end
+        # (test_sourcing_disclosure_178 pins both).
+        "1. Topic search (\\"which filings or companies mention / disclose / "
+        "discuss X\\") → filings_search, term + translations as separate "
+        "queries, up to 5 (zh/ja/ko too if no country filter; "
+        "group_by=\\"company\\" for companies) → filings_markdown_search on "
+        "hits. One known filing: "
+        "filings_markdown_search; line items: companies_financials_retrieve.\\n"
+        "2. Company named → resolve it first: companies_list "
+        "(name/ticker) or isins_retrieve (ISIN) → use the returned internal "
+        "integer id for per-company tools (NOT the ticker or ISIN itself).\\n"
+        "3. Currency: always display the reporting currency next to "
         "every monetary value. Never aggregate USD/EUR/CHF/etc. without "
         "explicit FX conversion.\\n"
-        "3. Periods: always state the fiscal period and period_end_date "
+        "4. Periods: always state the fiscal period and period_end_date "
         "with financial data. \\"Last year\\" is ambiguous — name the "
         "fiscal period you returned.\\n"
-        "4. Provenance: call the data \\"official filings, as published\\", "
+        "5. Provenance: call the data \\"official filings, as published\\", "
         "also when asked where it comes from. Never name a "
         "regulator or filing authority, or describe a filing by where it was "
         "filed. Titles and `source_filing_type` carry form labels: translate "
         "them (Form 4 -> insider transaction report, 13G -> major shareholder "
         "filing, 6-K -> company announcement, 10-Q -> quarterly report, 8-K -> "
         "current report) unless the user asked about that form.\\n"
-        "5. Filing type codes (most common — pass via `type` for one code, "
+        "6. Filing type codes (most common — pass via `type` for one code, "
         "or `types` for a comma-separated list, "
         "on filings_list):\\n"
         "     10-K       Annual Report (US, plus 20-F filings)\\n"
@@ -1551,7 +1562,7 @@ mcp = FastMCP(
         "     MDA        Management Discussion & Analysis\\n"
         "     DIRS       Director's Dealing (insider transactions)\\n"
         "   Form names are NOT codes; an unknown code is rejected with a 400 "
-        "that names it (read the 400 — it suggests a replacement): "
+        "that names it and suggests a replacement: "
         "10-Q -> IR, 20-F -> 10-K, Form 4 -> DIRS, DEF 14A proxy -> PSI "
         "(NOT the code spelled `DEF 14A`), 8-K -> no single code.\\n"
         "   These codes are BROADER than the form: `IR` is 92% 10-Q, the "
@@ -1564,7 +1575,7 @@ mcp = FastMCP(
         "than asserting one. Form 4 needs this: titles name the form only 9% "
         "of the time, and `DIRS` is only 88.6% Form 4 (8.9% is Form 3, an "
         "initial-ownership snapshot, NOT a transaction).\\n"
-        "6. Ambiguity / scope: ask the user to disambiguate when a search "
+        "7. Ambiguity / scope: ask the user to disambiguate when a search "
         "returns multiple plausible matches. Refuse out-of-scope queries "
         "(stock prices, analyst consensus, sentiment) plainly — do not "
         "burn tool calls hunting.\\n\\n"
@@ -1572,14 +1583,23 @@ mcp = FastMCP(
         "  fr://guide/filing-types — all 30 codes (ESG, governance, M&A, "
         "dividends, transcripts).\\n"
         "  fr://guide/industry-classification — ISIC hierarchy + peer-query "
-        "recipe (sector / peer queries).\\n"
+        "recipe.\\n"
         "  fr://guide/markdown-strategy — filings_markdown_retrieve fallback "
         "(values missing from the normalised financials).\\n\\n"
         "CANONICAL WORKFLOWS (one-liners; full recipes in the resources):\\n"
-        "  resolve → filings_list (type=…) → filings_markdown_retrieve → summarize\\n"
-        "  resolve → companies_financials_retrieve → if value missing, "
+        "  which filings / companies mention X → filings_search (term + "
+        "translations as separate queries, up to 5, + country/type/date "
+        "filters) → filings_markdown_search(filing_id, term) on the hits → "
+        "summarize\\n"
+        "  named company → resolve → filings_list (type=…) → "
+        "filings_markdown_retrieve → summarize\\n"
+        "  named company → resolve → companies_financials_retrieve → if value missing, "
         "fr://guide/markdown-strategy\\n"
-        "  industry/peer queries → fr://guide/industry-classification"
+        "  industry/peer queries → fr://guide/industry-classification\\n\\n"
+        "SLASH COMMANDS (prefer these over hand-assembled tool chains):\\n"
+        "  /compare_financials_yoy — YoY deltas across two fiscal years\\n"
+        "  /find_filing_section — pull a named section from a filing\\n"
+        "  /summarize_recent_filings — dated briefing of recent filings"
     ),
     auth=auth_provider,
     # Multi-size icons let connector renderers pick the right resolution.
@@ -4680,6 +4700,24 @@ X402_PAY_DESCRIPTIONS = {
     ),
 }
 
+# The twins reuse the /mcp descriptions, which route text search to tools the
+# pay surface does not sell (`filings_search`). A paying agent told to call one
+# gets an unknown-tool error, so those sentences are rewritten for the twin.
+# test_pay_tools_name_no_tool_the_pay_surface_does_not_serve fails on any new
+# reference, so a reworded override cannot slip past these exact matches.
+X402_PAY_REWRITES = (
+    ("Returns metadata only; it does not read filing text, so to find filings by "
+     "what they say, use `filings_search`.",
+     "Returns metadata only; it does not read filing text."),
+    ("it matches titles and company names only. Use `filings_search`, which "
+     "searches the filings' text.",
+     "it matches titles and company names only."),
+    ("To find filings by what they say, use `filings_search`; by metadata, use "
+     "`filings_list`.",
+     "Search by filing text is not available here; to find filings by metadata, "
+     "use `filings_list`."),
+)
+
 X402_PAY_BLOCK = '''
 
 # ---------------------------------------------------------------------------
@@ -5599,9 +5637,10 @@ async def filings_markdown_search_batch(
 ) -> str:
     """Search ONE query across SEVERAL filings in a single call — use this instead of
     calling filings_markdown_search once per filing when you are checking the same term
-    across a set (e.g. the same disclosure across a company's filings, or across peers).
-    To find which filings mention a term at all, use filings_search; this tool checks
-    a set you already have.
+    across a set you already hold (e.g. the same disclosure across a company's filings).
+    To find WHICH filings or companies mention it, call filings_search first: it
+    searches the indexed text of all filings in one call (heed its warning if it
+    stopped early), and this tool only the ones you list.
     SAME RULE AS THE SINGLE-FILING TOOL: for a company-and-period line item, call
     companies_financials_retrieve first — per company, not as a sweep here, which
     costs a read per filing. Stay here when the question is what a PARTICULAR filing
@@ -5951,14 +5990,31 @@ async def filings_markdown_search_batch(
 #                `filter_not_supported_with_q` (fiscal_year / fiscal_period
 #                among them), so this tool exposes only supported ones
 #   pagination   page-number only (cursor is a 400), default 20, max 100,
-#                at most the first `search.max_results` (1000) by relevance;
+#                at most the first `search.max_results` by relevance;
 #                a page past that is a 400 `search_page_past_cap`
+#   max_results  (web#10008) the cap: 1..10000, default 1000, echoed as
+#                search.max_results; anything else is a 400
+#                `invalid_max_results`. Same price per page; a raised cap
+#                gets the same scan time, so it stops early more often.
+#   group_by     (web#10016, 082cfe9c6) only "company": one row per company
+#                (company_id, company_name, country_code, isin, hit_count,
+#                first/last_release_datetime, best_filing_id), best match
+#                first, counted over the first search.filings_grouped visible
+#                matches (<= max_results; the DB-checked id list, never an index
+#                aggregation), so with capped true a count can be higher;
+#                search.message says which in words; count = company rows.
+#                `ordering` other than relevance is a 400 `invalid_group_by`.
+#                No `match` snippets. Billed as one page.
+#   companies    (web#10016) <= 50 company ids, comma-separated: filings of
+#                any of them; include_predecessors reaches each one's
+#                predecessors; ANDed with `company`, like every filter
 #   envelope     count = results the caller can SEE within the cap;
-#                search.capped (web#9601 5f846a1fe) = more than 1000 visible
+#                search.capped (web#9601 5f846a1fe) = more than max_results visible
 #                results exist OR the scan stopped before the index ran out
-#                (10,000 candidates read or 2 s). So capped means "the search
-#                did not check every candidate", and it can be true with count
-#                below 1000, including count == 0: a broad query whose top
+#                (10,000 candidates read, or twice a raised cap, or 2 s). So
+#                capped means "the search did not check every candidate", and
+#                it can be true with count below the cap, including count ==
+#                0: a broad query whose top
 #                candidates the caller cannot see. An empty CAPPED page is
 #                therefore not an absence. search.scan_complete (bool, added
 #                on #9601 after 5f846a1fe) says which: false = stopped early.
@@ -5975,23 +6031,59 @@ async def filings_markdown_search_batch(
 #                no dedup, so every page is billed again
 _CROSS_SEARCH_MAX_Q = 5
 _CROSS_SEARCH_MAX_PAGE_SIZE = 100
+# web#10008: `max_results` is a whole number from 1 to this ceiling
+# (CROSS_SEARCH_MAX_RESULTS_CEILING); the default cap is 1000. Both are platform
+# settings mirrored here so a bad value is refused without a request: if the
+# platform raises its ceiling, raise this one too, or valid values are refused.
+_CROSS_SEARCH_MAX_RESULTS_CEILING = 10_000
+_CROSS_SEARCH_DEFAULT_MAX_RESULTS = 1000
+# web#10016: `group_by` takes only "company"; `companies` takes at most 50 ids.
+_CROSS_SEARCH_GROUP_BY_VALUES = ("company",)
+_CROSS_SEARCH_MAX_COMPANIES = 50
 
 
-def _cross_search_queries(queries: Any) -> list[str]:
-    """Normalise `queries` to 1..5 stripped strings of <= 200 chars.
+def _cross_search_queries(queries: Any, query: Any = None) -> list[str]:
+    """Normalise `queries` (plus the singular `query`) to 1..5 stripped strings
+    of <= 200 chars.
 
     A bare string is accepted as one query: models routinely send one where a
-    list is declared, and rejecting it would cost a round trip for nothing.
-    Duplicates are dropped so they cannot use up the five slots."""
+    list is declared, and rejecting it would cost a round trip for nothing. The
+    tool's signature has to admit both shapes too, or FastMCP's own validation
+    refuses the call before this runs. `query` is the argument name of the
+    per-filing search tools, and one real filings_search call failed on it, so
+    it is taken as one more query. A string that is a JSON array (some clients
+    encode lists that way) is read as that list, not searched as a literal
+    '["a", "b"]'. Duplicates are dropped so they cannot use up the five slots."""
+    if queries is None:
+        queries = []
     if isinstance(queries, str):
-        queries = [queries]
+        parsed = None
+        text = queries.strip()
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = _json.loads(text)
+            except ValueError:
+                parsed = None
+        # Only a list that holds a query is read as one: "[2023]" is a search
+        # for that footnote-style string, not an empty list of numbers.
+        has_text = isinstance(parsed, list) and any(
+            isinstance(q, str) and q.strip() for q in parsed
+        )
+        queries = parsed if has_text else [queries]
     if not isinstance(queries, (list, tuple)):
         raise ToolInputError("queries must be a list of 1 to 5 strings")
+    if query is not None:
+        if not isinstance(query, str):
+            raise ToolInputError("query must be a string; pass several as `queries`")
+        queries = [*queries, query]
     cleaned = list(dict.fromkeys(
         q.strip() for q in queries if isinstance(q, str) and q.strip()
     ))
     if not cleaned:
-        raise ToolInputError("queries must contain at least one non-empty string")
+        raise ToolInputError(
+            "queries must contain at least one non-empty string "
+            '(e.g. queries=["going concern", "Unternehmensfortführung"])'
+        )
     if len(cleaned) > _CROSS_SEARCH_MAX_Q:
         raise ToolInputError(
             f"at most {_CROSS_SEARCH_MAX_Q} queries per call (got {len(cleaned)}). "
@@ -6004,6 +6096,152 @@ def _cross_search_queries(queries: Any) -> list[str]:
             f"(got {len(too_long[0])}). Search a distinctive phrase, not a passage."
         )
     return cleaned
+
+
+# The endpoint's ordering fields: the filing list's plus `relevance` (the
+# default). DRF silently DROPS an unknown field and falls back to relevance, so
+# a misspelt `-added_to_plaform` would come back looking ordered and not be.
+# Checked here instead, where the refusal can name the valid values.
+_CROSS_SEARCH_ORDERING_FIELDS = frozenset({
+    "relevance", "release_datetime", "added_to_platform", "id", "filing_type_confidence",
+})
+
+
+def _cross_search_ordering(ordering: Any) -> Optional[str]:
+    """`ordering` checked against the endpoint's fields, or None when unset."""
+    if ordering is None or (isinstance(ordering, str) and not ordering.strip()):
+        return None
+    if not isinstance(ordering, str):
+        raise ToolInputError("ordering must be a string, e.g. '-added_to_platform'")
+    fields = [f.strip() for f in ordering.split(",") if f.strip()]
+    # One leading "-" at most: DRF strips one, so "--id" would reach it as the
+    # unknown field "-id" and be dropped just as silently.
+    bad = [
+        f for f in fields
+        if (f[1:] if f.startswith("-") else f) not in _CROSS_SEARCH_ORDERING_FIELDS
+    ]
+    if bad:
+        raise ToolInputError(
+            f"unknown ordering field {bad[0]!r}. Use one of "
+            f"{', '.join(sorted(_CROSS_SEARCH_ORDERING_FIELDS))}, with a leading "
+            "'-' for descending (e.g. '-added_to_platform')."
+        )
+    # Punctuation only (",") names no field: unset, so the header says relevance.
+    return ",".join(fields) or None
+
+
+def _cross_search_max_results(max_results: Any) -> Optional[int]:
+    """`max_results` checked as the endpoint checks it (a whole number from 1 to
+    10000), or None when unset. Refused here, not as the endpoint's 400, so the
+    refusal names the range and no request is made."""
+    if max_results is None or (isinstance(max_results, str) and not max_results.strip()):
+        return None
+    value = max_results
+    if isinstance(value, str):
+        text = value.strip()
+        # The length check first: int() refuses a string of more than 4,300
+        # digits with a ValueError.
+        if text.isascii() and text.isdigit() and len(text) <= 12:
+            value = int(text)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= _CROSS_SEARCH_MAX_RESULTS_CEILING
+    ):
+        raise ToolInputError(
+            f"max_results must be a whole number from 1 to "
+            f"{_CROSS_SEARCH_MAX_RESULTS_CEILING} (default "
+            f"{_CROSS_SEARCH_DEFAULT_MAX_RESULTS}); got {str(max_results)[:20]!r}."
+        )
+    return value
+
+
+def _cross_search_group_by(group_by: Any) -> Optional[str]:
+    """`group_by` as the endpoint reads it ("company", case and spaces folded),
+    or None when unset. Any other value is refused here, naming the one value."""
+    if group_by is None or (isinstance(group_by, str) and not group_by.strip()):
+        return None
+    value = group_by.strip().lower() if isinstance(group_by, str) else None
+    if value not in _CROSS_SEARCH_GROUP_BY_VALUES:
+        raise ToolInputError(
+            'group_by takes one value: "company" (one row per company instead of '
+            f"filings); got {str(group_by)[:20]!r}."
+        )
+    return value
+
+
+def _cross_search_companies(companies: Any) -> Optional[list[int]]:
+    """`companies` as the endpoint reads it: internal company ids, de-duplicated,
+    order kept, at most 50, or None when unset or blank (as every other filter
+    here: an empty value is not sent). Takes a list of ids, a comma-separated
+    string, or a list sent JSON-encoded. A token that is not a positive whole
+    number is refused, never dropped: dropping it would widen the search to
+    companies the caller did not ask for."""
+    if companies is None:
+        return None
+    raw = companies
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                raw = _json.loads(text)
+            except ValueError:
+                raise ToolInputError(
+                    "companies must be company ids: a list, or comma-separated "
+                    "(e.g. '12,345')"
+                )
+        else:
+            raw = text.split(",")
+    elif isinstance(raw, int) and not isinstance(raw, bool):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        raise ToolInputError(
+            "companies must be company ids: a list, or comma-separated (e.g. '12,345')"
+        )
+    ids: list[int] = []
+    bad: list[Any] = []
+    for token in raw:
+        value: Any = token
+        if isinstance(token, str):
+            text = token.strip()
+            if not text:
+                continue
+            value = int(text) if text.isascii() and text.isdigit() and len(text) <= 18 else None
+        if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value < 10**18:
+            bad.append(token)
+            continue
+        ids.append(value)
+    if bad:
+        raise ToolInputError(
+            "companies takes internal company ids (positive whole numbers, as "
+            "companies_list returns them); not "
+            + ", ".join(repr(b)[:20] for b in bad[:5])
+        )
+    ids = list(dict.fromkeys(ids))
+    if len(ids) > _CROSS_SEARCH_MAX_COMPANIES:
+        raise ToolInputError(
+            f"companies takes at most {_CROSS_SEARCH_MAX_COMPANIES} company ids "
+            f"(got {len(ids)}). Split the list over several searches."
+        )
+    return ids or None
+
+
+def _cross_search_company_lines(row: dict) -> list[str]:
+    """One `group_by=company` row: the company, its market, its primary ISIN,
+    how many of the grouped matches are its filings, the release dates of
+    those, and its best-matching filing (open it with filings_markdown_search)."""
+    first = str(row.get("first_release_datetime") or "")[:10]
+    last = str(row.get("last_release_datetime") or "")[:10]
+    if first or last:
+        when = f"first {first or '?'}, last {last or '?'}"
+    else:
+        when = "no release date"
+    return [
+        f"- company {row.get('company_id')} | {row.get('company_name') or '?'} | "
+        f"{row.get('country_code') or '?'} | ISIN {row.get('isin') or 'none'} | "
+        f"{row.get('hit_count')} matching filing(s), {when} | "
+        f"best match: filing {row.get('best_filing_id')}"
+    ]
 
 
 def _cross_search_match_lines(match: Any) -> list[str]:
@@ -6057,16 +6295,23 @@ def _cross_search_result_lines(item: dict) -> list[str]:
 )
 @subscription_required
 async def filings_search(
-    queries: list[str],
+    queries: Optional[list[str] | str] = None,
     company: Optional[int] = None,
+    companies: Optional[list[int] | str] = None,
     include_predecessors: Optional[bool] = None,
     countries: Optional[str] = None,
     languages: Optional[str] = None,
     types: Optional[str] = None,
     release_datetime_from: Optional[str] = None,
     release_datetime_to: Optional[str] = None,
+    added_to_platform_from: Optional[str] = None,
+    added_to_platform_to: Optional[str] = None,
+    ordering: Optional[str] = None,
+    max_results: Optional[int] = None,
+    group_by: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
+    query: Optional[str] = None,
 ) -> str:
     """Find WHICH filings, and which companies, say something: one full-text search
     across the text of every filing, ranked by relevance. Use it for "which companies
@@ -6074,44 +6319,83 @@ async def filings_search(
     not yet know the filing. Once you have a filing, search INSIDE it with
     filings_markdown_search. For a company-and-period line item (revenue, assets, EPS)
     call companies_financials_retrieve instead.
-    `queries`: 1 to 5 phrases, OR-ed, each at most 200 characters. Filings are in
-    many languages, so pass the term AND its translations into the languages of the
-    markets you care about, plus close synonyms, as separate entries (e.g.
+    `queries`: 1 to 5 phrases, OR-ed, each at most 200 characters (a single `query`
+    string is accepted too). Filings are in many languages, so pass the term AND its
+    translations into the languages of the markets you care about, plus close
+    synonyms, as separate entries (e.g.
     ["going concern", "continuité d'exploitation", "Unternehmensfortführung"]).
+    With NO country filter, also pass Chinese, Japanese and Korean phrasings of the
+    term as separate entries, within the 5: an English query and its native-language
+    phrasing find different filings, not the same ones in another language.
     Matching folds case and accents and also matches word stems.
-    Filters (all optional, combinable): company (internal id; include_predecessors
-    adds the issuers it succeeded), countries / languages (comma-separated ISO codes),
-    types (comma-separated filing type codes), release_datetime_from / _to
+    Filters (all optional, combinable): company (internal id) or companies (up to
+    50 internal ids, a list or comma-separated: filings of any of them);
+    include_predecessors adds the issuers each one succeeded; countries / languages
+    (comma-separated ISO codes), types (comma-separated filing type codes),
+    release_datetime_from / _to and added_to_platform_from / _to
     (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and period filters are NOT available here;
     use a release-date range.
+    `max_results` (1 to 10000, default 1000): how many matches, best first, the
+    search keeps; count, pages, ordering and group_by cover only those. Raise it
+    for broad screens and "how many companies / filings" questions. It costs
+    nothing extra per page, but a larger value is slower and more likely to stop
+    early.
+    `ordering`: relevance (default), or release_datetime, added_to_platform, id,
+    filing_type_confidence, with "-" for descending. It reorders the first
+    max_results matches by relevance, it does not reach past them; filters do.
+    WHAT IS NEW SINCE MY LAST CHECK: added_to_platform_from=<time of the last check>
+    with ordering="-added_to_platform".
+    WHICH COMPANIES MENTION X: group_by="company" returns one row per company
+    (country, ISIN, matching-filing count, first and last release date, best
+    filing) instead of filings, best match first, counted over the first
+    max_results matches only; then filings_search with company=<id> (or
+    companies=<ids>) for that company's hits. No ordering, no snippets.
     An EMPTY result means no filing within the filters matched, among filings with
     extracted text, within the first 20 MB of each filing's text, unless the result
     says the search stopped early: then matches may exist and you should narrow the
-    queries or filters. At most the first 1000 results by relevance are returned. Each result's snippets show where
-    the text matched; only the first 10 results of a page carry snippets.
+    queries or filters. At most the first max_results results by relevance are
+    returned. Each result's snippets show where the text matched; only the first 10
+    results of a page carry snippets.
     Cost: one Markdown request (6 credits, 12 if any filing on the page is a premium
-    type) for each page that returns at least one filing. A search with no results
-    bills nothing. Every page is billed separately, so fetch further pages only when
-    you need them."""
+    type) for each page that returns at least one result, company rows included. A
+    search with no results bills nothing. Every page is billed separately, so fetch
+    further pages only when you need them."""
     try:
         _require_auth_context()
-        values = _cross_search_queries(queries)
+        values = _cross_search_queries(queries, query)
+        order = _cross_search_ordering(ordering)
         try:
             page_no = max(1, int(page))
             size = max(1, min(int(page_size), _CROSS_SEARCH_MAX_PAGE_SIZE))
         except (TypeError, ValueError):
             raise ToolInputError("page and page_size must be integers")
-        if include_predecessors and company is None:
-            raise ToolInputError("include_predecessors needs company")
+        cap_sent = _cross_search_max_results(max_results)
+        group = _cross_search_group_by(group_by)
+        company_ids = _cross_search_companies(companies)
+        # The endpoint refuses any ordering but relevance with group_by (400
+        # invalid_group_by): the rows come best match first.
+        if group and order and any(f.lstrip("-") != "relevance" for f in order.split(",")):
+            raise ToolInputError(
+                'ordering is not available with group_by="company": rows come best '
+                "match first. Drop ordering, or drop group_by to order filings."
+            )
+        if include_predecessors and company is None and company_ids is None:
+            raise ToolInputError("include_predecessors needs company or companies")
         params: list[tuple[str, Any]] = [("q", v) for v in values]
         for name, value in (
             ("company", company),
+            ("companies", ",".join(str(i) for i in company_ids) if company_ids else None),
             ("include_predecessors", include_predecessors),
             ("countries", countries),
             ("languages", languages),
             ("types", types),
             ("release_datetime_from", release_datetime_from),
             ("release_datetime_to", release_datetime_to),
+            ("added_to_platform_from", added_to_platform_from),
+            ("added_to_platform_to", added_to_platform_to),
+            ("ordering", order),
+            ("max_results", cap_sent),
+            ("group_by", group),
         ):
             if value is None or value == "":
                 continue
@@ -6183,34 +6467,130 @@ async def filings_search(
                 "with extracted text, the first 20 MB of each). Nothing was billed. "
                 "Try translations or synonyms as extra queries, or widen the filters."
             )
-        cap = search.get("max_results") or 1000
-        lines = [
-            f"{count} filing(s) matched {shown} (page {page_no}, {len(results)} shown, "
-            "ranked by relevance; scope: filings with extracted text)."
-        ]
-        if stopped_early:
-            lines.append(
-                "This search stopped before checking every candidate (it returns at "
-                f"most the first {cap} by relevance), so more matching filings may "
-                "exist. Narrow the queries or filters to reach them."
+        # The cap this request was SERVED with (the endpoint echoes it), not the
+        # one sent: an endpoint that ignored max_results served the default.
+        cap = search.get("max_results") or _CROSS_SEARCH_DEFAULT_MAX_RESULTS
+        raise_cap = (
+            f"raise max_results (up to {_CROSS_SEARCH_MAX_RESULTS_CEILING}) or "
+            if cap < _CROSS_SEARCH_MAX_RESULTS_CEILING else ""
+        )
+        # Rows are company rows only when the endpoint SAYS it grouped. One that
+        # did not know group_by answers with filings, and rendering those as
+        # companies would print every field as "?" and record filing ids as
+        # company ids.
+        grouped = group is not None and search.get("group_by") == "company"
+        if grouped:
+            filings_grouped = search.get("filings_grouped")
+            over = (
+                f"the first {filings_grouped} matching filing(s)"
+                if isinstance(filings_grouped, int) and not isinstance(filings_grouped, bool)
+                else f"at most the first {cap} matching filings"
             )
-        elif search.get("capped"):
-            lines.append(
-                f"More than {cap} filings match; only the first {cap} by relevance "
-                "can be returned. Narrow the queries or filters to see the rest."
-            )
+            # Partial unless the endpoint says the set is whole: not capped and
+            # not stopped early ("That is every matching filing you can see").
+            partial = stopped_early or bool(search.get("capped"))
+            lines = [
+                f"{count} company(ies) with filings matching {shown} (page {page_no}, "
+                f"{len(results)} shown, best match first; scope: filings with "
+                "extracted text).",
+                (
+                    f"Rows are counted over {over} you can see, by relevance "
+                    f"(max_results={cap}), not over every match: each company's "
+                    "matching-filing count and dates cover only those."
+                    if partial else
+                    f"Rows are counted over {over} you can see: every match "
+                    "within these filters."
+                ),
+            ]
+            if stopped_early:
+                lines.append(
+                    "This search stopped before checking every candidate, so more "
+                    "matching filings may exist: a company's count can be higher and "
+                    "more companies may exist. Narrow the queries or filters to reach them."
+                )
+            elif search.get("capped"):
+                lines.append(
+                    f"More than {cap} filings match, so a company's count can be "
+                    f"higher and more companies may exist: {raise_cap}narrow the "
+                    "queries or filters."
+                )
+            message = search.get("message")
+            if isinstance(message, str) and message.strip():
+                lines.append("Search note: " + sanitize_error_detail(message, max_len=600))
+        else:
+            # The endpoint applies every valid field in order (relevance is the
+            # default; naming it anywhere keeps it in the chain). Name the ordering
+            # this page used, or a date-ordered page reads as a ranking. Only a
+            # LEADING relevance is a ranking; any other lead reorders the capped set.
+            if order is None or order.split(",")[0].lstrip("-") == "relevance":
+                order_note = "ranked by relevance"
+            else:
+                order_note = f"ordered by {order} among the first {cap} matches by relevance"
+            lines = [
+                f"{count} filing(s) matched {shown} (page {page_no}, {len(results)} shown, "
+                f"{order_note}; scope: filings with extracted text)."
+            ]
+            if group is not None:
+                lines.append(
+                    'group_by="company" was not applied by the endpoint: these are '
+                    "filings, not company rows."
+                )
+            if stopped_early:
+                lines.append(
+                    "This search stopped before checking every candidate (it returns at "
+                    f"most the first {cap} by relevance), so more matching filings may "
+                    "exist. Narrow the queries or filters to reach them."
+                )
+            elif search.get("capped"):
+                lines.append(
+                    f"More than {cap} filings match; only the first {cap} by relevance "
+                    f"can be returned. To see the rest, {raise_cap}narrow the queries "
+                    "or filters."
+                )
         if payload.get("next"):
             lines.append(f"More results: call again with page={page_no + 1}.")
         parts: list[str] = []
         budget = _MAX_RESULT_CHARS - sum(len(x) + 1 for x in lines) - 200
         omitted = 0
+        # What the agent was SHOWN, for usage analytics, in the order shown.
+        # Filing mode: filing ids only (a company id is one join away;
+        # filings_list's rows interleave both). Company mode: company ids, the
+        # rows themselves (each row's best_filing_id is not recorded: the row is
+        # the entity shown). How a reader tells them apart: the event's
+        # `arguments` keep the KEY `group_by` whenever the caller sent it, but
+        # its value is stored <redacted> until both analytics allowlists add it
+        # (a paired platform change), and a key alone cannot show a blank value
+        # or an endpoint that ignored the grouping. The order is the page's
+        # order, which is relevance unless `ordering` (logged with the call)
+        # said otherwise; a result cut for length is left out, and only the
+        # first 50 are kept. The tool returns a str, so the middleware cannot
+        # infer these from the payload.
+        shown_ids: list[Any] = []
+        shown_countries: set[str] = set()
         for item in results:
-            block = "\\n".join(_cross_search_result_lines(item))
+            if grouped:
+                block = "\\n".join(_cross_search_company_lines(item))
+            else:
+                block = "\\n".join(_cross_search_result_lines(item))
             if len(block) + 1 > budget:
                 omitted += 1
                 continue
             budget -= len(block) + 1
             parts.append(block)
+            if grouped:
+                shown_ids.append(item.get("company_id"))
+                country = item.get("country_code")
+            else:
+                shown_ids.append(item.get("id"))
+                company_row = item.get("company")
+                country = (
+                    company_row.get("country_code") if isinstance(company_row, dict) else None
+                )
+            # Countries of the RECORDED ids only (the first _ENTITY_CAP), as the
+            # structured tools' _extract_entities does (SPECHT on #200).
+            if len(shown_ids) <= _ENTITY_CAP:
+                shown_countries.add(country)
+        record_returned_entities(shown_ids, shown_countries)
         if omitted:
             lines.append(
                 f"{omitted} result(s) on this page are not shown: they did match, "
@@ -6346,8 +6726,8 @@ async def compare_financials_yoy(
         "concern, segment data, climate disclosures, etc.) from a "
         "company's most recent filing of a given type. Use instead of "
         "fetching the full markdown and grepping manually — this prompt "
-        "handles pagination correctly and refuses to fabricate when the "
-        "section is absent."
+        "searches the filing instead of paging it and refuses to fabricate "
+        "when the section is absent."
     ),
 )
 async def find_filing_section(
@@ -6355,7 +6735,8 @@ async def find_filing_section(
     filing_type: str,
     section_keyword: str,
 ) -> list[PromptMessage]:
-    """Guide the assistant through resolve → list → markdown → grep."""
+    """Guide the assistant through resolve → list → in-filing search → read
+    around the hit, with a filings_search shortcut across the company's filings."""
     instructions = (
         f"Find the section in {ticker_or_name}'s most recent {filing_type} "
         f"that discusses '{section_keyword}'.\\n\\n"
@@ -6381,17 +6762,30 @@ async def find_filing_section(
         "so do NOT make it a selection gate: if it is null or absent, just "
         "proceed. Treat it only as "
         "an explanation if a markdown fetch then comes back empty.\\n"
-        "4. `filings_markdown_retrieve` for that filing_id. The response "
-        "is paginated — call with increasing offset until you locate the "
-        "section, the truncation marker is gone, or you have made 10 calls. "
-        "Stop at the cap and report that the section was not found in the "
-        "portion read.\\n"
+        f"4. `filings_markdown_search` with filing_id=<that id>, "
+        f"query=\\"{section_keyword}\\". It searches the WHOLE filing in one "
+        "call and returns each hit with a character offset. No hit: retry "
+        "once or twice with the section's usual heading or a synonym, in the "
+        "filing's language. Then `filings_markdown_retrieve` with that "
+        "filing_id and offset=max(0, <the best hit's offset> - 200) to read "
+        "the section around it. Do NOT page the filing from offset 0. If the "
+        "search result NOTES a hit is past what filings_markdown_retrieve can "
+        "reach, do not retrieve it: quote the search context and say only that "
+        "passage was available.\\n"
+        f"   SHORTCUT: `filings_search` with queries=[\\"{section_keyword}\\", "
+        "<its translations>], company=<id>, types=<mapped>, "
+        "ordering=\\"-release_datetime\\" lists this company's filings of that "
+        "type that mention it, newest first among its top matches by relevance "
+        "(the result header names that set), with snippets. It does "
+        "not decide which filing is newest; step 3 does. Use it when the newest filing has no hit or no Markdown: "
+        "say so first, then name the older filing you answered from.\\n"
         f"5. Return ONLY the markdown excerpt containing "
         f"'{section_keyword}', plus 2 paragraphs of surrounding context. "
-        "Cite filing type and publication date. If the keyword is not "
-        f"present after exhausting all pages, say 'Section matching "
-        f"\\"{section_keyword}\\" not found in filing <id> after "
-        "<n> pages' — do NOT fabricate content from training data."
+        "Cite filing type and publication date. If neither the keyword nor "
+        f"the synonyms you tried occur in the filing, say 'Section matching "
+        f"\\"{section_keyword}\\" not found in filing <id> (searched the whole "
+        "filing for: <the terms you tried>)' — do NOT fabricate content from "
+        "training data."
     )
     return [
         PromptMessage(role="user", content=TextContent(type="text", text=instructions)),
@@ -7374,6 +7768,8 @@ def main() -> None:
                 pay_description = X402_PAY_DESCRIPTIONS.get(func_name) or (
                     description.replace("filing_id=", "id=").replace("(filing_id)", "(id)")
                 )
+                for main_text, pay_text in X402_PAY_REWRITES:
+                    pay_description = pay_description.replace(main_text, pay_text)
                 pay_code.append(
                     pay_template.render(
                         func_name=func_name,
