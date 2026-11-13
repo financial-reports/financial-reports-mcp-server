@@ -197,6 +197,23 @@ def test_denylisted_new_operation_stays_off_default_surface() -> None:
     )
 
 
+def test_an_operation_a_hand_built_tool_replaces_stays_off_the_surface() -> None:
+    """The search endpoint, once in the schema, is served by the hand-built
+    filings_search; the report must not count its generated twin as growth."""
+    from generate_mcp_tools import _REPLACED_BY_SYNTHETIC
+    assert "filings_search_list" in _REPLACED_BY_SYNTHETIC
+
+    live_paths = copy.deepcopy(_BASE_PATHS)
+    live_paths["/filings/search/"] = {
+        "get": {"operationId": "filings_search_list", "parameters": []}
+    }
+
+    result = drift_mod.diff_schemas(_schema(), _schema(paths=live_paths))
+
+    assert result.added_operations == ["GET /filings/search/"]
+    assert result.new_default_surface_tools == []
+
+
 def test_non_get_post_method_never_joins_the_surface() -> None:
     """The generator only emits GET and POST tools, so a new DELETE is inert."""
     live_paths = copy.deepcopy(_BASE_PATHS)
