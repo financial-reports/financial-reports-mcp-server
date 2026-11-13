@@ -8,7 +8,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **[FinancialFilings](https://financialfilings.com) API 的官方 Model Context Protocol (MCP) 服务器。**
-> 在 Claude 以及任何支持 MCP 的客户端里，直接查询全球上市公司的公告、财务数据和公司信息。**默认提供 17 个精选工具**（设置 `MCP_FULL_SURFACE=1` 可开启完整的 55 个工具）。**任何 FinancialFilings 账号均可免费使用。**
+> 在 Claude 以及任何支持 MCP 的客户端里，直接查询全球上市公司的公告、财务数据和公司信息。**默认提供 19 个精选工具**（设置 `MCP_FULL_SURFACE=1` 可开启完整的 61 个工具）。**任何 FinancialFilings 账号均可免费使用。**
 
 本文是英文 [README.md](README.md) 的中文版。两者如有出入，以英文版为准。
 
@@ -182,18 +182,18 @@ mcp_servers:
 
 ## 功能概览
 
-**默认提供 17 个可由 LLM 调用的工具**，覆盖分析师最常用的场景：
+**默认提供 19 个可由 LLM 调用的工具**，覆盖分析师最常用的场景：
 
 | 领域 | 工具数 | 用途 |
 |---|---|---|
 | 公司 | 5 | 按名称、股票代码、ISIN 搜索公司；获取完整公司资料；获取标准化财务数据；预测下一份年报的发布时间；把一组标识符批量解析为公司 ID |
-| 公告 | 4 | 列出、获取公告；获取公告的 Markdown 正文（上限 15 万字符）；在单份公告内做关键词搜索 |
+| 公告 | 6 | 列出、获取公告；获取公告的 Markdown 正文（上限 15 万字符）；在全部公告正文中做全文检索（`filings_search`）；在单份公告内（`filings_markdown_search`）或一次在多份公告内（`filings_markdown_search_batch`）做关键词搜索 |
 | ISIN | 2 | 按 ISIN 查询；列出多地上市信息 |
 | 参考分类 | 2 | 公告类别和公告类型 |
 | 账户 | 1 | 本计费周期内 API 和 MCP 的用量费用、消费上限和剩余免费点数（此工具本身免费，不计费） |
 | 指南 | 3 | 公告类型分类、ISIC 行业分类、Markdown 获取策略：供无法读取 MCP 资源、只能调用工具的客户端使用的参考资料 |
 
-设置 `MCP_FULL_SURFACE=1` 可恢复完整的 **55 个工具**：ISIC 门类/大类/中类/小类层级、其余参考数据（国家、语言、数据源、财务科目定义、公告历史）、个人关注列表、Webhook 订阅、公司合并审计记录、各交易所证券上市信息、智能体账户开通相关端点（注册、领取密钥、轮换密钥、结账链接、所有者确认、状态），`filings_markdown_search` 背后的原始端点 `filings_markdown_search_retrieve`，以及 `filings_document_retrieve`（返回文件而非 JSON）。
+设置 `MCP_FULL_SURFACE=1` 可恢复完整的 **61 个工具**：ISIC 门类/大类/中类/小类层级、其余参考数据（国家、语言、数据源、财务科目定义、公告历史）、个人关注列表、Webhook 订阅、公司合并审计记录、各交易所证券上市信息、智能体账户开通相关端点（注册、领取密钥、轮换密钥、结账链接、所有者确认、状态），`filings_markdown_search` 背后的原始端点 `filings_markdown_search_retrieve`，以及 `filings_document_retrieve`（返回文件而非 JSON）。注意 `MCP_FULL_SURFACE=1` **并非默认工具集的超集**：它会去掉 3 个 `get_fr_*` 指南工具——这些工具的作用正是替代被屏蔽的参考数据端点，因此只在精选工具集中生成。两种工具集共有 16 个工具，3 个仅在默认集中，45 个仅在完整集中。
 
 对外提供的工具集由已提交并经过审核的 [FinancialFilings OpenAPI schema](https://financialreports.eu/api/schema/) 快照（`scripts/openapi.snapshot.json`，在 CI 和 Docker 构建中通过 `FR_PIN_SCHEMA=1` 固定）生成，因此结果是确定的，重新构建也不会悄悄发生变化。
 
@@ -218,7 +218,7 @@ mcp_servers:
 │  (FastAPI +      │                                       ▼
 │   FastMCP)       │     proxy bearer token         ┌──────────────────┐
 │                  │  ─────────────────────────►    │  api.            │
-│  17 tools        │                                │  financial-      │
+│  19 tools        │                                │  financial-      │
 │  generated from  │                                │  reports.eu      │
 │  OpenAPI schema  │                                │  (first-party)   │
 └──────────────────┘                                └──────────────────┘
@@ -226,7 +226,7 @@ mcp_servers:
 
 **关键设计决策：**
 
-- **工具是生成的，不是手写的。** `scripts/generate_mcp_tools.py` 读取 OpenAPI schema（在 CI 和 Docker 构建中通过 `FR_PIN_SCHEMA=1` 固定到已提交的快照），生成 `src/financial_reports_mcp.py`。默认工具集精选为 17 个；`MCP_FULL_SURFACE=1` 会生成完整工具集。注意生成器中的 `_PRUNED_EXCLUDE` 是一个**黑名单**：上游新增的端点会自动进入精选工具集，除非刷新快照的 PR 明确将其排除。
+- **工具是生成的，不是手写的。** `scripts/generate_mcp_tools.py` 读取 OpenAPI schema（在 CI 和 Docker 构建中通过 `FR_PIN_SCHEMA=1` 固定到已提交的快照），生成 `src/financial_reports_mcp.py`。默认工具集精选为 19 个；`MCP_FULL_SURFACE=1` 会生成完整工具集。注意生成器中的 `_PRUNED_EXCLUDE` 是一个**黑名单**：上游新增的端点会自动进入精选工具集，除非刷新快照的 PR 明确将其排除。
 - **代理 bearer token，不保存会话。** 每次调用都会把用户的 Cognito access token 转发给上游 API。服务端不缓存任何对话数据或 API 响应。
 - **进程内做订阅校验。** 一个 15 秒的 LRU 缓存保存 Cognito `sub` 到订阅等级的映射，避免每次调用工具都去请求 FR API。
 - **同源静态资源代理。** `/favicon.ico`、`/icon.png`、`/icon-{32,192,512}.png` 由本服务器同源提供（从 CDN 代理并缓存），这样连接器界面和 `/consent` 页面不会遇到跨域 CSP 问题。

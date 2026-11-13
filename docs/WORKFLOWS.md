@@ -19,7 +19,7 @@ Not for market data (prices, volumes, options) — this server doesn't provide i
 
 ## Tool decision table
 
-**Check what you actually have before following a sequence below.** The 52 tools are the *full* schema-derived surface. The hosted server exposes a curated **16** by default — 12 schema-derived, the 3 `get_fr_*` guide tools, and `filings_markdown_search` — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not in your `tools/list` and calling them will fail**.
+**Check what you actually have before following a sequence below.** The hosted server exposes a curated **19** tools by default — 13 schema-derived, the 3 `get_fr_*` guide tools, and the 3 hand-written search tools (`filings_search`, `filings_markdown_search`, `filings_markdown_search_batch`) — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not in your `tools/list` and calling them will fail**.
 
 Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default surface, say so plainly rather than substituting a tool that answers a different question.
 
