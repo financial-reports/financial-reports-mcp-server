@@ -187,7 +187,7 @@ mcp_servers:
 | 领域 | 工具数 | 用途 |
 |---|---|---|
 | 公司 | 5 | 按名称、股票代码、ISIN 搜索公司；获取完整公司资料；获取标准化财务数据；预测下一份年报的发布时间；把一组标识符批量解析为公司 ID |
-| 公告 | 6 | 列出、获取公告；获取公告的 Markdown 正文（上限 15 万字符）；在全部公告正文中做全文检索（`filings_search`）；在单份公告内（`filings_markdown_search`）或一次在多份公告内（`filings_markdown_search_batch`）做关键词搜索 |
+| 公告 | 6 | 列出、获取公告；获取公告的 Markdown 正文（上限 15 万字符）；在语料库中做全文检索（`filings_search`，范围为已提取文本的公告，每份仅前 20 MB）；在单份公告内（`filings_markdown_search`）或一次在多份公告内（`filings_markdown_search_batch`）做关键词搜索 |
 | ISIN | 2 | 按 ISIN 查询；列出多地上市信息 |
 | 参考分类 | 2 | 公告类别和公告类型 |
 | 账户 | 1 | 本计费周期内 API 和 MCP 的用量费用、消费上限和剩余免费点数（此工具本身免费，不计费） |

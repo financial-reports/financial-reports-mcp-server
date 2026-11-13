@@ -101,7 +101,25 @@ def test_the_default_surface_decomposes_as_the_docs_describe_it(surfaces) -> Non
     schema = default - guide - hand
     assert len(guide) == 3, sorted(guide)
     assert len(hand) == 3, sorted(hand)
-    assert len(default) == len(schema) + len(guide) + len(hand)
+
+    # \u26d4 THE LINE THAT USED TO BE HERE WAS A TAUTOLOGY, and SPECHT caught it:
+    #     assert len(default) == len(schema) + len(guide) + len(hand)
+    # `schema` is DEFINED as `default - guide - hand`, so that holds for ANY
+    # partition and checks nothing. Meanwhile `docs/WORKFLOWS.md` states a
+    # literal "13 schema-derived" that nothing compared against: a schema
+    # refresh could add a curated tool, the headline total be updated, and that
+    # subtotal stay wrong with this test green.
+    documented = re.search(r"(\d+) schema-derived", _doc("docs/WORKFLOWS.md"))
+    assert documented, (
+        "docs/WORKFLOWS.md no longer states a schema-derived subtotal; it was "
+        "the only published breakdown of the default surface"
+    )
+    assert int(documented.group(1)) == len(schema), (
+        f"docs/WORKFLOWS.md says {documented.group(1)} schema-derived tools; "
+        f"the generator emits {len(schema)} "
+        f"({len(default)} default minus {len(guide)} guide minus {len(hand)} "
+        f"hand-written)"
+    )
 
 
 def test_the_full_surface_is_not_a_superset_of_the_default(surfaces) -> None:
@@ -160,6 +178,7 @@ _COUNT_CLAIMS: list[tuple[str, str]] = [
     (r"for the full (\d+)-tool surface", "full"),
     (r"the full \*\*(\d+)-tool\*\* surface", "full"),
     (r"emit the full (\d+)-tool surface", "full"),
+    (r"composing the (\d+) FinancialFilings MCP tools", "full"),
     # The ASCII architecture diagram, both READMEs
     (r"│\s+(\d+) tools\s+│", "default"),
     # Chinese prose
@@ -185,10 +204,21 @@ _DOCS_WITH_COUNTS: dict[str, tuple[str, ...]] = {
 
 def _claims(text: str) -> list[tuple[str, int, str]]:
     """Every count claim in `text`, as (surface, number, the matched phrase)."""
+    return [(surface, n, phrase) for surface, n, phrase, _span in _claims_with_spans(text)]
+
+
+def _claims_with_spans(text: str) -> list[tuple[str, int, str, tuple[int, int]]]:
+    """As `_claims`, plus each match's span.
+
+    The coverage control compares by POSITION, not by substring: its looser
+    detector starts at a different offset (it caught the `1` of
+    `MCP_FULL_SURFACE=1` before "for the full 61-tool surface"), so a
+    containment test reported a recognised claim as unrecognised.
+    """
     found = []
     for pattern, surface in _COUNT_CLAIMS:
         for m in re.finditer(pattern, text):
-            found.append((surface, int(m.group(1)), m.group(0)))
+            found.append((surface, int(m.group(1)), m.group(0), m.span()))
     return found
 
 
@@ -263,3 +293,114 @@ def test_the_secondary_docs_lost_their_stale_counts(relpath: str, stale) -> None
     text = _doc(relpath)
     still = [s for s in stale if s in text]
     assert not still, f"{relpath} still says {still}"
+
+
+# Phrases that LOOK like a surface count and are not. Each is a different,
+# correct quantity, so a blanket sweep would corrupt them -- which is why the
+# gate compares recognised claims rather than rejecting digits. Verified
+# individually before being listed here.
+_NOT_A_SURFACE_COUNT = (
+    # the RESEARCH surface: default minus the 3 administrative/reference tools.
+    # Pinned against the module by tests/test_skill_names_the_research_surface.py.
+    "16 research tools",
+    "**16** tools for regulatory-filings research",
+    # my own prose about the default/full overlap, in both READMEs
+    "16 tools are on both surfaces",
+    "两种工具集共有 16 个工具",
+    # decomposition sub-counts, pinned by
+    # test_the_default_surface_decomposes_as_the_docs_describe_it
+    "3 `get_fr_*` guide tools",
+    "3 hand-written search tools",
+)
+
+#: Files whose tool-count claims this gate is responsible for.
+_COUNT_BEARING_DOCS = (
+    "README.md",
+    "README.zh-CN.md",
+    "AGENTS.md",
+    "docs/WORKFLOWS.md",
+    "skills/GETTING-STARTED.md",
+    "skills/README.md",
+)
+
+
+def test_no_count_phrasing_escapes_the_patterns(surfaces) -> None:
+    """The coverage control, and the reason the gate is not just "patterns I thought of".
+
+    `_COUNT_CLAIMS` can only check a phrasing it recognises, and silence from an
+    unrecognised one reads exactly like coverage. SPECHT caught that directly
+    (S3 on `4ca8629`): `docs/WORKFLOWS.md` line 3 still said "the 52 ... MCP
+    tools" while line 22 was correct and the gate was green, because no pattern
+    matched line 3's wording.
+
+    So this sweeps a LOOSER detector over the same files and requires every
+    number-next-to-"tools" phrase to be either recognised by `_COUNT_CLAIMS` or
+    listed in `_NOT_A_SURFACE_COUNT` with a reason. A new phrasing then fails
+    here rather than going silently unchecked.
+
+    ⚠ The allowlist is load-bearing and was measured, not assumed: the "16" in
+    `skills/README.md` is the RESEARCH surface (default minus the three
+    administrative/reference tools), not a stale default count. SPECHT reported
+    it as stale; it is correct, and a blanket sweep would have corrupted it.
+    """
+    loose = re.compile(r"\b(\d+)\b[^.\n]{0,30}?\btools?\b")
+    unrecognised: list[tuple[str, str]] = []
+    for relpath in _COUNT_BEARING_DOCS:
+        text = _doc(relpath)
+        spans = [span for _, _, _, span in _claims_with_spans(text)]
+        for match in loose.finditer(text):
+            phrase = match.group(0)
+            lo, hi = match.span()
+            # Overlapping a recognised claim's span means it IS that claim,
+            # seen from a different starting offset.
+            if any(lo < end and start < hi for start, end in spans):
+                continue
+            if any(ok in phrase or phrase in ok for ok in _NOT_A_SURFACE_COUNT):
+                continue
+            unrecognised.append((relpath, phrase))
+    assert not unrecognised, (
+        "these read as tool counts and no pattern in _COUNT_CLAIMS checks them, "
+        "so the gate is silent about them: "
+        + "; ".join(f"{f}: {p!r}" for f, p in unrecognised)
+        + ". Add the phrase shape to _COUNT_CLAIMS, or, if it is a different "
+        "quantity, to _NOT_A_SURFACE_COUNT with the reason."
+    )
+
+
+@pytest.mark.parametrize(
+    "relpath,qualifier",
+    [("README.md", "extracted text"), ("README.zh-CN.md", "已提取文本")],
+)
+def test_the_readme_does_not_oversell_corpus_search_coverage(
+    relpath: str, qualifier: str
+) -> None:
+    """`filings_search` does not search every filing's text, and saying so
+    turns a miss into a reported absence.
+
+    The tool's own description is explicit: an empty result means nothing
+    matched "among filings with extracted text, within the first 20 MB of each
+    filing's text". The first version of the Filings row in this PR said
+    "full-text search across every filing's text" — which is the over-claim
+    #197 shipped a whole `EMPTY IS NOT PROOF OF ABSENCE` block to prevent,
+    reintroduced one file over by the same author. SPECHT caught it (S2 on
+    `4ca8629`).
+
+    Anchored on SUBSTANCE, not phrasing: the row must carry the coverage
+    qualifier and must not claim totality. Pinning the exact sentence is the
+    trap a sibling guard already paid for — it made correcting the sentence
+    read as a regression.
+    """
+    row = next(
+        (line for line in _doc(relpath).splitlines() if "filings_search" in line),
+        None,
+    )
+    assert row, f"{relpath} no longer describes filings_search in its tool table"
+    assert qualifier in row, (
+        f"{relpath}'s filings_search entry states no coverage limit. The tool "
+        f"searches filings WITH EXTRACTED TEXT, first 20 MB of each; a reader "
+        f"told it searches everything treats a miss as proven absence."
+    )
+    for overclaim in ("every filing's text", "全部公告正文"):
+        assert overclaim not in row, (
+            f"{relpath} claims filings_search covers {overclaim!r}; it does not"
+        )

@@ -185,7 +185,7 @@ Two things the error page itself doesn't tell you:
 | Domain | Tools | Use cases |
 |---|---|---|
 | Companies | 5 | Search by name/ticker/ISIN, retrieve full company profiles, get normalized financials, predict next annual report, batch-resolve a list of identifiers to company IDs |
-| Filings | 6 | List, retrieve, fetch markdown content (capped at 150K chars); full-text search across every filing's text (`filings_search`); keyword-search inside one filing (`filings_markdown_search`) or across several at once (`filings_markdown_search_batch`) |
+| Filings | 6 | List, retrieve, fetch markdown content (capped at 150K chars); full-text search across the corpus (`filings_search`) — filings with extracted text, first 20 MB of each; keyword-search inside one filing (`filings_markdown_search`) or across several at once (`filings_markdown_search_batch`) |
 | ISINs | 2 | Lookup by ISIN, list dual-listings |
 | Reference taxonomy | 2 | Filing categories and filing types |
 | Account | 1 | What your API and MCP usage has cost this cycle, spend caps and free credits left (free, never billed) |
