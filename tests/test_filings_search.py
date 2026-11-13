@@ -791,7 +791,7 @@ async def test_the_header_reads_the_cap_the_endpoint_served(
                                    "ordering": "-release_datetime"})
     assert f"More than {cap} filings match; only the first {cap}" in out
     assert f"among the first {cap} matches by relevance" in out.splitlines()[0]
-    assert ("raise max_results (up to 10000)" in out) is raise_hint
+    assert ("raise max_results (up to 10000 on Enterprise and pay-as-you-go plans)" in out) is raise_hint
 
 
 @pytest.mark.asyncio
@@ -847,7 +847,7 @@ async def test_a_capped_group_says_counts_may_be_higher(
     assert "counted over the first 1000 matching filing(s)" in out
     assert "(max_results=1000), not over every match" in out
     assert "More than 1000 filings match, so a company's count can be higher" in out
-    assert "raise max_results (up to 10000)" in out
+    assert "raise max_results (up to 10000 on Enterprise and pay-as-you-go plans)" in out
     assert "Search note: Grouped over the first 1000" in out
 
 
@@ -1044,7 +1044,9 @@ async def test_include_predecessors_works_with_companies_alone(
 def test_the_description_teaches_max_results_and_the_basket_mode(mcp_module) -> None:
     desc = mcp_module.mcp._tool_manager._tools["filings_search"].description or ""
     flat = " ".join(desc.split())
-    assert "`max_results` (1 to 10000, default 1000)" in flat
+    assert "`max_results` (default 1000)" in flat
+    assert "Enterprise and pay-as-you-go plans may raise it to 10000; other plans may only lower it" in flat
+    assert "a regulator form name such as 10-Q, 8-K, 20-F or S-1 is accepted too" in flat
     assert 'Raise it for broad screens and "how many companies / filings" questions' in flat
     assert "costs nothing extra per page" in flat and "slower" in flat
     assert 'WHICH COMPANIES MENTION X: group_by="company"' in flat
@@ -1071,3 +1073,55 @@ async def test_an_empty_group_page_reads_as_the_filing_search_does(
     respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
     out = await _call(mcp_module, {"queries": ["x"], "group_by": "company", "page": page})
     assert expected in out and absent not in out
+
+
+@pytest.mark.asyncio
+async def test_a_mapped_form_type_is_reported(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """types=8-K is searched as ER and RNS (web#10008); the note reaches the agent so it
+    does not present every earnings release as an 8-K."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([_filing(1, LITERAL)])
+    note = ("8-K is not a FinancialFilings type code; searched as ER, RNS. ER, RNS also hold "
+            "filings that are not 8-K, so this may match more than you asked for.")
+    body["search"]["types_resolved"] = [
+        {"param": "types", "requested": "8-K", "types": ["ER", "RNS"], "widens": True,
+         "may_miss": True, "note": note},
+        {"param": "types", "requested": "10-Q", "types": ["IR"], "widens": True, "may_miss": False,
+         "note": " "},  # a blank note adds no line
+        "not a dict",
+    ]
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["going concern"], "types": "8-K,10-Q"})
+    assert route.calls.last.request.url.params["types"] == "8-K,10-Q"
+    assert ("Type note: " + note) in out
+    assert out.count("Type note:") == 1
+
+
+@pytest.mark.asyncio
+async def test_no_type_note_when_nothing_was_mapped(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([_filing(1, LITERAL)])
+    body["search"]["types_resolved"] = []
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["going concern"], "types": "AR"})
+    assert "Type note" not in out
+
+
+def test_the_generated_search_operation_is_never_a_second_tool(mcp_module) -> None:
+    """The endpoint is in the schema while it is open; its generated tool would sit next
+    to the hand-built filings_search on every surface (pruned or full)."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "generate_mcp_tools.py"
+    spec = importlib.util.spec_from_file_location("gen_for_test", path)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    assert "filings_search_list" in gen._REPLACED_BY_SYNTHETIC
+    source = path.read_text()
+    assert "            if func_name in _REPLACED_BY_SYNTHETIC:\n                continue" in source
+    assert "filings_search_list" not in mcp_module.mcp._tool_manager._tools

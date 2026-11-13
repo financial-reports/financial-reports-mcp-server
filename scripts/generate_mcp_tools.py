@@ -62,6 +62,12 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # joins the curated default surface automatically the next time the snapshot is
 # refreshed. Keeping a new endpoint OFF requires adding it here in the same PR
 # that bumps scripts/openapi.snapshot.json.
+# Operations served by a hand-built tool instead, on every surface: generating
+# them too would put two tools for one endpoint in front of the model. The
+# search endpoint is published in the schema while it is open (web
+# cross_search.schema_excluded), so the next snapshot refresh would add it.
+_REPLACED_BY_SYNTHETIC = {"filings_search_list"}
+
 _PRUNED_EXCLUDE = {
     "countries_list", "countries_retrieve",
     "languages_list", "languages_retrieve",
@@ -6331,15 +6337,19 @@ async def filings_search(
     Filters (all optional, combinable): company (internal id) or companies (up to
     50 internal ids, a list or comma-separated: filings of any of them);
     include_predecessors adds the issuers each one succeeded; countries / languages
-    (comma-separated ISO codes), types (comma-separated filing type codes),
+    (comma-separated ISO codes), types (comma-separated filing type codes; a
+    regulator form name such as 10-Q, 8-K, 20-F or S-1 is accepted too and searched
+    as the type(s) its filings are filed under, and the result says how: tell the
+    user when it says the types also hold other filings or may miss some),
     release_datetime_from / _to and added_to_platform_from / _to
     (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and period filters are NOT available here;
     use a release-date range.
-    `max_results` (1 to 10000, default 1000): how many matches, best first, the
-    search keeps; count, pages, ordering and group_by cover only those. Raise it
-    for broad screens and "how many companies / filings" questions. It costs
-    nothing extra per page, but a larger value is slower and more likely to stop
-    early.
+    `max_results` (default 1000): how many matches, best first, the search keeps;
+    count, pages, ordering and group_by cover only those. Enterprise and
+    pay-as-you-go plans may raise it to 10000; other plans may only lower it (a
+    higher value is refused with the plan's limit). Raise it for broad screens and
+    "how many companies / filings" questions. It costs nothing extra per page, but
+    a larger value is slower and more likely to stop early.
     `ordering`: relevance (default), or release_datetime, added_to_platform, id,
     filing_type_confidence, with "-" for descending. It reorders the first
     max_results matches by relevance, it does not reach past them; filters do.
@@ -6471,7 +6481,8 @@ async def filings_search(
         # one sent: an endpoint that ignored max_results served the default.
         cap = search.get("max_results") or _CROSS_SEARCH_DEFAULT_MAX_RESULTS
         raise_cap = (
-            f"raise max_results (up to {_CROSS_SEARCH_MAX_RESULTS_CEILING}) or "
+            f"raise max_results (up to {_CROSS_SEARCH_MAX_RESULTS_CEILING} on Enterprise "
+            "and pay-as-you-go plans) or "
             if cap < _CROSS_SEARCH_MAX_RESULTS_CEILING else ""
         )
         # Rows are company rows only when the endpoint SAYS it grouped. One that
@@ -6547,6 +6558,14 @@ async def filings_search(
                     f"can be returned. To see the rest, {raise_cap}narrow the queries "
                     "or filters."
                 )
+        # A form name sent as a type (10-Q, 8-K) is searched as the type(s) its
+        # filings are filed under; the endpoint says so (search.types_resolved,
+        # web#10008). An agent that is not told would present, e.g., every
+        # earnings release as an 8-K.
+        for entry in search.get("types_resolved") or []:
+            note = entry.get("note") if isinstance(entry, dict) else None
+            if isinstance(note, str) and note.strip():
+                lines.append("Type note: " + sanitize_error_detail(note, max_len=400))
         if payload.get("next"):
             lines.append(f"More results: call again with page={page_no + 1}.")
         parts: list[str] = []
@@ -7739,6 +7758,8 @@ def main() -> None:
 
             func_name = snake_case(operation_id)
             if PRUNE_DEFAULT and func_name in _PRUNED_EXCLUDE:
+                continue
+            if func_name in _REPLACED_BY_SYNTHETIC:
                 continue
             description = sanitize_description(
                 operation.get("description") or operation.get("summary") or ""
