@@ -126,44 +126,117 @@ def test_the_full_surface_is_not_a_superset_of_the_default(surfaces) -> None:
 
 
 # --- every published number --------------------------------------------------
+#
+# ⛔ THE FIRST VERSION OF THIS SECTION WAS A GATE THAT COULD NOT FAIL, and SPECHT
+# caught it 3/3 on `a4e7cd9`. It asserted two things: that the OLD constant (17 /
+# `55-tool`) was absent, and that `str(measured) in text`. Both are satisfied by a
+# stale document:
+#
+#   * rejecting only `17` says nothing about a README that says 18, or 20, or any
+#     other wrong number — reproduced: changing the headline 19 -> 18 left all 11
+#     tests green;
+#   * `str(n) in text` is a SUBSTRING test over the whole file. Both READMEs carry
+#     `2025` and `2026`, so `"20" in text` is True for free — a 20-tool surface
+#     with a stale 19 in the headline would have passed on the strength of a date.
+#
+# So the PR body's claim that "the next surface change fails here instead of
+# shipping" was false as implemented. The gate accrued eleven green tests while
+# measuring nothing: the same shape as a check that always answers "no".
+#
+# The fix is to COMPARE, not to search: pull the number out of each count-bearing
+# PHRASE and assert it equals the measured count. Every phrase shape the docs use
+# is listed below, and a file with NO recognised claim is a failure too — a
+# silently deleted claim must not read as a passing one.
 
-def _stated_counts(text: str, pattern: str) -> list[int]:
-    return [int(m) for m in re.findall(pattern, text)]
+# (pattern, which surface it describes). Anchored on the surrounding words, never
+# on a bare digit.
+_COUNT_CLAIMS: list[tuple[str, str]] = [
+    # English prose
+    (r"\*\*(\d+) curated tools by default\*\*", "default"),
+    (r"\*\*(\d+) LLM-callable tools by default\*\*", "default"),
+    (r"curated to a focused (\d+)-tool set", "default"),
+    (r"exposes (\d+) tools covering", "default"),
+    (r"curated \*\*(\d+)\*\* tools by default", "default"),
+    (r"for the full (\d+)-tool surface", "full"),
+    (r"the full \*\*(\d+)-tool\*\* surface", "full"),
+    (r"emit the full (\d+)-tool surface", "full"),
+    # The ASCII architecture diagram, both READMEs
+    (r"│\s+(\d+) tools\s+│", "default"),
+    # Chinese prose
+    (r"\*\*默认提供 (\d+) 个精选工具\*\*", "default"),
+    (r"\*\*默认提供 (\d+) 个可由 LLM 调用的工具\*\*", "default"),
+    (r"默认工具集精选为 (\d+) 个", "default"),
+    (r"完整的 (\d+) 个工具", "full"),
+    (r"完整的 \*\*(\d+) 个工具\*\*", "full"),
+]
+
+# Which files must carry a claim about which surface. A file listed here with no
+# recognised claim FAILS: that is how a deleted or reworded claim is caught
+# instead of silently passing.
+_DOCS_WITH_COUNTS: dict[str, tuple[str, ...]] = {
+    "README.md": ("default", "full"),
+    "README.zh-CN.md": ("default", "full"),
+    "AGENTS.md": ("default", "full"),
+    "docs/WORKFLOWS.md": ("default",),
+    "skills/GETTING-STARTED.md": ("default",),
+    "scripts/generate_mcp_tools.py": ("full",),
+}
 
 
-@pytest.mark.parametrize(
-    "relpath",
-    ["README.md", "README.zh-CN.md", "AGENTS.md"],
-)
-def test_the_headline_docs_state_the_measured_default_count(
-    surfaces, relpath: str
-) -> None:
-    """Every "<N> tools by default" claim in the front-door docs.
+def _claims(text: str) -> list[tuple[str, int, str]]:
+    """Every count claim in `text`, as (surface, number, the matched phrase)."""
+    found = []
+    for pattern, surface in _COUNT_CLAIMS:
+        for m in re.finditer(pattern, text):
+            found.append((surface, int(m.group(1)), m.group(0)))
+    return found
 
-    README.md line 11 is the blurb above the fold — the count a prospective
-    user and every directory listing sees.
+
+def test_the_claim_extractor_actually_discriminates() -> None:
+    """The control, because the gate is only as good as this function.
+
+    A pattern list is an instrument, and an instrument that silently matches
+    nothing turns every check below into a pass. These assert it finds the right
+    number, and — the half the first version lacked — that it does NOT accept a
+    wrong one just because the right digits appear somewhere.
     """
-    n = len(surfaces["default"])
-    text = _doc(relpath)
-    wrong = sorted(
-        {c for c in _stated_counts(text, r"(\d+)\s*(?:个)?\s*(?:curated |LLM-callable |精选)?[  ]?(?:tools?|工具)") if c == 17}
+    good = "**19 curated tools by default** (set `X` for the full 61-tool surface). MCP spec 2025-06-18."
+    assert sorted(_claims(good)) == sorted(
+        [("default", 19, "**19 curated tools by default**"), ("full", 61, "for the full 61-tool surface")]
     )
-    assert not wrong, (
-        f"{relpath} still states a default count of {wrong}; the module emits {n}"
-    )
-    assert str(n) in text, f"{relpath} never states the real default count ({n})"
+
+    # The exact exploit SPECHT named: a stale count beside an unrelated 2025.
+    stale = "**19 curated tools by default** (set `X` for the full 61-tool surface). MCP spec 2025-06-18."
+    by_surface = {s: n for s, n, _ in _claims(stale)}
+    assert by_surface["default"] == 19
+    assert 20 not in by_surface.values(), "a date must not be read as a count"
+
+    # And a reworded claim must come back as ABSENT, not as a pass.
+    assert not _claims("roughly twenty tools, give or take")
 
 
-@pytest.mark.parametrize("relpath", ["README.md", "README.zh-CN.md", "AGENTS.md"])
-def test_the_headline_docs_state_the_measured_full_count(
+@pytest.mark.parametrize("relpath", sorted(_DOCS_WITH_COUNTS))
+def test_every_published_count_equals_the_measured_surface(
     surfaces, relpath: str
 ) -> None:
-    n = len(surfaces["full"])
+    """Compare each documented number with what the generator emits."""
+    measured = {"default": len(surfaces["default"]), "full": len(surfaces["full"])}
     text = _doc(relpath)
-    assert "55-tool" not in text and "55 个工具" not in text, (
-        f"{relpath} still advertises a 55-tool full surface; it is {n}"
-    )
-    assert str(n) in text, f"{relpath} never states the real full count ({n})"
+    claims = _claims(text)
+
+    for surface in _DOCS_WITH_COUNTS[relpath]:
+        got = [(n, phrase) for s, n, phrase in claims if s == surface]
+        assert got, (
+            f"{relpath} states no recognised {surface}-surface tool count. Either "
+            f"it lost one, or it was reworded past _COUNT_CLAIMS — add the new "
+            f"phrasing there rather than deleting this expectation."
+        )
+        wrong = [(n, phrase) for n, phrase in got if n != measured[surface]]
+        assert not wrong, (
+            f"{relpath} claims {[n for n, _ in wrong]} for the {surface} surface; "
+            f"the generator emits {measured[surface]}. Offending phrases: "
+            f"{[p for _, p in wrong]}"
+        )
 
 
 def test_the_generator_comment_agrees_with_the_generator(surfaces) -> None:
@@ -181,6 +254,12 @@ def test_the_generator_comment_agrees_with_the_generator(surfaces) -> None:
     ],
 )
 def test_the_secondary_docs_lost_their_stale_counts(relpath: str, stale) -> None:
+    """Kept alongside the comparison above, not instead of it.
+
+    This one pins the SPECIFIC wrong strings that shipped, so a revert to the
+    exact prior wording is named in the failure. The comparison test is what
+    catches an arbitrary wrong number.
+    """
     text = _doc(relpath)
     still = [s for s in stale if s in text]
     assert not still, f"{relpath} still says {still}"
