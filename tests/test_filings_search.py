@@ -791,7 +791,7 @@ async def test_the_header_reads_the_cap_the_endpoint_served(
                                    "ordering": "-release_datetime"})
     assert f"More than {cap} filings match; only the first {cap}" in out
     assert f"among the first {cap} matches by relevance" in out.splitlines()[0]
-    assert ("raise max_results (up to 10000)" in out) is raise_hint
+    assert ("raise max_results (up to 10000 on Enterprise and pay-as-you-go plans)" in out) is raise_hint
 
 
 @pytest.mark.asyncio
@@ -847,7 +847,7 @@ async def test_a_capped_group_says_counts_may_be_higher(
     assert "counted over the first 1000 matching filing(s)" in out
     assert "(max_results=1000), not over every match" in out
     assert "More than 1000 filings match, so a company's count can be higher" in out
-    assert "raise max_results (up to 10000)" in out
+    assert "raise max_results (up to 10000 on Enterprise and pay-as-you-go plans)" in out
     assert "Search note: Grouped over the first 1000" in out
 
 
@@ -1044,7 +1044,9 @@ async def test_include_predecessors_works_with_companies_alone(
 def test_the_description_teaches_max_results_and_the_basket_mode(mcp_module) -> None:
     desc = mcp_module.mcp._tool_manager._tools["filings_search"].description or ""
     flat = " ".join(desc.split())
-    assert "`max_results` (1 to 10000, default 1000)" in flat
+    assert "`max_results` (default 1000)" in flat
+    assert "Enterprise and pay-as-you-go plans may raise it to 10000; other plans may only lower it" in flat
+    assert "a regulator form name such as 10-Q, 8-K, 20-F or S-1 is accepted too" in flat
     assert 'Raise it for broad screens and "how many companies / filings" questions' in flat
     assert "costs nothing extra per page" in flat and "slower" in flat
     assert 'WHICH COMPANIES MENTION X: group_by="company"' in flat
@@ -1071,3 +1073,139 @@ async def test_an_empty_group_page_reads_as_the_filing_search_does(
     respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
     out = await _call(mcp_module, {"queries": ["x"], "group_by": "company", "page": page})
     assert expected in out and absent not in out
+
+
+@pytest.mark.asyncio
+async def test_a_mapped_form_type_is_reported(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """types=8-K is searched as ER and RNS (web#10008); the note reaches the agent so it
+    does not present every earnings release as an 8-K."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([_filing(1, LITERAL)])
+    note = ("8-K is not a FinancialFilings type code; searched as ER, RNS. ER, RNS also hold "
+            "filings that are not 8-K, so this may match more than you asked for.")
+    body["search"]["types_resolved"] = [
+        {"param": "types", "requested": "8-K", "types": ["ER", "RNS"], "widens": True,
+         "may_miss": True, "note": note},
+        {"param": "types", "requested": "10-Q", "types": ["IR"], "widens": True, "may_miss": False,
+         "note": " "},  # a blank note adds no line
+        "not a dict",
+    ]
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["going concern"], "types": "8-K,10-Q"})
+    assert route.calls.last.request.url.params["types"] == "8-K,10-Q"
+    assert ("Type note: " + note) in out
+    assert out.count("Type note:") == 1
+
+
+@pytest.mark.asyncio
+async def test_no_type_note_when_nothing_was_mapped(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([_filing(1, LITERAL)])
+    body["search"]["types_resolved"] = []
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["going concern"], "types": "AR"})
+    assert "Type note" not in out
+
+
+def test_the_generated_search_operation_is_never_a_second_tool(mcp_module) -> None:
+    """The endpoint is in the schema while it is open; its generated tool would sit next
+    to the hand-built filings_search on every surface (pruned or full)."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "scripts" / "generate_mcp_tools.py"
+    spec = importlib.util.spec_from_file_location("gen_for_test", path)
+    gen = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(gen)
+    assert "filings_search_list" in gen._REPLACED_BY_SYNTHETIC
+    source = path.read_text()
+    assert "            if func_name in _REPLACED_BY_SYNTHETIC:\n                continue" in source
+    assert "filings_search_list" not in mcp_module.mcp._tool_manager._tools
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("page", "scan_complete", "lead"), [
+    (1, True, "No filing matched"),
+    (1, False, "No visible filing found"),
+    (2, True, "No results on page 2"),
+])
+async def test_an_empty_page_keeps_the_type_note(
+    mcp_module, monkeypatch, fake_access_token, respx_router, page, scan_complete, lead
+):
+    """An empty 8-K search must still say the mapping may miss some 8-K filings, or it
+    reads as an absence (SPECHT on #204, 3/3)."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([], count=0, scan_complete=scan_complete, capped=not scan_complete)
+    note = "Some 8-K filings are classified under a more specific type, which is not included."
+    body["search"]["types_resolved"] = [{"param": "types", "requested": "8-K", "types": ["ER", "RNS"],
+                                         "widens": True, "may_miss": True, "note": note}]
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["going concern"], "types": "8-K", "page": page})
+    assert out.startswith(lead)
+    assert out.endswith("Type note: " + note)
+
+
+@pytest.mark.asyncio
+async def test_a_too_slow_search_is_not_retried_and_says_to_narrow(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """web#10234: a search too heavy to answer in time is a 503 search_too_slow. Retrying the
+    same search fails the same way at the node's expense, and the model must narrow instead."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(503, json={
+        "detail": "This search took too long to run. Narrow q or the filters.", "type": "search_too_slow"}))
+    with pytest.raises(mcp_module.UpstreamHTTPError) as exc:
+        await _tool(mcp_module)(queries=["going concern"], countries="JP")
+    assert route.call_count == 1  # not retried
+    assert "too heavy to answer in time" in str(exc.value)
+    assert "Narrow the queries" in str(exc.value)
+    assert exc.value.error_kind == "search_too_slow"
+
+
+@pytest.mark.asyncio
+async def test_another_503_is_still_retried_once(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(
+        503, json={"detail": "The full-text index is unavailable.", "type": "search_unavailable"}))
+    with pytest.raises(mcp_module.UpstreamHTTPError) as exc:
+        await _tool(mcp_module)(queries=["going concern"])
+    assert route.call_count == 2
+    assert exc.value.error_kind == "transient"
+
+
+@pytest.mark.asyncio
+async def test_the_endpoints_search_notes_reach_the_model(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([_filing(1, LITERAL)])
+    body["search"]["max_results_note"] = (
+        "Asked for 2000 results; your plan allows up to 1000, so 1000 were searched.")
+    body["search"]["relaxed_note"] = (
+        'No filing contained every word of "a b c d e f", so these results contain at least '
+        "70% of its words.")
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["a b c d e f"]})
+    assert "Search note: Asked for 2000 results; your plan allows up to 1000" in out
+    assert "Search note: No filing contained every word" in out
+
+
+
+@pytest.mark.asyncio
+async def test_an_empty_page_keeps_the_search_notes(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """A lowered cap on a search with no matches must still be reported (SPECHT on #205, 3/3)."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([], count=0, scan_complete=True)
+    body["search"]["max_results_note"] = "Asked for 2000 results; your plan allows up to 1000, so 1000 were searched."
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["going concern"], "max_results": 2000})
+    assert out.startswith("No filing matched")
+    assert out.endswith("Search note: Asked for 2000 results; your plan allows up to 1000, so 1000 were searched.")

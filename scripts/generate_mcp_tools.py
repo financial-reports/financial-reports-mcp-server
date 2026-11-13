@@ -62,6 +62,12 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # joins the curated default surface automatically the next time the snapshot is
 # refreshed. Keeping a new endpoint OFF requires adding it here in the same PR
 # that bumps scripts/openapi.snapshot.json.
+# Operations served by a hand-built tool instead, on every surface: generating
+# them too would put two tools for one endpoint in front of the model. The
+# search endpoint is published in the schema while it is open (web
+# cross_search.schema_excluded), so the next snapshot refresh would add it.
+_REPLACED_BY_SYNTHETIC = {"filings_search_list"}
+
 _PRUNED_EXCLUDE = {
     "countries_list", "countries_retrieve",
     "languages_list", "languages_retrieve",
@@ -1849,6 +1855,8 @@ def _retry_delay(status: int, body_text: str, retry_after: str) -> Optional[floa
             return None
     elif status not in _RETRY_STATUSES:
         return None
+    elif status == 503 and _is_search_too_slow(body_text):
+        return None  # the same heavy search would fail again, at the node's expense
     if retry_after:
         wait = float(int(retry_after))
         return wait if wait <= _RETRY_AFTER_MAX else None
@@ -2164,6 +2172,7 @@ class UpstreamHTTPError(RuntimeError):
         #   "spend_ceiling_monthly" — 429, PAYG monthly self-serve ceiling
         #   "burst_limit"           — 429, too many requests per minute
         #   "rate_limited"          — 429 we could not classify (retry advice)
+        #   "search_too_slow"       — 503, a full-text search too heavy to answer in time
         #   "transient"             — HTTP 5xx
         #   "unknown"               — anything else
         self.error_kind = error_kind
@@ -2564,11 +2573,21 @@ def _classify_upstream_error(status: int, body_text: str) -> str:
         return "expired_token"
     if status == 429:
         return _classify_upstream_429(body_text)
+    if status == 503 and _is_search_too_slow(body_text):
+        return "search_too_slow"
     if status >= 500:
         return "transient"
     if status == 404:
         return _classify_upstream_404(body_text)
     return "unknown"
+
+
+def _is_search_too_slow(body_text: str) -> bool:
+    """A 503 from GET /filings/search/ (web cross_search.SearchTooSlow): the
+    search's filters and matches make it too heavy to answer in time. Not
+    transient: the same search fails the same way, so it is not retried."""
+    payload = _parse_upstream_json(body_text) or {}
+    return payload.get("type") == "search_too_slow"
 
 
 def _classify_upstream_404(body_text: str) -> str:
@@ -2730,9 +2749,16 @@ def _upstream_hint(
                 "The search service is busy: too many full-text searches are "
                 "running right now. This is not "
                 "an account limit and nothing was billed: retry shortly, running "
-                "at most two searches at a time." + wait
+                "at most three searches at a time." + wait
             )
         return "Rate limited by the FinancialFilings API — wait a moment and retry." + wait
+    if status == 503 and error_kind == "search_too_slow":
+        return (
+            "This search is too heavy to answer in time, so retrying the same "
+            "search will not help. Narrow the queries or add filters (a country, "
+            "a type, a release-date range), or lower max_results, then search "
+            "again. Nothing was billed."
+        )
     if status >= 500:
         # The server already retried once before surfacing this (see _api_get),
         # so do not tell the caller to retry immediately — that would be a third
@@ -5014,13 +5040,23 @@ def _resource_filing_types() -> str:
         "is the code; the third is the "
         "FinancialFilings taxonomy category.\\n\\n"
         "## Form names are NOT codes — translate first\\n\\n"
-        "⚠️ **The CODE TABLE below works on BOTH tools. The `search=` recipes "
-        "and the `source_filing_type` check do NOT** — they are `filings_list` "
-        "only. `filings_search` has no `search` parameter, and its rows carry "
-        "the filing-type CODE, not `source_filing_type`. So on `filings_search` "
-        "you can NARROW by code with `types=` and you cannot CONFIRM the form: "
-        "say the code is broader than the form, or run the same filter through "
-        "`filings_list` when the user asked for a specific one.\\n\\n"
+        "\u26a0\ufe0f **This section is written for `filings_list`, and `filings_search` "
+        "differs in two ways that point OPPOSITE directions \u2014 so do not carry "
+        "either rule across.**\\n\\n"
+        "- **Form names.** On `filings_list` a name that is not a code is "
+        "REJECTED: the filter is an exact `code IN (...)`. On `filings_search` a "
+        "regulator form name \u2014 `10-Q`, `8-K`, `20-F`, `S-1` \u2014 is ACCEPTED and "
+        "searched as the type(s) its filings are filed under, and the result says "
+        "how. So \\"translate first\\" is advice for `filings_list`, not a limit on "
+        "`filings_search`.\\n"
+        "- **Confirming the form.** The `search=` recipes and the "
+        "`source_filing_type` check below are `filings_list` ONLY: "
+        "`filings_search` has no `search` parameter and its rows carry the "
+        "filing-type CODE, not `source_filing_type`. So there you can NARROW and "
+        "you cannot CONFIRM \u2014 say the type is broader than the form, or re-run "
+        "the filter through `filings_list` when the user asked for a specific "
+        "one.\\n\\n"
+        "The CODE TABLE itself applies to both.\\n\\n"
         "These codes are a cross-jurisdiction taxonomy, not form names. "
         "`type=10-Q` is not a code: an unknown code is rejected with a 400 "
         "that names it and, where one exists, suggests the replacement (the "
@@ -6339,17 +6375,19 @@ async def filings_search(
     Filters (all optional, combinable): company (internal id) or companies (up to
     50 internal ids, a list or comma-separated: filings of any of them);
     include_predecessors adds the issuers each one succeeded; countries / languages
-    (comma-separated ISO codes), types (comma-separated FinancialFilings filing
-    type codes — a cross-jurisdiction taxonomy, NOT form names; an unrecognised
-    one is rejected, so call get_fr_filing_type_taxonomy to translate first),
+    (comma-separated ISO codes), types (comma-separated filing type codes; a
+    regulator form name such as 10-Q, 8-K, 20-F or S-1 is accepted too and searched
+    as the type(s) its filings are filed under, and the result says how: tell the
+    user when it says the types also hold other filings or may miss some),
     release_datetime_from / _to and added_to_platform_from / _to
     (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and period filters are NOT available here;
     use a release-date range.
-    `max_results` (1 to 10000, default 1000): how many matches, best first, the
-    search keeps; count, pages, ordering and group_by cover only those. Raise it
-    for broad screens and "how many companies / filings" questions. It costs
-    nothing extra per page, but a larger value is slower and more likely to stop
-    early.
+    `max_results` (default 1000): how many matches, best first, the search keeps;
+    count, pages, ordering and group_by cover only those. Enterprise and
+    pay-as-you-go plans may raise it to 10000; other plans may only lower it (a
+    higher value is lowered to the plan's limit, and the result says so). Raise it for broad screens and
+    "how many companies / filings" questions. It costs nothing extra per page, but
+    a larger value is slower and more likely to stop early.
     `ordering`: relevance (default), or release_datetime, added_to_platform, id,
     filing_type_confidence, with "-" for descending. It reorders the first
     max_results matches by relevance, it does not reach past them; filters do.
@@ -6443,6 +6481,25 @@ async def filings_search(
         stopped_early = scan_complete is False or (
             scan_complete is None and bool(search.get("capped"))
         )
+        # A form name sent as a type (10-Q, 8-K) is searched as the type(s) its
+        # filings are filed under; the endpoint says so (search.types_resolved,
+        # web#10008), on empty pages too. An agent that is not told would
+        # present every earnings release as an 8-K, or report an absence the
+        # mapping may have caused ("may miss" some filings of that form).
+        type_notes = [
+            "Type note: " + sanitize_error_detail(entry["note"], max_len=400)
+            for entry in (search.get("types_resolved") or [])
+            if isinstance(entry, dict) and isinstance(entry.get("note"), str)
+            and entry["note"].strip()
+        ]
+        # What the endpoint changed about the request (web#10232, #10233): a
+        # max_results lowered to the plan's limit, or a long query relaxed to
+        # most of its words. On every answer, empty ones too.
+        for key in ("max_results_note", "relaxed_note"):
+            note = search.get(key)
+            if isinstance(note, str) and note.strip():
+                type_notes.append("Search note: " + sanitize_error_detail(note, max_len=400))
+        type_tail = "".join("\\n" + note for note in type_notes)
         if not results and stopped_early and page_no == 1:
             return (
                 f"No visible filing found for {shown} in the part of the index this "
@@ -6450,7 +6507,7 @@ async def filings_search(
                 "matching filings may still exist: this is NOT an absence. Narrow "
                 "the queries or add filters (company, country, type, dates) and "
                 "search again. Nothing was billed."
-            )
+            ) + type_tail
         if not results:
             if page_no > 1:
                 # Past the last page. Only say earlier pages hold results when
@@ -6471,17 +6528,18 @@ async def filings_search(
                 return (
                     f"No results on page {page_no} for {shown}. {where}"
                     f"{caveat} This page was not billed."
-                )
+                ) + type_tail
             return (
                 f"No filing matched {shown} within these filters (searched: filings "
                 "with extracted text, the first 20 MB of each). Nothing was billed. "
                 "Try translations or synonyms as extra queries, or widen the filters."
-            )
+            ) + type_tail
         # The cap this request was SERVED with (the endpoint echoes it), not the
         # one sent: an endpoint that ignored max_results served the default.
         cap = search.get("max_results") or _CROSS_SEARCH_DEFAULT_MAX_RESULTS
         raise_cap = (
-            f"raise max_results (up to {_CROSS_SEARCH_MAX_RESULTS_CEILING}) or "
+            f"raise max_results (up to {_CROSS_SEARCH_MAX_RESULTS_CEILING} on Enterprise "
+            "and pay-as-you-go plans) or "
             if cap < _CROSS_SEARCH_MAX_RESULTS_CEILING else ""
         )
         # Rows are company rows only when the endpoint SAYS it grouped. One that
@@ -6557,6 +6615,7 @@ async def filings_search(
                     f"can be returned. To see the rest, {raise_cap}narrow the queries "
                     "or filters."
                 )
+        lines.extend(type_notes)  # type notes, then search notes (relaxed = near matches)
         if payload.get("next"):
             lines.append(f"More results: call again with page={page_no + 1}.")
         parts: list[str] = []
@@ -7749,6 +7808,8 @@ def main() -> None:
 
             func_name = snake_case(operation_id)
             if PRUNE_DEFAULT and func_name in _PRUNED_EXCLUDE:
+                continue
+            if func_name in _REPLACED_BY_SYNTHETIC:
                 continue
             description = sanitize_description(
                 operation.get("description") or operation.get("summary") or ""

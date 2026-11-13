@@ -1,161 +1,130 @@
-"""`types` on `filings_search` takes FinancialFilings codes, not SEC form names.
+"""The filing-type guide must not contradict the tool that links to it.
 
-Live telemetry from the `cross-corpus-search` seat, 2.7 days to 2026-11-09:
-96 `filings_search` calls, 83 ok, 13 errors. Four of the thirteen were 400s
-from an agent passing a SEC form name in `types` — `S-1`, `13F-HR`, `424B5`,
-`EC`. None of the four is one of the 30 FinancialFilings codes, so the filter's
-exact `code IN (...)` rejected the call.
+HISTORY, because this file's premise inverted under it and the inversion is the
+point. It was written on 2026-11-12 from live telemetry: 2.7 days of
+`filings_search`, 96 calls, 13 errors, of which four were 400s from an agent
+putting a SEC form name in `types` (`S-1`, `13F-HR`, `424B5`, `EC`). The fix
+was a warning that `types` takes FinancialFilings codes and not form names.
 
-The guidance that would have prevented it exists and the agent never saw it:
-the `get_fr_filing_type_taxonomy` guide carries a whole "Form names are NOT
-codes — translate first" section, but it introduced itself as being about the
-`type` param on `filings_list`, and `filings_search`'s own description said
-only "types (comma-separated filing type codes)" — a phrase a model reading it
-as "the codes a filing type is called" satisfies with `10-K`, `S-1`, `13F-HR`
-alike. `10-K` happens to be a real code; the other two are not, and nothing on
-the call path said which was which.
+**#204 then made form names ACCEPTED on `filings_search`** — a regulator form
+name is mapped to the type(s) its filings are filed under, and the response
+says how. So the warning this file was built to enforce became FALSE for the
+tool it was aimed at, and asserting it would have steered models away from a
+route that now works.
 
-These pin BOTH ends of that path, because either one alone leaves the agent
-where it was: `filings_search` must send the model to the taxonomy, and the
-taxonomy must admit `filings_search` is a caller.
+What survives is the half that got bigger. `get_fr_filing_type_taxonomy` still
+says, in its own words, that `type=10-Q` "is not a code" and "an unknown code
+is rejected with a 400" — true of `filings_list`, whose filter is an exact
+`code IN (...)`, and FALSE of `filings_search` since #204. The guide is linked
+from both. So these pin the SPLIT rather than either rule:
+
+  * `filings_list`  — a non-code form name is REJECTED
+  * `filings_search` — a form name is ACCEPTED and mapped, and the result says
+                       how; but it has no `search=` and no `source_filing_type`,
+                       so you can narrow and cannot confirm
+
+A reader who carries either rule across gets a wrong answer in one direction or
+the other, which is why the guide now states both.
 """
 from __future__ import annotations
 
-import pytest
+import inspect
 
 TAXONOMY_TOOL = "get_fr_filing_type_taxonomy"
-
-# Measured on origin/main 2026-11-12 against the 30-code table in
-# `_resource_filing_types`: none of these is a FinancialFilings code.
-NOT_FR_CODES = ("S-1", "13F-HR", "424B5", "EC")
 
 
 def _description(mcp_module, name: str) -> str:
     return mcp_module.mcp._tool_manager._tools[name].description or ""
 
 
-def _types_clause(mcp_module) -> str:
-    """The `filings_search` sentence that documents the `types` filter.
+def _guide(mcp_module) -> str:
+    return mcp_module._resource_filing_types.fn()
 
-    Scoped deliberately: an assertion over the WHOLE description passes on a
-    taxonomy pointer sitting anywhere in 3k characters, including one that
-    belongs to a different parameter. The fix has to land where a model reading
-    about `types` will read it.
+
+def _guide_header(mcp_module) -> str:
+    """The guide ABOVE its code table — where the caveats have to live.
+
+    Scoped deliberately: an assertion over the whole guide passes on wording
+    that sits below the table, which a model reading the caveats will not have
+    reached.
     """
-    text = _description(mcp_module, "filings_search")
-    start = text.find("types (")
-    assert start != -1, (
-        "`filings_search` no longer documents a `types` filter in the shape "
-        "this test knows how to locate — re-anchor it before deleting it"
+    text = _guide(mcp_module)
+    header, _, _ = text.partition("| Code | Name | Category |")
+    assert header, "the taxonomy guide lost its code table"
+    return header
+
+
+def test_the_guide_states_the_filings_list_rejection_rule(mcp_module) -> None:
+    """The original claim, kept — it is still true of `filings_list`."""
+    header = _guide_header(mcp_module)
+    assert "REJECTED" in header or "rejected" in header
+    assert "filings_list" in header
+
+
+def test_the_guide_states_that_filings_search_ACCEPTS_form_names(mcp_module) -> None:
+    """The half #204 inverted.
+
+    Without this, the guide tells a model a form name will be refused by a tool
+    that in fact maps it — a false absence manufactured by documentation.
+    """
+    header = _guide_header(mcp_module)
+    assert "ACCEPTED" in header, (
+        "the guide no longer says `filings_search` accepts form names; since "
+        "#204 it does, and the guide is linked from that tool"
     )
-    end = text.find("`max_results`", start)
-    assert end > start, "the filters block lost its `max_results` terminator"
-    return text[start:end]
+    assert "filings_search" in header
 
 
-def test_the_types_clause_sends_the_model_to_the_taxonomy(mcp_module) -> None:
-    clause = _types_clause(mcp_module)
-    assert TAXONOMY_TOOL in clause, (
-        "the `types` clause names no way to learn the codes; the four measured "
-        "400s were agents guessing"
+def test_the_guide_and_the_tool_do_not_contradict_each_other(mcp_module) -> None:
+    """The actual regression this file exists to prevent.
+
+    `filings_search`'s own description says a form name is accepted. The guide
+    it points at must not be readable as saying the opposite. Both strings are
+    derived here rather than restated, so a later edit to either one is caught.
+    """
+    clause = _description(mcp_module, "filings_search")
+    assert "form name" in clause, (
+        "filings_search no longer documents form-name handling; if #204 was "
+        "reverted, this whole file's premise needs re-deriving"
     )
+    assert "accepted" in clause.lower()
+
+    header = _guide_header(mcp_module)
+    # The guide must carry the same fact, not merely avoid denying it.
+    assert "ACCEPTED" in header and "filings_search" in header
 
 
-def test_the_types_clause_says_form_names_are_not_codes(mcp_module) -> None:
-    """Naming the taxonomy is not enough on its own.
+def test_the_guide_keeps_the_confirm_limitation_on_filings_search(mcp_module) -> None:
+    """The direction that did NOT invert, and still bites.
 
-    A model that believes it already knows the codes has no reason to spend a
-    call on a guide. The clause has to contradict the belief, not just offer a
-    reference.
+    `filings_search` takes no `search=` and its rows carry the filing-type code,
+    not `source_filing_type`. So the guide's form-verification recipes remain
+    `filings_list`-only even though its rejection rule no longer applies.
     """
-    clause = _types_clause(mcp_module).lower()
-    assert "form name" in clause
-    assert "not" in clause
+    header = _guide_header(mcp_module)
+    assert "source_filing_type" in header
+    assert "filings_list` ONLY" in header or "filings_list` only" in header
 
 
-@pytest.mark.parametrize("form", NOT_FR_CODES)
-def test_a_measured_rejected_form_name_is_not_advertised_as_a_code(
-    mcp_module, form: str
-) -> None:
-    """Negative control on the fix itself.
+def test_the_scoping_claims_still_match_the_tool_signatures(mcp_module) -> None:
+    """Pin the guide's claims about another tool's interface to that interface.
 
-    The cheap way to write the warning is to list the forms that failed. That
-    would be wrong twice over: the list is four of an unbounded set, and a
-    model skimming for a code would find these spelled out next to `types`.
+    Prose about a sibling tool rots silently, and this guide is where a model is
+    told to trust it. Includes the contrast control, since the claim is a
+    contrast.
     """
-    clause = _types_clause(mcp_module)
-    assert form not in clause
+    search_params = set(inspect.signature(mcp_module.filings_search.fn).parameters)
+    list_params = set(inspect.signature(mcp_module.filings_list.fn).parameters)
 
-
-def test_the_taxonomy_guide_admits_filings_search_is_a_caller(mcp_module) -> None:
-    """The other end of the path.
-
-    The guide opened with "Pass these via the `type` query param (or `types`
-    for several) on `filings_list`" — true, and it told an agent arriving from
-    `filings_search` that it had landed in the wrong document.
-    """
-    guide = mcp_module._resource_filing_types.fn()
-    header, _, _ = guide.partition("## Form names are NOT codes")
-    assert header, "the taxonomy guide lost its form-name section"
-    assert "filings_search" in header, (
-        "the guide introduces itself as being about `filings_list` only"
+    assert "search" not in search_params, (
+        "filings_search grew a `search` parameter — the guide says it has none"
+    )
+    assert "types" in search_params
+    assert "search" in list_params, (
+        "filings_list lost `search` — the guide's recipes are written for it"
     )
 
 
 def test_the_taxonomy_tool_is_on_the_default_surface(mcp_module) -> None:
-    """A pointer to a pruned tool is worse than no pointer.
-
-    `filings_search` is on the default (19-tool) surface, so the tool it sends
-    the model to has to be there too.
-    """
-    tools = mcp_module.mcp._tool_manager._tools
-    assert TAXONOMY_TOOL in tools
-
-
-def test_the_guide_scopes_its_search_recipes_to_filings_list(mcp_module) -> None:
-    """Widening the guide's audience without scoping its recipes is a defect.
-
-    SPECHT caught it 3/3 on `0de8131` — unanimous, and correct on both halves.
-    Telling `filings_search` callers to read this guide hands them a document
-    whose 10-Q recipe is `IR` plus `search="10-Q"` and whose verification step
-    is "read `source_filing_type` on the row". `filings_search` has neither.
-    An agent following the recipe makes an invalid call; one following the
-    verification step has no field to read.
-
-    The pointer was still right — the CODE TABLE is what a `filings_search`
-    caller needs, and it is the only part of the guide that was ever going to
-    help them. So the fix scopes the recipes rather than withdrawing the
-    pointer.
-    """
-    guide = mcp_module._resource_filing_types.fn()
-    header, _, _ = guide.partition("These codes are a cross-jurisdiction taxonomy")
-    assert "filings_list` only" in header or "`filings_list` only" in header, (
-        "the guide no longer says its `search=` recipes are filings_list-only"
-    )
-    assert "source_filing_type" in header
-
-
-def test_the_scoping_claim_still_matches_the_tool_signatures(mcp_module) -> None:
-    """The guide asserts two facts about `filings_search`. Pin them to the code.
-
-    A prose claim about another tool's interface rots the moment that interface
-    changes, and the guide is the one place a model is told to trust it. If
-    `filings_search` ever grows a `search` parameter, this fails here rather
-    than in a user's session.
-    """
-    import inspect
-
-    search_params = set(
-        inspect.signature(mcp_module.filings_search.fn).parameters
-    )
-    list_params = set(inspect.signature(mcp_module.filings_list.fn).parameters)
-
-    assert "search" not in search_params, (
-        "filings_search grew a `search` parameter — the taxonomy guide says it "
-        "has none, and says so to steer agents to filings_list"
-    )
-    assert "types" in search_params, "filings_search lost `types`"
-    # The control: the claim is a CONTRAST, so the other side has to hold too.
-    assert "search" in list_params, (
-        "filings_list lost `search` — the guide's recipes are written for it"
-    )
+    """A pointer to a pruned tool is worse than no pointer."""
+    assert TAXONOMY_TOOL in mcp_module.mcp._tool_manager._tools
