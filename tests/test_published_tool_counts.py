@@ -179,6 +179,15 @@ _COUNT_CLAIMS: list[tuple[str, str]] = [
     (r"the full \*\*(\d+)-tool\*\* surface", "full"),
     (r"emit the full (\d+)-tool surface", "full"),
     (r"composing the (\d+) FinancialFilings MCP tools", "full"),
+    # The overlap prose this PR added. Unchecked when first written: I shipped
+    # three new ungated numbers inside a PR whose purpose is gating numbers
+    # (SPECHT S3 on 9883152).
+    (r"(\d+) tools are on both surfaces", "shared"),
+    (r"(\d+) are default-only", "default_only"),
+    (r"(\d+) are gated", "gated"),
+    (r"两种工具集共有 (\d+) 个工具", "shared"),
+    (r"(\d+) 个仅在默认集中", "default_only"),
+    (r"(\d+) 个仅在完整集中", "gated"),
     # The ASCII architecture diagram, both READMEs
     (r"│\s+(\d+) tools\s+│", "default"),
     # Chinese prose
@@ -193,8 +202,14 @@ _COUNT_CLAIMS: list[tuple[str, str]] = [
 # recognised claim FAILS: that is how a deleted or reworded claim is caught
 # instead of silently passing.
 _DOCS_WITH_COUNTS: dict[str, tuple[str, ...]] = {
-    "README.md": ("default", "full"),
-    "README.zh-CN.md": ("default", "full"),
+    # The READMEs also publish the overlap breakdown, so they are responsible
+    # for it. ⛔ Adding the patterns to _COUNT_CLAIMS was NOT enough and the
+    # suite stayed green: this dict is what the comparison test iterates, so an
+    # extracted claim nobody lists here is extracted and DISCARDED. Caught by
+    # mutation testing (16->15, 45->44 and the Chinese equivalents all passed),
+    # not by the suite.
+    "README.md": ("default", "full", "shared", "default_only", "gated"),
+    "README.zh-CN.md": ("default", "full", "shared", "default_only", "gated"),
     "AGENTS.md": ("default", "full"),
     "docs/WORKFLOWS.md": ("default",),
     "skills/GETTING-STARTED.md": ("default",),
@@ -250,7 +265,14 @@ def test_every_published_count_equals_the_measured_surface(
     surfaces, relpath: str
 ) -> None:
     """Compare each documented number with what the generator emits."""
-    measured = {"default": len(surfaces["default"]), "full": len(surfaces["full"])}
+    default, full = surfaces["default"], surfaces["full"]
+    measured = {
+        "default": len(default),
+        "full": len(full),
+        "shared": len(default & full),
+        "default_only": len(default - full),
+        "gated": len(full - default),
+    }
     text = _doc(relpath)
     claims = _claims(text)
 
@@ -304,9 +326,6 @@ _NOT_A_SURFACE_COUNT = (
     # Pinned against the module by tests/test_skill_names_the_research_surface.py.
     "16 research tools",
     "**16** tools for regulatory-filings research",
-    # my own prose about the default/full overlap, in both READMEs
-    "16 tools are on both surfaces",
-    "两种工具集共有 16 个工具",
     # decomposition sub-counts, pinned by
     # test_the_default_surface_decomposes_as_the_docs_describe_it
     "3 `get_fr_*` guide tools",
@@ -322,6 +341,15 @@ _COUNT_BEARING_DOCS = (
     "skills/GETTING-STARTED.md",
     "skills/README.md",
 )
+
+
+def _occurrences(text: str, needle: str) -> list[int]:
+    """Every start offset of `needle` in `text`."""
+    out, start = [], text.find(needle)
+    while start != -1:
+        out.append(start)
+        start = text.find(needle, start + 1)
+    return out
 
 
 def test_no_count_phrasing_escapes_the_patterns(surfaces) -> None:
@@ -355,7 +383,26 @@ def test_no_count_phrasing_escapes_the_patterns(surfaces) -> None:
             # seen from a different starting offset.
             if any(lo < end and start < hi for start, end in spans):
                 continue
-            if any(ok in phrase or phrase in ok for ok in _NOT_A_SURFACE_COUNT):
+            # ⛔ THIS USED TO BE `ok in phrase or phrase in ok`, A SUBSTRING
+            # TEST, and SPECHT caught it (S3 on 9883152): the loose detector
+            # extracts only "16 tools", which is a substring of the allowlisted
+            # "16 tools are on both surfaces", so ANY "16 tools" claim anywhere
+            # was exempted — including a contradictory "The default surface has
+            # 16 tools". Reproduced: that sentence left the suite green.
+            #
+            # Same defect SPECHT caught on #198, where `filings_markdown_search`
+            # was satisfied by `filings_markdown_search_batch`. An allowlist
+            # matched by substring exempts more than it names.
+            #
+            # Now positional: the allowlisted phrase must actually occur in the
+            # document at a span covering this match.
+            if any(
+                any(
+                    occurrence <= lo and hi <= occurrence + len(ok)
+                    for occurrence in _occurrences(text, ok)
+                )
+                for ok in _NOT_A_SURFACE_COUNT
+            ):
                 continue
             unrecognised.append((relpath, phrase))
     assert not unrecognised, (
