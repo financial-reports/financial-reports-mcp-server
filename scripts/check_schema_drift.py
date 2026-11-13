@@ -59,6 +59,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from generate_mcp_tools import (  # noqa: E402  (deliberate post-sys.path import)
     _PRUNED_EXCLUDE,
+    _REPLACED_BY_SYNTHETIC,
     SCHEMA_URL,
     snake_case,
 )
@@ -147,13 +148,14 @@ def joins_default_surface(
     (pruned) surface, or ``None`` if it would not be served there.
 
     This is the denylist consequence spelled out: presence in
-    ``_PRUNED_EXCLUDE`` is the *only* thing that keeps an operation off the
-    curated surface.
+    ``_PRUNED_EXCLUDE`` keeps an operation off the curated surface, and so does
+    ``_REPLACED_BY_SYNTHETIC`` (an operation a hand-built tool serves instead,
+    skipped on every surface).
     """
     if method.lower() not in TOOL_METHODS:
         return None
     func_name = default_surface_tool_name(operation)
-    if func_name is None or func_name in _PRUNED_EXCLUDE:
+    if func_name is None or func_name in _PRUNED_EXCLUDE or func_name in _REPLACED_BY_SYNTHETIC:
         return None
     return func_name
 
