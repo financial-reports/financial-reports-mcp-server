@@ -404,3 +404,82 @@ def test_the_readme_does_not_oversell_corpus_search_coverage(
         assert overclaim not in row, (
             f"{relpath} claims filings_search covers {overclaim!r}; it does not"
         )
+
+
+# Each README's "Feature overview" table gives a per-domain tool count. The
+# domain is derivable from the tool NAME, so these are checked individually
+# rather than only summed -- a sum is blind to a compensating pair of errors
+# (Filings 6->5 with ISINs 2->3 keeps the total at 19), and regrouping is
+# exactly the kind of edit that produces one.
+_DOMAIN_PREFIXES: dict[str, tuple[str, ...]] = {
+    "Companies": ("companies_",),
+    "Filings": ("filings_",),
+    "ISINs": ("isins_",),
+    # singular `filing_*`: the two reference-taxonomy lookups
+    "Reference taxonomy": ("filing_types_", "filing_categories_"),
+    "Account": ("usage_",),
+    "Guides": ("get_fr_",),
+}
+
+#: Row label in each README, in the same order as the English table.
+_DOMAIN_ROW_LABELS: dict[str, dict[str, str]] = {
+    "README.md": {k: k for k in _DOMAIN_PREFIXES},
+    "README.zh-CN.md": {
+        "Companies": "公司",
+        "Filings": "公告",
+        "ISINs": "ISIN",
+        "Reference taxonomy": "参考分类",
+        "Account": "账户",
+        "Guides": "指南",
+    },
+}
+
+
+@pytest.mark.parametrize("relpath", sorted(_DOMAIN_ROW_LABELS))
+def test_the_readme_domain_table_matches_the_generated_surface(
+    surfaces, relpath: str
+) -> None:
+    """The per-domain breakdown, not just the headline total.
+
+    SPECHT caught this (S3 on `634e801`) and it is the sharpest of the series,
+    because THE DOMAIN TABLE IS WHERE THIS PR'S ORIGINAL DEFECT LIVED: the row
+    read "Filings 4" while the surface served 6. I corrected the row, gated the
+    headline, and left the row itself unchecked -- so the exact cell that
+    carried the bug could go stale again with the suite green. Reproduced:
+    setting Filings back to 5 left all 15 tests passing.
+
+    Checked per domain rather than by sum, since a sum cannot see a
+    compensating pair (Filings 6->5 with ISINs 2->3 still totals 19), and
+    regrouping tools between domains is precisely the edit that would produce
+    one. The sum is asserted too, which catches a domain being dropped from the
+    table entirely.
+    """
+    default = surfaces["default"]
+    text = _doc(relpath)
+    labels = _DOMAIN_ROW_LABELS[relpath]
+
+    documented: dict[str, int] = {}
+    for domain, label in labels.items():
+        match = re.search(rf"^\|\s*{re.escape(label)}\s*\|\s*(\d+)\s*\|", text, re.M)
+        assert match, (
+            f"{relpath} has no domain row labelled {label!r}. If the table was "
+            f"restructured, update _DOMAIN_ROW_LABELS rather than deleting this "
+            f"expectation -- an unparsed table is an unchecked one."
+        )
+        documented[domain] = int(match.group(1))
+
+    for domain, prefixes in _DOMAIN_PREFIXES.items():
+        actual = sum(
+            1 for name in default if name.startswith(prefixes)
+        )
+        assert documented[domain] == actual, (
+            f"{relpath}'s {labels[domain]!r} row says {documented[domain]}; the "
+            f"default surface has {actual} tool(s) matching {prefixes}: "
+            f"{sorted(n for n in default if n.startswith(prefixes))}"
+        )
+
+    assert sum(documented.values()) == len(default), (
+        f"{relpath}'s domain rows sum to {sum(documented.values())} but the "
+        f"default surface has {len(default)} tools. A domain is missing from "
+        f"the table, or a tool belongs to none of {sorted(_DOMAIN_PREFIXES)}."
+    )
