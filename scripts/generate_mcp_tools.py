@@ -1855,6 +1855,8 @@ def _retry_delay(status: int, body_text: str, retry_after: str) -> Optional[floa
             return None
     elif status not in _RETRY_STATUSES:
         return None
+    elif status == 503 and _is_search_too_slow(body_text):
+        return None  # the same heavy search would fail again, at the node's expense
     if retry_after:
         wait = float(int(retry_after))
         return wait if wait <= _RETRY_AFTER_MAX else None
@@ -2170,6 +2172,7 @@ class UpstreamHTTPError(RuntimeError):
         #   "spend_ceiling_monthly" — 429, PAYG monthly self-serve ceiling
         #   "burst_limit"           — 429, too many requests per minute
         #   "rate_limited"          — 429 we could not classify (retry advice)
+        #   "search_too_slow"       — 503, a full-text search too heavy to answer in time
         #   "transient"             — HTTP 5xx
         #   "unknown"               — anything else
         self.error_kind = error_kind
@@ -2570,11 +2573,21 @@ def _classify_upstream_error(status: int, body_text: str) -> str:
         return "expired_token"
     if status == 429:
         return _classify_upstream_429(body_text)
+    if status == 503 and _is_search_too_slow(body_text):
+        return "search_too_slow"
     if status >= 500:
         return "transient"
     if status == 404:
         return _classify_upstream_404(body_text)
     return "unknown"
+
+
+def _is_search_too_slow(body_text: str) -> bool:
+    """A 503 from GET /filings/search/ (web cross_search.SearchTooSlow): the
+    search's filters and matches make it too heavy to answer in time. Not
+    transient: the same search fails the same way, so it is not retried."""
+    payload = _parse_upstream_json(body_text) or {}
+    return payload.get("type") == "search_too_slow"
 
 
 def _classify_upstream_404(body_text: str) -> str:
@@ -2736,9 +2749,16 @@ def _upstream_hint(
                 "The search service is busy: too many full-text searches are "
                 "running right now. This is not "
                 "an account limit and nothing was billed: retry shortly, running "
-                "at most two searches at a time." + wait
+                "at most three searches at a time." + wait
             )
         return "Rate limited by the FinancialFilings API — wait a moment and retry." + wait
+    if status == 503 and error_kind == "search_too_slow":
+        return (
+            "This search is too heavy to answer in time, so retrying the same "
+            "search will not help. Narrow the queries or add filters (a country, "
+            "a type, a release-date range), or lower max_results, then search "
+            "again. Nothing was billed."
+        )
     if status >= 500:
         # The server already retried once before surfacing this (see _api_get),
         # so do not tell the caller to retry immediately — that would be a third
@@ -6347,7 +6367,7 @@ async def filings_search(
     `max_results` (default 1000): how many matches, best first, the search keeps;
     count, pages, ordering and group_by cover only those. Enterprise and
     pay-as-you-go plans may raise it to 10000; other plans may only lower it (a
-    higher value is refused with the plan's limit). Raise it for broad screens and
+    higher value is lowered to the plan's limit, and the result says so). Raise it for broad screens and
     "how many companies / filings" questions. It costs nothing extra per page, but
     a larger value is slower and more likely to stop early.
     `ordering`: relevance (default), or release_datetime, added_to_platform, id,
@@ -6454,6 +6474,13 @@ async def filings_search(
             if isinstance(entry, dict) and isinstance(entry.get("note"), str)
             and entry["note"].strip()
         ]
+        # What the endpoint changed about the request (web#10232, #10233): a
+        # max_results lowered to the plan's limit, or a long query relaxed to
+        # most of its words. On every answer, empty ones too.
+        for key in ("max_results_note", "relaxed_note"):
+            note = search.get(key)
+            if isinstance(note, str) and note.strip():
+                type_notes.append("Search note: " + sanitize_error_detail(note, max_len=400))
         type_tail = "".join("\\n" + note for note in type_notes)
         if not results and stopped_early and page_no == 1:
             return (
@@ -6570,7 +6597,7 @@ async def filings_search(
                     f"can be returned. To see the rest, {raise_cap}narrow the queries "
                     "or filters."
                 )
-        lines.extend(type_notes)
+        lines.extend(type_notes)  # type notes, then search notes (relaxed = near matches)
         if payload.get("next"):
             lines.append(f"More results: call again with page={page_no + 1}.")
         parts: list[str] = []
