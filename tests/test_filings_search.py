@@ -1125,3 +1125,25 @@ def test_the_generated_search_operation_is_never_a_second_tool(mcp_module) -> No
     source = path.read_text()
     assert "            if func_name in _REPLACED_BY_SYNTHETIC:\n                continue" in source
     assert "filings_search_list" not in mcp_module.mcp._tool_manager._tools
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("page", "scan_complete", "lead"), [
+    (1, True, "No filing matched"),
+    (1, False, "No visible filing found"),
+    (2, True, "No results on page 2"),
+])
+async def test_an_empty_page_keeps_the_type_note(
+    mcp_module, monkeypatch, fake_access_token, respx_router, page, scan_complete, lead
+):
+    """An empty 8-K search must still say the mapping may miss some 8-K filings, or it
+    reads as an absence (SPECHT on #204, 3/3)."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([], count=0, scan_complete=scan_complete, capped=not scan_complete)
+    note = "Some 8-K filings are classified under a more specific type, which is not included."
+    body["search"]["types_resolved"] = [{"param": "types", "requested": "8-K", "types": ["ER", "RNS"],
+                                         "widens": True, "may_miss": True, "note": note}]
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["going concern"], "types": "8-K", "page": page})
+    assert out.startswith(lead)
+    assert out.endswith("Type note: " + note)

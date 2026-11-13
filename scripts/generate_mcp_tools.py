@@ -6443,6 +6443,18 @@ async def filings_search(
         stopped_early = scan_complete is False or (
             scan_complete is None and bool(search.get("capped"))
         )
+        # A form name sent as a type (10-Q, 8-K) is searched as the type(s) its
+        # filings are filed under; the endpoint says so (search.types_resolved,
+        # web#10008), on empty pages too. An agent that is not told would
+        # present every earnings release as an 8-K, or report an absence the
+        # mapping may have caused ("may miss" some filings of that form).
+        type_notes = [
+            "Type note: " + sanitize_error_detail(entry["note"], max_len=400)
+            for entry in (search.get("types_resolved") or [])
+            if isinstance(entry, dict) and isinstance(entry.get("note"), str)
+            and entry["note"].strip()
+        ]
+        type_tail = "".join("\\n" + note for note in type_notes)
         if not results and stopped_early and page_no == 1:
             return (
                 f"No visible filing found for {shown} in the part of the index this "
@@ -6450,7 +6462,7 @@ async def filings_search(
                 "matching filings may still exist: this is NOT an absence. Narrow "
                 "the queries or add filters (company, country, type, dates) and "
                 "search again. Nothing was billed."
-            )
+            ) + type_tail
         if not results:
             if page_no > 1:
                 # Past the last page. Only say earlier pages hold results when
@@ -6471,12 +6483,12 @@ async def filings_search(
                 return (
                     f"No results on page {page_no} for {shown}. {where}"
                     f"{caveat} This page was not billed."
-                )
+                ) + type_tail
             return (
                 f"No filing matched {shown} within these filters (searched: filings "
                 "with extracted text, the first 20 MB of each). Nothing was billed. "
                 "Try translations or synonyms as extra queries, or widen the filters."
-            )
+            ) + type_tail
         # The cap this request was SERVED with (the endpoint echoes it), not the
         # one sent: an endpoint that ignored max_results served the default.
         cap = search.get("max_results") or _CROSS_SEARCH_DEFAULT_MAX_RESULTS
@@ -6558,14 +6570,7 @@ async def filings_search(
                     f"can be returned. To see the rest, {raise_cap}narrow the queries "
                     "or filters."
                 )
-        # A form name sent as a type (10-Q, 8-K) is searched as the type(s) its
-        # filings are filed under; the endpoint says so (search.types_resolved,
-        # web#10008). An agent that is not told would present, e.g., every
-        # earnings release as an 8-K.
-        for entry in search.get("types_resolved") or []:
-            note = entry.get("note") if isinstance(entry, dict) else None
-            if isinstance(note, str) and note.strip():
-                lines.append("Type note: " + sanitize_error_detail(note, max_len=400))
+        lines.extend(type_notes)
         if payload.get("next"):
             lines.append(f"More results: call again with page={page_no + 1}.")
         parts: list[str] = []
