@@ -6367,7 +6367,7 @@ async def filings_search(
     `max_results` (default 1000): how many matches, best first, the search keeps;
     count, pages, ordering and group_by cover only those. Enterprise and
     pay-as-you-go plans may raise it to 10000; other plans may only lower it (a
-    higher value is refused with the plan's limit). Raise it for broad screens and
+    higher value is lowered to the plan's limit, and the result says so). Raise it for broad screens and
     "how many companies / filings" questions. It costs nothing extra per page, but
     a larger value is slower and more likely to stop early.
     `ordering`: relevance (default), or release_datetime, added_to_platform, id,
@@ -6474,6 +6474,13 @@ async def filings_search(
             if isinstance(entry, dict) and isinstance(entry.get("note"), str)
             and entry["note"].strip()
         ]
+        # What the endpoint changed about the request (web#10232, #10233): a
+        # max_results lowered to the plan's limit, or a long query relaxed to
+        # most of its words. On every answer, empty ones too.
+        for key in ("max_results_note", "relaxed_note"):
+            note = search.get(key)
+            if isinstance(note, str) and note.strip():
+                type_notes.append("Search note: " + sanitize_error_detail(note, max_len=400))
         type_tail = "".join("\\n" + note for note in type_notes)
         if not results and stopped_early and page_no == 1:
             return (
@@ -6590,14 +6597,7 @@ async def filings_search(
                     f"can be returned. To see the rest, {raise_cap}narrow the queries "
                     "or filters."
                 )
-        lines.extend(type_notes)
-        # What the endpoint changed about the request (web#10232, #10233): a
-        # max_results lowered to the plan's limit, or a long query relaxed to
-        # most of its words. Relaxed results are near matches, not exact ones.
-        for key in ("max_results_note", "relaxed_note"):
-            note = search.get(key)
-            if isinstance(note, str) and note.strip():
-                lines.append("Search note: " + sanitize_error_detail(note, max_len=400))
+        lines.extend(type_notes)  # type notes, then search notes (relaxed = near matches)
         if payload.get("next"):
             lines.append(f"More results: call again with page={page_no + 1}.")
         parts: list[str] = []

@@ -1194,3 +1194,18 @@ async def test_the_endpoints_search_notes_reach_the_model(
     out = await _call(mcp_module, {"queries": ["a b c d e f"]})
     assert "Search note: Asked for 2000 results; your plan allows up to 1000" in out
     assert "Search note: No filing contained every word" in out
+
+
+
+@pytest.mark.asyncio
+async def test_an_empty_page_keeps_the_search_notes(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """A lowered cap on a search with no matches must still be reported (SPECHT on #205, 3/3)."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([], count=0, scan_complete=True)
+    body["search"]["max_results_note"] = "Asked for 2000 results; your plan allows up to 1000, so 1000 were searched."
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["going concern"], "max_results": 2000})
+    assert out.startswith("No filing matched")
+    assert out.endswith("Search note: Asked for 2000 results; your plan allows up to 1000, so 1000 were searched.")
