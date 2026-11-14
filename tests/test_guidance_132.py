@@ -79,8 +79,15 @@ async def test_markdown_offset_past_end_header_is_not_an_inverted_range(
 ) -> None:
     at = fake_access_token(client_id=TEST_CLIENT_ID, token="real-access-token")
     monkeypatch.setattr(mcp_module, "get_access_token", lambda: at)
+    # #175: the tool now WINDOWS upstream, so a past-EOF request gets an EMPTY
+    # body plus the paging headers. The previous mock returned 500 characters
+    # for offset=600 — a response the windowed endpoint cannot produce, so the
+    # test was asserting correct behaviour against an impossible input. The
+    # assertions below are unchanged; only the shape of the server's reply is.
     respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
-        return_value=httpx.Response(200, text="x" * 500)
+        return_value=httpx.Response(
+            200, text="", headers={"X-Total-Chars": "500", "X-Offset": "500"}
+        )
     )
     tool = mcp_module.mcp._tool_manager._tools["filings_markdown_retrieve"]
     fn = getattr(tool, "fn", None) or getattr(tool, "function", None)

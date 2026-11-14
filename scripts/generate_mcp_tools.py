@@ -495,6 +495,9 @@ if DEV_MODE_API_KEY:
 # balloons replica memory. The user-facing `limit` is far below this; this
 # is a defence-in-depth cap against runaway/malformed upstream responses.
 _MAX_FILING_BYTES = 10_000_000
+#: Upstream's own window ceiling (markdown_window.MAX_WINDOW_CHARS). Sending more
+#: is a 400, so a caller's over-large `limit` is clamped rather than rejected.
+_MAX_WINDOW_CHARS = 200_000
 # Claude.ai's documented tool-result ceiling, covering the WHOLE result. One
 # constant for both reading tools: filings_markdown_retrieve clamps `limit` to
 # it, and the batch search budgets its hit detail against it. It was a bare
@@ -4492,9 +4495,24 @@ async def {{ func_name }}(
 
         url = f"/filings/{filing_id}/markdown/"
 
-        # Stream so we never buffer more than _MAX_FILING_BYTES into memory,
-        # even when the upstream body is much larger than the user's slice.
-        async with _api_stream_get(url) as response:
+        # #175: WINDOW UPSTREAM instead of downloading the document and slicing
+        # locally. The endpoint takes a CHARACTER offset/limit and returns its
+        # own paging headers, so the old _MAX_FILING_BYTES buffer is gone with
+        # the bug it caused: #166 moved filings_markdown_search server-side, to
+        # the WHOLE document, while this tool still stopped at 10 MB -- so search
+        # could hand back an offset this tool reported as past the end. Measured
+        # in prod: 1,586 filings exceed the old cap, the largest at 2.49 GB.
+        # Characters here and characters there, so the search tool's three-band
+        # char-vs-byte reachability caveat stops being needed at all.
+        # `limit` is already clamped to _MAX_RESULT_CHARS above, which is below
+        # upstream's _MAX_WINDOW_CHARS ceiling, so no second clamp is needed. A
+        # `min()` here was dead code -- it could never bite -- and the test that
+        # "guarded" it could never fail. The relationship is asserted instead, in
+        # test_limit_is_clamped_to_what_upstream_accepts, so raising
+        # _MAX_RESULT_CHARS past the ceiling fails there rather than 400ing live.
+        params = {"offset": offset, "limit": limit}
+
+        async with _api_stream_get(url, params=params) as response:
             if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
                 _raise_upstream_text_error(
@@ -4502,18 +4520,20 @@ async def {{ func_name }}(
                 )
 
             buf = bytearray()
-            truncated_upstream = False
             async for chunk in response.aiter_bytes():
-                if len(buf) + len(chunk) > _MAX_FILING_BYTES:
-                    take = _MAX_FILING_BYTES - len(buf)
-                    if take > 0:
-                        buf.extend(chunk[:take])
-                    truncated_upstream = True
-                    break
                 buf.extend(chunk)
+            # Read inside the context: the headers are the paging contract.
+            total_header = response.headers.get("X-Total-Chars")
+            has_more_upstream = response.headers.get("X-Next-Offset") is not None
 
-        full_text = buf.decode("utf-8", errors="replace")
-        total_length = len(full_text)
+        window_text = buf.decode("utf-8", errors="replace")
+        # A WINDOW CANNOT BE MEASURED FOR ITS DOCUMENT'S LENGTH. len(window_text)
+        # is the slice, so the total has to come from the header; falling back to
+        # the window length would silently report a 2 GB filing as 50k chars.
+        try:
+            total_length = int(total_header)
+        except (TypeError, ValueError):
+            total_length = offset + len(window_text)
         # Huge-filing conditional pointer: on the first chunk of a very long
         # filing, tell the model (in the RESULT) to search instead of paging it
         # all into context.
@@ -4526,7 +4546,7 @@ async def {{ func_name }}(
                 "query='<what you need, e.g. total revenue>') — it returns only the "
                 "matching passages with their offsets.\\n\\n"
             )
-        if offset >= total_length:
+        if not window_text and offset >= total_length:
             return (
                 f"--- MARKDOWN CONTENT (offset {offset} is past the end; the "
                 f"document has {total_length} chars) ---\\n"
@@ -4537,14 +4557,26 @@ async def {{ func_name }}(
             out = (
                 f"--- MARKDOWN CONTENT (chars {offset} to {end} of {total_length}) ---\\n"
             )
-            if end < total_length:
+            # More remains when ANY of three say so: the server's X-Next-Offset,
+            # the document total, or a local trim for the result ceiling. They
+            # agree on a conforming server; they diverge if X-Total-Chars says
+            # more while X-Next-Offset is absent, and the costs are ASYMMETRIC --
+            # trusting the absence alone stops early and loses content silently,
+            # while the union costs at most one extra call that returns
+            # empty-at-end. Mutation testing found this: the header-only form and
+            # the arithmetic-only form were indistinguishable under both of my
+            # first tests, which is what a surviving mutant is for.
+            #
+            # The next offset is always `end`, the boundary of what was actually
+            # RETURNED -- never X-Next-Offset, which describes the untrimmed
+            # window and would skip whatever the ceiling trimmed.
+            if (
+                has_more_upstream
+                or end < total_length
+                or end < offset + len(window_text)
+            ):
                 out += (
                     f"--- TRUNCATED. Call again with offset={end} to continue. ---\\n"
-                )
-            if truncated_upstream:
-                out += (
-                    f"--- WARNING: filing exceeds {_MAX_FILING_BYTES} bytes; "
-                    "tail was discarded. ---\\n"
                 )
             return _nav_hint + out + "\\n"
 
@@ -4554,7 +4586,7 @@ async def {{ func_name }}(
         # Iterate: trimming can ADD the "call again" line (a slice that reached
         # the end no longer does), which re-grows the prose. Shrink-only, so it
         # converges — two passes in practice, three is slack.
-        end_index = min(offset + limit, total_length)
+        end_index = offset + len(window_text)
         for _ in range(3):
             budget = _MAX_RESULT_CHARS - len(_prose(end_index))
             capped = min(end_index, offset + max(1, budget))
@@ -4562,7 +4594,7 @@ async def {{ func_name }}(
                 break
             end_index = capped
 
-        return _prose(end_index) + full_text[offset:end_index]
+        return _prose(end_index) + window_text[: end_index - offset]
     except UpstreamHTTPError:
         # See #104 — must stay an error, not become a successful string result.
         raise
