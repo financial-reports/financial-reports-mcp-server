@@ -356,12 +356,40 @@ async def test_markdown_retrieve_continuation_offset_matches_content_returned(
     """The budget must be applied before slicing: trimming the assembled result
     instead would leave offset=N pointing past what was returned, so the next
     call would skip the gap. Paging twice must reproduce the document exactly."""
+    import random
     import re
 
-    doc = "".join(chr(97 + (i % 26)) for i in range(200_000))
+    # ⛔ TWO DEFECTS IN THIS SETUP, BOTH EXPOSED BY #175 (SPECHT 3/3 on the PR):
+    #
+    # 1. The mock returned the WHOLE document regardless of `offset`/`limit`.
+    #    Harmless while the tool downloaded and sliced locally; wrong once it
+    #    windows upstream, because page two's reply is then a window starting at
+    #    `next_offset`.
+    # 2. The document was a repeating 26-character cycle, so the page-two probe
+    #    `doc[next_offset:next_offset + 100]` ALSO occurs inside page one.
+    #    Measured: `probe in doc[:next_offset]` is True. So the continuity
+    #    assertion passed no matter what page two contained -- it had stopped
+    #    discriminating rather than started failing.
+    #
+    # A random document makes the probe unique (measured: False), and the mock
+    # now serves the requested window with the paging headers.
+    random.seed(175)
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    doc = "".join(random.choice(alphabet) for _ in range(200_000))
     _auth_as(mcp_module, monkeypatch, fake_access_token)
+
+    def _window(request):
+        params = request.url.params
+        offset = int(params.get("offset", 0))
+        limit = int(params.get("limit", len(doc)))
+        end = min(offset + limit, len(doc))
+        headers = {"X-Total-Chars": str(len(doc)), "X-Offset": str(offset)}
+        if end < len(doc):
+            headers["X-Next-Offset"] = str(end)
+        return httpx.Response(200, text=doc[offset:end], headers=headers)
+
     respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
-        return_value=httpx.Response(200, text=doc)
+        side_effect=_window
     )
     tool = _text_tool(mcp_module, "filings_markdown_retrieve")
 

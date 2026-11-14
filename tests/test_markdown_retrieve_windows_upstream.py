@@ -201,3 +201,31 @@ async def test_a_total_that_says_more_wins_over_a_missing_next_offset(
         "absent; the remaining 4800 characters would be silently unreachable"
     )
     assert "offset=200" in out
+
+
+@pytest.mark.asyncio
+async def test_an_upstream_that_ignores_the_window_FAILS_rather_than_truncates(
+    mcp_module, respx_router
+) -> None:
+    """Removing the 10 MB slice cap must not remove the MEMORY guard with it.
+
+    SPECHT caught this 3/3: if an older upstream — or an intermediary — ignores
+    `offset`/`limit` and returns the whole document, the buffering loop takes
+    all of it, and the 2.49 GB filing this PR is about exhausts the replica.
+
+    It FAILS rather than truncating, because a short buffer would be handed to
+    the model as a complete window: a silent wrong answer, which is the failure
+    mode this whole PR exists to remove.
+    """
+    oversized = "x" * (150_000 * 4 + 20_000)
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
+        return_value=httpx.Response(
+            200, text=oversized, headers={"X-Total-Chars": str(len(oversized))}
+        )
+    )
+    out = await _fn(mcp_module)(filing_id=7, offset=0, limit=150_000)
+
+    assert "x" * 1000 not in out, (
+        "returned a truncated buffer as if it were a window"
+    )
+    assert "error" in out.lower() or "not honouring" in out.lower()
