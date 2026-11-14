@@ -4585,10 +4585,18 @@ async def {{ func_name }}(
         # would skip the passage actually asked for -- wrong content presented
         # as the right content. `X-Offset` is min(offset, total) upstream, so a
         # past-the-end request legitimately reports the total.
+        # ⛔ NO FALLBACK HERE EITHER. Defaulting a missing X-Offset to the
+        # REQUESTED offset lets an upstream bypass the check below by simply
+        # omitting the header -- the mismatch guard would then pass on exactly
+        # the response it exists to catch. A header-less reply is not a window.
         try:
             effective_offset = int(offset_header)
         except (TypeError, ValueError):
-            effective_offset = offset
+            raise UpstreamWindowIgnored(
+                "upstream returned no usable X-Offset, so there is nothing to "
+                "check the window's start against: this response cannot be "
+                "presented as the passage at the requested offset"
+            )
         if effective_offset != min(offset, total_length):
             raise UpstreamWindowIgnored(
                 f"requested offset {offset} but upstream answered from "
@@ -4651,6 +4659,21 @@ async def {{ func_name }}(
         # content from the right offset -- so it is CLAMPED rather than refused:
         # return what was asked for and let the continuation offset carry the
         # rest, instead of handing the model 50x the text it budgeted for.
+        # ⛔ AN EMPTY WINDOW BEFORE THE END CANNOT ADVANCE, AND ADVERTISING A
+        # CONTINUATION FOR IT IS AN INSTRUCTION TO LOOP FOREVER. With no
+        # characters returned, `end_index` stays at `offset`, so the result
+        # would read "Call again with offset=<the offset just requested>" --
+        # and a model following its own tool's instruction repeats the identical
+        # call indefinitely. Measured on the arithmetic before fixing it.
+        #
+        # Empty AT or PAST the end is the legitimate case and is handled above.
+        if not window_text and offset < total_length:
+            raise UpstreamWindowIgnored(
+                f"upstream returned an empty window at offset {offset} while "
+                f"reporting {total_length} characters: the window cannot "
+                "advance, so there is no continuation to offer"
+            )
+
         end_index = offset + min(len(window_text), limit)
         for _ in range(3):
             budget = _MAX_RESULT_CHARS - len(_prose(end_index))

@@ -326,3 +326,54 @@ async def test_an_over_returned_window_is_CLAMPED_not_refused(
     body = out.split("---\n\n", 1)[1] if "---\n\n" in out else out
     assert body.count("A") == 100, f"returned {body.count('A')} chars for limit=100"
     assert "offset=100" in out, "the continuation must resume at what was returned"
+
+
+@pytest.mark.asyncio
+async def test_a_missing_offset_header_cannot_BYPASS_the_mismatch_check(
+    mcp_module, respx_router
+) -> None:
+    """The guard added one commit ago had a hole: omit the header, skip the check.
+
+    Defaulting a missing `X-Offset` to the REQUESTED offset meant an upstream
+    could pass the mismatch guard by simply not sending the header — on exactly
+    the response the guard exists to catch.
+    """
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
+        return_value=httpx.Response(
+            200,
+            text="THE-BEGINNING-OF-THE-DOCUMENT",
+            headers={"X-Total-Chars": "900000"},  # no X-Offset
+        )
+    )
+    out = await _fn(mcp_module)(filing_id=7, offset=120_000, limit=1000)
+    assert "THE-BEGINNING-OF-THE-DOCUMENT" not in out
+    assert "error" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_an_empty_window_before_the_end_is_REFUSED_not_looped(
+    mcp_module, respx_router
+) -> None:
+    """An instruction to call the same offset forever.
+
+    With no characters returned, `end_index` stays at `offset`, so the result
+    read "Call again with offset=<the offset just requested>". A model
+    following its own tool's instruction repeats the identical call
+    indefinitely. Verified on the arithmetic before fixing:
+
+        offset=1000 total=50000 window=0 -> end_index=1000, advertises more
+
+    Empty AT or PAST the end is the legitimate case and stays valid — see
+    test_a_past_the_end_offset_is_still_allowed.
+    """
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
+        return_value=httpx.Response(
+            200, text="", headers={"X-Total-Chars": "50000", "X-Offset": "1000"}
+        )
+    )
+    out = await _fn(mcp_module)(filing_id=7, offset=1000, limit=5000)
+
+    assert "offset=1000" not in out, (
+        "told the caller to repeat the identical request — an infinite loop"
+    )
+    assert "error" in out.lower()
