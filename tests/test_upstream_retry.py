@@ -224,7 +224,14 @@ async def test_stream_tool_retries_transient_status(
     route = respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
         side_effect=[
             httpx.Response(503, text="blip"),
-            httpx.Response(200, text="# Filing body"),
+            # #175: a successful markdown reply is a WINDOW and carries its
+            # paging headers. The retry behaviour under test is unchanged; the
+            # mock is updated so the second reply is one the endpoint can send.
+            httpx.Response(
+                200,
+                text="# Filing body",
+                headers={"X-Total-Chars": "13", "X-Offset": "0"},
+            ),
         ]
     )
 

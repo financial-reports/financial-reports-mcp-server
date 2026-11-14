@@ -229,3 +229,100 @@ async def test_an_upstream_that_ignores_the_window_FAILS_rather_than_truncates(
         "returned a truncated buffer as if it were a window"
     )
     assert "error" in out.lower() or "not honouring" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_reply_without_the_total_header_is_REFUSED(
+    mcp_module, respx_router
+) -> None:
+    """There is no safe fallback for a missing total (SPECHT 3/3).
+
+    Deriving it from the body makes a short HTML error page — or a legacy
+    whole-document reply — look like a complete filing with nothing after it:
+    no continuation offered, and the rest silently unreachable. That is the
+    failure this PR exists to remove, reintroduced by a convenience fallback.
+    """
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
+        return_value=httpx.Response(200, text="<html>gateway error</html>")
+    )
+    out = await _fn(mcp_module)(filing_id=7, offset=0, limit=50_000)
+
+    assert "gateway error" not in out, "an error page was presented as filing content"
+    assert "not a window" in out.lower() or "error" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_window_that_starts_somewhere_ELSE_is_REFUSED(
+    mcp_module, respx_router
+) -> None:
+    """Wrong content presented as the right content — the worst of the four.
+
+    An upstream that ignores `offset` returns the document's BEGINNING. Without
+    this check it is labelled "chars 120000 onward" and the continuation offset
+    skips the passage actually requested, so the model reads the wrong text and
+    is told it is the right text.
+    """
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
+        return_value=httpx.Response(
+            200,
+            text="THE-BEGINNING-OF-THE-DOCUMENT",
+            headers={"X-Total-Chars": "900000", "X-Offset": "0"},  # ignored offset
+        )
+    )
+    out = await _fn(mcp_module)(filing_id=7, offset=120_000, limit=1000)
+
+    assert "THE-BEGINNING-OF-THE-DOCUMENT" not in out, (
+        "the document's beginning was presented as the passage at offset 120000"
+    )
+    # The caller-facing error is deliberately OPAQUE (_safe_error), so assert
+    # that it is an error rather than looking for the offset in it. Asserting
+    # the detail would pin a leak we do not want.
+    assert "error" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_past_the_end_offset_is_still_allowed(
+    mcp_module, respx_router
+) -> None:
+    """The control for the check above, so it cannot overshoot.
+
+    Upstream reports `X-Offset: min(offset, total)`, so a past-the-end request
+    legitimately answers with the total. Rejecting that as a mismatch would
+    break the documented behaviour the #107 test pins.
+    """
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
+        return_value=httpx.Response(
+            200, text="", headers={"X-Total-Chars": "500", "X-Offset": "500"}
+        )
+    )
+    out = await _fn(mcp_module)(filing_id=7, offset=600, limit=1000)
+    assert "past the end" in out
+    assert "not honouring" not in out
+
+
+@pytest.mark.asyncio
+async def test_an_over_returned_window_is_CLAMPED_not_refused(
+    mcp_module, respx_router
+) -> None:
+    """Over-returning is the benign violation, so it is clamped, not rejected.
+
+    The content is the right content from the right offset — there is just more
+    of it than the caller budgeted for. Returning 50x the requested text is a
+    real cost to the caller's context; refusing it would be worse, since the
+    data is usable. So: clamp, and let the continuation carry the rest.
+    """
+    respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
+        return_value=httpx.Response(
+            200,
+            text="A" * 5000,
+            headers={"X-Total-Chars": "5000", "X-Offset": "0"},
+        )
+    )
+    out = await _fn(mcp_module)(filing_id=7, offset=0, limit=100)
+
+    # Count the BODY, not the whole result: the prose contains "MARKDOWN" and
+    # "TRUNCATED", which carry an "A" each — the first version of this assertion
+    # read 102 and blamed the clamp.
+    body = out.split("---\n\n", 1)[1] if "---\n\n" in out else out
+    assert body.count("A") == 100, f"returned {body.count('A')} chars for limit=100"
+    assert "offset=100" in out, "the continuation must resume at what was returned"

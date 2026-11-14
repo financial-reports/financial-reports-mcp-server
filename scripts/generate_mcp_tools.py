@@ -4553,16 +4553,48 @@ async def {{ func_name }}(
                     )
             # Read inside the context: the headers are the paging contract.
             total_header = response.headers.get("X-Total-Chars")
+            offset_header = response.headers.get("X-Offset")
             has_more_upstream = response.headers.get("X-Next-Offset") is not None
 
         window_text = buf.decode("utf-8", errors="replace")
-        # A WINDOW CANNOT BE MEASURED FOR ITS DOCUMENT'S LENGTH. len(window_text)
-        # is the slice, so the total has to come from the header; falling back to
-        # the window length would silently report a 2 GB filing as 50k chars.
+
+        # ⛔ VERIFY THE WINDOW CONTRACT INSTEAD OF ASSUMING IT (SPECHT 3/3 x3).
+        # The byte bound above already refuses a response that is grossly too
+        # large, and stopping there was inconsistent: it defended against the
+        # upstream that ignores `limit` by a factor of a thousand and trusted
+        # the one that ignores it by a factor of fifty. Every check below is a
+        # way a 200 can be a NON-window, and each would otherwise be presented
+        # to the model as filing content at an offset it never had.
+        #
+        # A WINDOW CANNOT BE MEASURED FOR ITS DOCUMENT'S LENGTH, so there is no
+        # safe fallback for a missing total: deriving it from the body makes a
+        # short HTML error page, or a legacy whole-document reply, look like a
+        # complete filing with nothing after it -- no continuation offered, and
+        # the rest silently unreachable. Fail instead.
         try:
             total_length = int(total_header)
         except (TypeError, ValueError):
-            total_length = offset + len(window_text)
+            raise UpstreamWindowIgnored(
+                "upstream returned no usable X-Total-Chars, so this response is "
+                "not a window: its length cannot be distinguished from the "
+                "document's"
+            )
+
+        # An upstream that ignores `offset` returns the document's BEGINNING,
+        # which would be labelled "chars <offset> onward" and whose continuation
+        # would skip the passage actually asked for -- wrong content presented
+        # as the right content. `X-Offset` is min(offset, total) upstream, so a
+        # past-the-end request legitimately reports the total.
+        try:
+            effective_offset = int(offset_header)
+        except (TypeError, ValueError):
+            effective_offset = offset
+        if effective_offset != min(offset, total_length):
+            raise UpstreamWindowIgnored(
+                f"requested offset {offset} but upstream answered from "
+                f"{effective_offset}: it is not honouring the window, and the "
+                "body is not the passage that was asked for"
+            )
         # Huge-filing conditional pointer: on the first chunk of a very long
         # filing, tell the model (in the RESULT) to search instead of paging it
         # all into context.
@@ -4615,7 +4647,11 @@ async def {{ func_name }}(
         # Iterate: trimming can ADD the "call again" line (a slice that reached
         # the end no longer does), which re-grows the prose. Shrink-only, so it
         # converges — two passes in practice, three is slack.
-        end_index = offset + len(window_text)
+        # Upstream over-returning is not fatal -- the content is still the right
+        # content from the right offset -- so it is CLAMPED rather than refused:
+        # return what was asked for and let the continuation offset carry the
+        # rest, instead of handing the model 50x the text it budgeted for.
+        end_index = offset + min(len(window_text), limit)
         for _ in range(3):
             budget = _MAX_RESULT_CHARS - len(_prose(end_index))
             capped = min(end_index, offset + max(1, budget))
