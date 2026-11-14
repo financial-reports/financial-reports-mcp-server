@@ -296,6 +296,11 @@ Once connected, try:
 - *"Show me insider-transaction filings at Tesla in the last 30 days."*
 - *"Show the latest filings from companies on my watchlist."*
 - *"What's the LEI for Volkswagen AG?"*
+- *"Summarise Toyota's latest annual report and link the filing it came from."*
+- *"Compare Samsung Electronics' and SK hynix's revenue and operating profit over the last three years, with the source filing for each number."*
+- *"What did Infosys say about its outlook in its latest annual report? Quote the passage and link the filing."*
+- *"Show Petrobras' total debt and cash for the last five fiscal years, each linked to its filing."*
+- *"Which companies disclosed a cyberattack or ransomware incident in the last 90 days? Search in English, German and French, and link each filing."*
 
 ---
 
