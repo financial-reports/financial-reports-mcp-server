@@ -1,6 +1,6 @@
 # FinancialFilings MCP — Tool Cheatsheet
 
-46 tools across 9 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
+50 tools across 10 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
 
 Note on surface size: only a curated subset is exposed by default (`companies_*`, `filings_*`, `isins_*`, plus the guide tools and in-filing search). The rest — ISIC, reference data, watchlists, webhooks — require `MCP_FULL_SURFACE=1` on the server. If a tool below isn't in your `tools/list`, that's why.
 
@@ -60,7 +60,7 @@ Returns: `id`, `shell_id`, `canonical_id`, `shell_name`, `canonical_name`, `patt
 
 Pitfall: `reversed_at` being set means the merge was undone — do not follow `canonical_id` in that case.
 
-## Filings (4)
+## Filings (7)
 
 ### `filings_list`
 List filings across companies. **outputSchema-advertised**.
@@ -91,6 +91,60 @@ Filing content as markdown, in pages.
 Key params: `filing_id`, `offset` (default 0), `limit` (default 50,000 characters; capped at 150,000 per call).
 
 Pitfall: a long filing (300-page 10-K, ESEF annual report) does not fit in one call. When the response contains the truncation marker, call again with the `offset` it gives you. Stop as soon as you have the section you need (or use `filings_markdown_search` to jump to it) rather than paging the whole document. For the raw file, use `document` from `filings_retrieve` (there is no pdf_url field).
+
+### `filings_search`
+Full-text search across the text of EVERY filing — the corpus-wide "which filings / which companies mention X" tool. Nothing else here answers that question.
+
+Key params: `queries` (1-5 phrases, OR-ed, each at most 200 chars; a single `query` string is also accepted), `company` / `companies` (up to 50 internal ids), `include_predecessors`, `countries`, `languages`, `types` (comma-separated filing-type CODES), `release_datetime_from` / `_to`, `added_to_platform_from` / `_to`, `ordering`, `max_results` (1-10,000, default 1,000), `group_by`, `page`, `page_size`.
+
+Returns: matching filings with snippets showing where the text matched (only the first 10 results of a page carry snippets). `group_by="company"` returns one row per company instead — country, ISIN, matching-filing count, first and last release date, best filing — counted over the first `max_results` matches only, with no ordering and no snippets.
+
+Pitfall: `types` takes FinancialFilings codes, NOT SEC form names — `S-1`, `13F-HR` and `424B5` are not codes and are rejected. Call `get_fr_filing_type_taxonomy` to translate. Filings are in many languages, so pass the term AND its translations as separate entries; an English query and its native-language phrasing find different filings. Fiscal year and period filters are NOT available here — use a release-date range. An empty result means no match among filings WITH extracted text, within the first 20 MB of each — unless the result says the search stopped early, in which case matches may exist.
+
+Cost: one Markdown request per page that returns at least one result (6 credits, 12 if any filing on the page is a premium type). A search with no results bills nothing; every page bills separately.
+
+### `filings_markdown_search`
+Search ONE filing's markdown and get back only the matching passages.
+
+Key params: `filing_id`, `query` (a SUBSTRING, at most 200 characters), `max_hits`.
+
+Returns: hits with ~440 characters of context each and a character `offset`. Within reach, that offset reads further around the hit via `filings_markdown_retrieve`.
+
+Pitfall: the offset is NOT always reachable. The server searches the whole document; `filings_markdown_retrieve` still stops at 10,000,000 bytes, so a hit past that names a passage this tool found and that one cannot fetch (1,586 filings in prod exceed the cap). The result SAYS which case you are in — read its NOTE rather than guessing, and when it says a hit is out of reach, use the ~440 characters of context here, which is the whole passage available. Tracked as #175; it disappears once retrieve windows on the API's own offset/limit.
+
+Pitfall: use this INSTEAD of paging a long filing, but only once you HAVE the filing — to find which filings say something, use `filings_search`. `query` is a substring, not a phrase matcher: search a distinctive phrase, not a whole passage.
+
+### `filings_markdown_search_batch`
+One query across SEVERAL filings you already hold, in a single call.
+
+Key params: `filing_ids` (max 20 per call), `query`, `max_hits_per_filing`.
+
+Returns: per-filing hits with character offsets, and outcomes reported SEPARATELY — matched, no match, searched only in part, not searched.
+
+Pitfall: it searches ONLY the filings you name, so a "no match" says nothing about filings outside your list — that question is `filings_search`'s. A filing can be BOTH matched and only partly searched: hits found before the byte cap are real, the tail past it is unknown. Do not read a partial search as an absence.
+
+## Guide tools (3)
+
+These take NO parameters. They exist because a tool-only MCP client cannot read MCP resources, so the same guidance is served both ways. Read the relevant one BEFORE filtering or screening — the codes are not guessable.
+
+### `get_fr_filing_type_taxonomy`
+The full 30-code filing-type taxonomy (codes, names, categories), plus the form-name translation table and the `DEF 14A` name collision.
+
+Key params: none.
+
+Pitfall: these are cross-jurisdiction codes, NOT form names. `S-1`, `13F-HR` and `424B5` are not codes; `10-K` is one (it also covers 20-F); and the code spelled `DEF 14A` does NOT hold DEF 14A proxy statements — those are `PSI`. Read this before passing `type`/`types` to `filings_list` or `types` to `filings_search`.
+
+### `get_fr_industry_classification_isic`
+The ISIC hierarchy (section / division / group / class) and the peer-screening recipe.
+
+Key params: none.
+
+Pitfall: there is no `isic_class` field — the 4-digit class is `sub_industry` / `sub_industry_code`.
+
+### `get_fr_markdown_fetch_strategy`
+When and how to fall back to `filings_markdown_retrieve`, including pagination and the `processing_status` caveat (a hint, not a gate).
+
+Key params: none.
 
 ## ISIC Classifications (8)
 

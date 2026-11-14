@@ -30,7 +30,8 @@ Full parameters in `references/tool-cheatsheet.md`.
 | Resolve many identifiers | `companies_resolve_create` (batch; beats a loop) |
 | ISIN → company | `isins_retrieve`; `isins_list` for dual listings |
 | Get filings | `filings_list` → `filings_retrieve` → `filings_markdown_retrieve` |
-| Search inside a filing | `filings_markdown_search` |
+| Which filings mention X | `filings_search` (full-text across the corpus) |
+| Search inside a filing | `filings_markdown_search`; `filings_markdown_search_batch` for one query across several filings |
 | Financials | `companies_financials_retrieve` |
 | Next report due | `companies_next_annual_report_retrieve` |
 | Filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` |
@@ -165,6 +166,14 @@ belongs on `source_filing_type`, not `type`.
   50k characters, at most 150k per call). On the truncation marker, call again
   with the `offset` it gives; stop once you have the section you need.
   `filings_retrieve` returns the original document URL.
+- **`search=` never matches filing TEXT.** `filings_list?search=` matches
+  filing titles and company names. `companies_list?search=` matches company
+  name, former names, ticker, and LEI/ISIN from the start — so `AAPL` or an
+  ISIN prefix is a valid lookup there. Neither searches inside a filing: for
+  "which filings mention X", use `filings_search`. Whitespace-separated terms
+  are AND-ed, NOT matched as a phrase, so `annual report` also matches
+  "Annual Interim Report"; boolean operators are not parsed, so `A AND B`
+  requires a literal `AND` too and finds nothing.
 - **Account status.** If a tool returns a gate response pointing at the
   FinancialFilings site, the account needs attention — surface the link and stop.
   Don't retry-loop.
