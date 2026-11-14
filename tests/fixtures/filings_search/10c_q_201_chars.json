@@ -1,0 +1,15 @@
+{
+ "recorded_at": "2026-11-06T07:09:17+00:00",
+ "note": null,
+ "query": "q=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+ "status": 400,
+ "headers": {
+  "Content-Type": "application/json; charset=utf-8"
+ },
+ "body": {
+  "detail": "At most 200 characters.",
+  "type": "invalid_q",
+  "resolution": "Pass q 1 to 5 times, each value 1-200 characters.",
+  "param": "q"
+ }
+}

@@ -6445,7 +6445,9 @@ async def filings_search(
                 return (
                     f"No results on page {page_no} for {shown}: "
                     f"{sanitize_error_detail(detail, max_len=_MAX_UPSTREAM_COPY)} "
-                    "Earlier pages hold the results. This page was not billed. "
+                    # No "earlier pages hold the results": prod recording 13 is
+                    # page 3 of a search that matched about 0.
+                    "This page was not billed. "
                     # The 404 carries no scan_complete, and an early-stopped
                     # search pages out the same way (SPECHT 2/3).
                     "A page past the end does not show that every candidate was "
