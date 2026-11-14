@@ -4686,6 +4686,15 @@ async def {{ func_name }}(
     except UpstreamHTTPError:
         # See #104 — must stay an error, not become a successful string result.
         raise
+    except UpstreamWindowIgnored:
+        # Same rule as #104, and I missed it when adding this class: falling
+        # through to _safe_error returns the message as a SUCCESSFUL tool
+        # result, so a client checking `isError` sees success while the filing
+        # content is missing. Measured through call_tool before fixing:
+        #     isError=False  content='Error calling filings_markdown_retrieve…'
+        # A refusal that reports itself as success is the silent-failure class
+        # this whole PR exists to remove.
+        raise
     except ToolInputError as exc:
         return _safe_error("filings_markdown_retrieve", exc)
     except Exception as exc:

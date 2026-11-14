@@ -223,12 +223,9 @@ async def test_an_upstream_that_ignores_the_window_FAILS_rather_than_truncates(
             200, text=oversized, headers={"X-Total-Chars": str(len(oversized))}
         )
     )
-    out = await _fn(mcp_module)(filing_id=7, offset=0, limit=150_000)
-
-    assert "x" * 1000 not in out, (
-        "returned a truncated buffer as if it were a window"
-    )
-    assert "error" in out.lower() or "not honouring" in out.lower()
+    with pytest.raises(mcp_module.UpstreamWindowIgnored) as exc:
+        await _fn(mcp_module)(filing_id=7, offset=0, limit=150_000)
+    assert "not honouring" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -245,10 +242,9 @@ async def test_a_reply_without_the_total_header_is_REFUSED(
     respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
         return_value=httpx.Response(200, text="<html>gateway error</html>")
     )
-    out = await _fn(mcp_module)(filing_id=7, offset=0, limit=50_000)
-
-    assert "gateway error" not in out, "an error page was presented as filing content"
-    assert "not a window" in out.lower() or "error" in out.lower()
+    with pytest.raises(mcp_module.UpstreamWindowIgnored) as exc:
+        await _fn(mcp_module)(filing_id=7, offset=0, limit=50_000)
+    assert "X-Total-Chars" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -269,15 +265,10 @@ async def test_a_window_that_starts_somewhere_ELSE_is_REFUSED(
             headers={"X-Total-Chars": "900000", "X-Offset": "0"},  # ignored offset
         )
     )
-    out = await _fn(mcp_module)(filing_id=7, offset=120_000, limit=1000)
-
-    assert "THE-BEGINNING-OF-THE-DOCUMENT" not in out, (
-        "the document's beginning was presented as the passage at offset 120000"
-    )
-    # The caller-facing error is deliberately OPAQUE (_safe_error), so assert
-    # that it is an error rather than looking for the offset in it. Asserting
-    # the detail would pin a leak we do not want.
-    assert "error" in out.lower()
+    with pytest.raises(mcp_module.UpstreamWindowIgnored) as exc:
+        await _fn(mcp_module)(filing_id=7, offset=120_000, limit=1000)
+    assert "THE-BEGINNING-OF-THE-DOCUMENT" not in str(exc.value)
+    assert "120000" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -345,9 +336,9 @@ async def test_a_missing_offset_header_cannot_BYPASS_the_mismatch_check(
             headers={"X-Total-Chars": "900000"},  # no X-Offset
         )
     )
-    out = await _fn(mcp_module)(filing_id=7, offset=120_000, limit=1000)
-    assert "THE-BEGINNING-OF-THE-DOCUMENT" not in out
-    assert "error" in out.lower()
+    with pytest.raises(mcp_module.UpstreamWindowIgnored) as exc:
+        await _fn(mcp_module)(filing_id=7, offset=120_000, limit=1000)
+    assert "X-Offset" in str(exc.value)
 
 
 @pytest.mark.asyncio
@@ -371,9 +362,44 @@ async def test_an_empty_window_before_the_end_is_REFUSED_not_looped(
             200, text="", headers={"X-Total-Chars": "50000", "X-Offset": "1000"}
         )
     )
-    out = await _fn(mcp_module)(filing_id=7, offset=1000, limit=5000)
+    with pytest.raises(mcp_module.UpstreamWindowIgnored) as exc:
+        await _fn(mcp_module)(filing_id=7, offset=1000, limit=5000)
+    assert "cannot advance" in str(exc.value)
 
-    assert "offset=1000" not in out, (
-        "told the caller to repeat the identical request — an infinite loop"
+
+@pytest.mark.asyncio
+async def test_a_refused_window_reaches_the_CLIENT_as_isError(
+    mcp_module, respx_router
+) -> None:
+    """The contract the direct-call tests above cannot see (SPECHT 1/3).
+
+    Every refusal in this file is raised, but what matters to a caller is what
+    `call_tool` reports. `UpstreamWindowIgnored` first fell through the generic
+    handler into `_safe_error`, which returns the message as a SUCCESSFUL tool
+    result — measured before fixing:
+
+        isError=False  content='Error calling filings_markdown_retrieve…'
+
+    So a client checking `isError` saw success while the filing content was
+    missing: a refusal reporting itself as a success, which is the exact
+    silent-failure class this PR exists to remove. The repo already codified
+    this for `UpstreamHTTPError` (#104) and I did not follow it when adding a
+    new exception class.
+
+    This goes through the real client, because the direct-call tests pass
+    either way — the string and the raise are indistinguishable to them.
+    """
+    from fastmcp import Client
+
+    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
+        return_value=httpx.Response(200, text="<html>gateway error</html>")
     )
-    assert "error" in out.lower()
+    async with Client(mcp_module.mcp) as client:
+        result = await client.call_tool(
+            "filings_markdown_retrieve", {"filing_id": 1}, raise_on_error=False
+        )
+
+    assert result.is_error is True, (
+        "a refused window was reported to the client as a SUCCESSFUL result"
+    )
+    assert "gateway error" not in str(result.content)
