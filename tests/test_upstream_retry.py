@@ -224,7 +224,14 @@ async def test_stream_tool_retries_transient_status(
     route = respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
         side_effect=[
             httpx.Response(503, text="blip"),
-            httpx.Response(200, text="# Filing body"),
+            # #175: a successful markdown reply is a WINDOW and carries its
+            # paging headers. The retry behaviour under test is unchanged; the
+            # mock is updated so the second reply is one the endpoint can send.
+            httpx.Response(
+                200,
+                text="# Filing body",
+                headers={"X-Total-Chars": "13", "X-Offset": "0"},
+            ),
         ]
     )
 
@@ -342,10 +349,32 @@ async def test_markdown_retrieve_result_never_exceeds_the_ceiling(
     """A full-size slice used to return ~150,055 chars: content clamped to the
     ceiling, then a header prepended on top, so the host truncated mid-content."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
-        return_value=httpx.Response(200, text="x" * doc_len)
-    )
+
+    # ⛔ THIS MOCK WAS HEADERLESS, AND #175's WINDOW CHECKS SILENTLY DISARMED
+    # THE TEST. Every one of the eight boundary cases began returning the same
+    # 69-character opaque error, so `len(out) <= 150000` passed on all of them
+    # while the #122 ceiling logic — the entire reason those eight values were
+    # chosen — was never reached. Measured before fixing:
+    #     doc_len=150055 -> len(out)=69 :: 'Error calling filings_markdown_...'
+    # The suite stayed green throughout.
+    def _window(request):
+        params = request.url.params
+        offset = int(params.get("offset", 0))
+        limit = int(params.get("limit", doc_len))
+        end = min(offset + limit, doc_len)
+        headers = {"X-Total-Chars": str(doc_len), "X-Offset": str(offset)}
+        if end < doc_len:
+            headers["X-Next-Offset"] = str(end)
+        return httpx.Response(200, text="x" * (end - offset), headers=headers)
+
+    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(side_effect=_window)
     out = await _text_tool(mcp_module, "filings_markdown_retrieve")(filing_id=1, limit=150000)
+
+    # The ceiling assertion is vacuous unless the call actually SUCCEEDED, which
+    # is how it went quiet in the first place. Assert that it reached content
+    # before measuring the content's size.
+    assert "MARKDOWN CONTENT" in out, f"never reached the sizing code: {out[:80]!r}"
+    assert "x" in out, "no filing content in the result"
     assert len(out) <= 150000, f"result is {len(out)} chars, over the ceiling"
 
 
@@ -356,12 +385,40 @@ async def test_markdown_retrieve_continuation_offset_matches_content_returned(
     """The budget must be applied before slicing: trimming the assembled result
     instead would leave offset=N pointing past what was returned, so the next
     call would skip the gap. Paging twice must reproduce the document exactly."""
+    import random
     import re
 
-    doc = "".join(chr(97 + (i % 26)) for i in range(200_000))
+    # ⛔ TWO DEFECTS IN THIS SETUP, BOTH EXPOSED BY #175 (SPECHT 3/3 on the PR):
+    #
+    # 1. The mock returned the WHOLE document regardless of `offset`/`limit`.
+    #    Harmless while the tool downloaded and sliced locally; wrong once it
+    #    windows upstream, because page two's reply is then a window starting at
+    #    `next_offset`.
+    # 2. The document was a repeating 26-character cycle, so the page-two probe
+    #    `doc[next_offset:next_offset + 100]` ALSO occurs inside page one.
+    #    Measured: `probe in doc[:next_offset]` is True. So the continuity
+    #    assertion passed no matter what page two contained -- it had stopped
+    #    discriminating rather than started failing.
+    #
+    # A random document makes the probe unique (measured: False), and the mock
+    # now serves the requested window with the paging headers.
+    random.seed(175)
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    doc = "".join(random.choice(alphabet) for _ in range(200_000))
     _auth_as(mcp_module, monkeypatch, fake_access_token)
+
+    def _window(request):
+        params = request.url.params
+        offset = int(params.get("offset", 0))
+        limit = int(params.get("limit", len(doc)))
+        end = min(offset + limit, len(doc))
+        headers = {"X-Total-Chars": str(len(doc)), "X-Offset": str(offset)}
+        if end < len(doc):
+            headers["X-Next-Offset"] = str(end)
+        return httpx.Response(200, text=doc[offset:end], headers=headers)
+
     respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/").mock(
-        return_value=httpx.Response(200, text=doc)
+        side_effect=_window
     )
     tool = _text_tool(mcp_module, "filings_markdown_retrieve")
 

@@ -495,6 +495,13 @@ if DEV_MODE_API_KEY:
 # balloons replica memory. The user-facing `limit` is far below this; this
 # is a defence-in-depth cap against runaway/malformed upstream responses.
 _MAX_FILING_BYTES = 10_000_000
+#: Upstream's own window ceiling (markdown_window.MAX_WINDOW_CHARS). Sending more
+#: is a 400, so a caller's over-large `limit` is clamped rather than rejected.
+_MAX_WINDOW_CHARS = 200_000
+#: Widest a VALID window can be on the wire: _MAX_RESULT_CHARS characters at the
+#: UTF-8 maximum of 4 bytes each, plus slack for the headers' own framing. Past
+#: this, upstream is not honouring `limit` and the body is not a window.
+_MAX_WINDOW_BYTES = 150_000 * 4 + 4096
 # Claude.ai's documented tool-result ceiling, covering the WHOLE result. One
 # constant for both reading tools: filings_markdown_retrieve clamps `limit` to
 # it, and the batch search budgets its hit detail against it. It was a bare
@@ -2140,6 +2147,14 @@ def _require_auth_context() -> None:
 
 class AuthenticationError(RuntimeError):
     """Raised by structured tools when authentication fails."""
+
+
+class UpstreamWindowIgnored(RuntimeError):
+    """Upstream returned more than a window's worth of bytes for a windowed GET.
+
+    Raised rather than truncated: a silently short buffer would be reported to
+    the model as a complete window.
+    """
 
 
 class UpstreamHTTPError(RuntimeError):
@@ -4492,28 +4507,102 @@ async def {{ func_name }}(
 
         url = f"/filings/{filing_id}/markdown/"
 
-        # Stream so we never buffer more than _MAX_FILING_BYTES into memory,
-        # even when the upstream body is much larger than the user's slice.
-        async with _api_stream_get(url) as response:
+        # #175: WINDOW UPSTREAM instead of downloading the document and slicing
+        # locally. The endpoint takes a CHARACTER offset/limit and returns its
+        # own paging headers, so the old _MAX_FILING_BYTES buffer is gone with
+        # the bug it caused: #166 moved filings_markdown_search server-side, to
+        # the WHOLE document, while this tool still stopped at 10 MB -- so search
+        # could hand back an offset this tool reported as past the end. Measured
+        # in prod: 1,586 filings exceed the old cap, the largest at 2.49 GB.
+        # Characters here and characters there, so the search tool's three-band
+        # char-vs-byte reachability caveat stops being needed at all.
+        # `limit` is already clamped to _MAX_RESULT_CHARS above, which is below
+        # upstream's _MAX_WINDOW_CHARS ceiling, so no second clamp is needed. A
+        # `min()` here was dead code -- it could never bite -- and the test that
+        # "guarded" it could never fail. The relationship is asserted instead, in
+        # test_limit_is_clamped_to_what_upstream_accepts, so raising
+        # _MAX_RESULT_CHARS past the ceiling fails there rather than 400ing live.
+        params = {"offset": offset, "limit": limit}
+
+        async with _api_stream_get(url, params=params) as response:
             if response.is_error:  # 4xx/5xx only — 204/206 are not failures
                 body = await response.aread()
                 _raise_upstream_text_error(
                     response, body[:_MAX_ERROR_BODY].decode("utf-8", errors="replace")
                 )
 
+            # ⛔ BOUND THE BUFFER. Removing the old _MAX_FILING_BYTES cap with
+            # the slicing it served would have taken the MEMORY guard with it:
+            # if an older upstream, or an intermediary, ignores `offset`/`limit`
+            # and returns the whole document, this loop buffers all of it, and
+            # the documented 2.49 GB filing exhausts the replica. The window is
+            # at most _MAX_RESULT_CHARS characters, so 4 bytes/char is the
+            # widest a valid UTF-8 window can be; anything past that is upstream
+            # not honouring the window.
+            #
+            # FAIL rather than truncate: a short buffer would be returned as a
+            # complete window, which is a silent wrong answer. (SPECHT 3/3.)
             buf = bytearray()
-            truncated_upstream = False
             async for chunk in response.aiter_bytes():
-                if len(buf) + len(chunk) > _MAX_FILING_BYTES:
-                    take = _MAX_FILING_BYTES - len(buf)
-                    if take > 0:
-                        buf.extend(chunk[:take])
-                    truncated_upstream = True
-                    break
                 buf.extend(chunk)
+                if len(buf) > _MAX_WINDOW_BYTES:
+                    raise UpstreamWindowIgnored(
+                        f"upstream returned more than {_MAX_WINDOW_BYTES} bytes "
+                        f"for a {limit}-character window: it is not honouring "
+                        "offset/limit, so the result cannot be trusted as a window"
+                    )
+            # Read inside the context: the headers are the paging contract.
+            total_header = response.headers.get("X-Total-Chars")
+            offset_header = response.headers.get("X-Offset")
+            has_more_upstream = response.headers.get("X-Next-Offset") is not None
 
-        full_text = buf.decode("utf-8", errors="replace")
-        total_length = len(full_text)
+        window_text = buf.decode("utf-8", errors="replace")
+
+        # ⛔ VERIFY THE WINDOW CONTRACT INSTEAD OF ASSUMING IT (SPECHT 3/3 x3).
+        # The byte bound above already refuses a response that is grossly too
+        # large, and stopping there was inconsistent: it defended against the
+        # upstream that ignores `limit` by a factor of a thousand and trusted
+        # the one that ignores it by a factor of fifty. Every check below is a
+        # way a 200 can be a NON-window, and each would otherwise be presented
+        # to the model as filing content at an offset it never had.
+        #
+        # A WINDOW CANNOT BE MEASURED FOR ITS DOCUMENT'S LENGTH, so there is no
+        # safe fallback for a missing total: deriving it from the body makes a
+        # short HTML error page, or a legacy whole-document reply, look like a
+        # complete filing with nothing after it -- no continuation offered, and
+        # the rest silently unreachable. Fail instead.
+        try:
+            total_length = int(total_header)
+        except (TypeError, ValueError):
+            raise UpstreamWindowIgnored(
+                "upstream returned no usable X-Total-Chars, so this response is "
+                "not a window: its length cannot be distinguished from the "
+                "document's"
+            )
+
+        # An upstream that ignores `offset` returns the document's BEGINNING,
+        # which would be labelled "chars <offset> onward" and whose continuation
+        # would skip the passage actually asked for -- wrong content presented
+        # as the right content. `X-Offset` is min(offset, total) upstream, so a
+        # past-the-end request legitimately reports the total.
+        # ⛔ NO FALLBACK HERE EITHER. Defaulting a missing X-Offset to the
+        # REQUESTED offset lets an upstream bypass the check below by simply
+        # omitting the header -- the mismatch guard would then pass on exactly
+        # the response it exists to catch. A header-less reply is not a window.
+        try:
+            effective_offset = int(offset_header)
+        except (TypeError, ValueError):
+            raise UpstreamWindowIgnored(
+                "upstream returned no usable X-Offset, so there is nothing to "
+                "check the window's start against: this response cannot be "
+                "presented as the passage at the requested offset"
+            )
+        if effective_offset != min(offset, total_length):
+            raise UpstreamWindowIgnored(
+                f"requested offset {offset} but upstream answered from "
+                f"{effective_offset}: it is not honouring the window, and the "
+                "body is not the passage that was asked for"
+            )
         # Huge-filing conditional pointer: on the first chunk of a very long
         # filing, tell the model (in the RESULT) to search instead of paging it
         # all into context.
@@ -4526,7 +4615,7 @@ async def {{ func_name }}(
                 "query='<what you need, e.g. total revenue>') — it returns only the "
                 "matching passages with their offsets.\\n\\n"
             )
-        if offset >= total_length:
+        if not window_text and offset >= total_length:
             return (
                 f"--- MARKDOWN CONTENT (offset {offset} is past the end; the "
                 f"document has {total_length} chars) ---\\n"
@@ -4537,14 +4626,26 @@ async def {{ func_name }}(
             out = (
                 f"--- MARKDOWN CONTENT (chars {offset} to {end} of {total_length}) ---\\n"
             )
-            if end < total_length:
+            # More remains when ANY of three say so: the server's X-Next-Offset,
+            # the document total, or a local trim for the result ceiling. They
+            # agree on a conforming server; they diverge if X-Total-Chars says
+            # more while X-Next-Offset is absent, and the costs are ASYMMETRIC --
+            # trusting the absence alone stops early and loses content silently,
+            # while the union costs at most one extra call that returns
+            # empty-at-end. Mutation testing found this: the header-only form and
+            # the arithmetic-only form were indistinguishable under both of my
+            # first tests, which is what a surviving mutant is for.
+            #
+            # The next offset is always `end`, the boundary of what was actually
+            # RETURNED -- never X-Next-Offset, which describes the untrimmed
+            # window and would skip whatever the ceiling trimmed.
+            if (
+                has_more_upstream
+                or end < total_length
+                or end < offset + len(window_text)
+            ):
                 out += (
                     f"--- TRUNCATED. Call again with offset={end} to continue. ---\\n"
-                )
-            if truncated_upstream:
-                out += (
-                    f"--- WARNING: filing exceeds {_MAX_FILING_BYTES} bytes; "
-                    "tail was discarded. ---\\n"
                 )
             return _nav_hint + out + "\\n"
 
@@ -4554,7 +4655,26 @@ async def {{ func_name }}(
         # Iterate: trimming can ADD the "call again" line (a slice that reached
         # the end no longer does), which re-grows the prose. Shrink-only, so it
         # converges — two passes in practice, three is slack.
-        end_index = min(offset + limit, total_length)
+        # Upstream over-returning is not fatal -- the content is still the right
+        # content from the right offset -- so it is CLAMPED rather than refused:
+        # return what was asked for and let the continuation offset carry the
+        # rest, instead of handing the model 50x the text it budgeted for.
+        # ⛔ AN EMPTY WINDOW BEFORE THE END CANNOT ADVANCE, AND ADVERTISING A
+        # CONTINUATION FOR IT IS AN INSTRUCTION TO LOOP FOREVER. With no
+        # characters returned, `end_index` stays at `offset`, so the result
+        # would read "Call again with offset=<the offset just requested>" --
+        # and a model following its own tool's instruction repeats the identical
+        # call indefinitely. Measured on the arithmetic before fixing it.
+        #
+        # Empty AT or PAST the end is the legitimate case and is handled above.
+        if not window_text and offset < total_length:
+            raise UpstreamWindowIgnored(
+                f"upstream returned an empty window at offset {offset} while "
+                f"reporting {total_length} characters: the window cannot "
+                "advance, so there is no continuation to offer"
+            )
+
+        end_index = offset + min(len(window_text), limit)
         for _ in range(3):
             budget = _MAX_RESULT_CHARS - len(_prose(end_index))
             capped = min(end_index, offset + max(1, budget))
@@ -4562,9 +4682,18 @@ async def {{ func_name }}(
                 break
             end_index = capped
 
-        return _prose(end_index) + full_text[offset:end_index]
+        return _prose(end_index) + window_text[: end_index - offset]
     except UpstreamHTTPError:
         # See #104 — must stay an error, not become a successful string result.
+        raise
+    except UpstreamWindowIgnored:
+        # Same rule as #104, and I missed it when adding this class: falling
+        # through to _safe_error returns the message as a SUCCESSFUL tool
+        # result, so a client checking `isError` sees success while the filing
+        # content is missing. Measured through call_tool before fixing:
+        #     isError=False  content='Error calling filings_markdown_retrieve…'
+        # A refusal that reports itself as success is the silent-failure class
+        # this whole PR exists to remove.
         raise
     except ToolInputError as exc:
         return _safe_error("filings_markdown_retrieve", exc)
@@ -5573,56 +5702,18 @@ async def filings_markdown_search(
                 "document with filings_markdown_retrieve."
             )
         suffix = ""
-        # ⛔ AN ASYMMETRY THIS CHANGE CREATED, so it is disclosed here rather than
-        # left for the caller to discover. The server searches the WHOLE document;
-        # filings_markdown_retrieve still streams from byte 0 and stops at
-        # _MAX_FILING_BYTES, so an offset past that cap names a passage this tool
-        # found and that tool cannot reach. Measured in prod: 1,586 filings exceed
-        # the cap, the largest at 2.49 GB. Small as a share of 53M rows — but a
-        # long filing is exactly the kind people SEARCH instead of reading, so the
-        # affected population skews toward this tool's traffic, not the average row.
-        # The real fix is to window retrieve on the API's own offset/limit params
-        # (they already exist) — a different tool, so a different PR (#175).
-        # Until then: say so, so the model is not sent to fetch nothing.
-        # ⚠ THE OFFSET IS IN CHARACTERS AND THE CAP IS IN BYTES — they are not
-        # comparable, and the first version of this disclosure compared them
-        # directly (SPECHT 3/3). web's markdown_window.search runs re.finditer
-        # over a `str`, so match.start() is a CHARACTER index; retrieve caps a
-        # bytearray at _MAX_FILING_BYTES. In 2-byte text, character 5.5M is byte
-        # 11M — past the cap, and the naive test called it reachable.
+        # #175 RETIRED THIS CAVEAT AT THE SOURCE. It existed because
+        # filings_markdown_search read the whole document server-side while
+        # filings_markdown_retrieve stopped at _MAX_FILING_BYTES, so a hit past
+        # that cap named a passage retrieve could not fetch -- and the offset is
+        # in CHARACTERS while the cap was in BYTES, which needed three bands
+        # (certainly unreachable / certainly reachable / density-dependent).
         #
-        # ⭐ No guessing is needed: UTF-8 bounds the conversion both ways, so the
-        # three cases are EXACT rather than heuristic.
-        #   every char is >= 1 byte  =>  byte_off >= char_off
-        #       char_off >= cap            => certainly unreachable
-        #   every char is <= 4 bytes =>  byte_off <= 4 * char_off
-        #       char_off <  cap // 4       => certainly REACHABLE
-        #   in between                     => depends on this document's density
-        # Keeping the third band separate is the point: collapsing it into one
-        # caveat (the reviewer's suggestion) would warn on hits that are provably
-        # fetchable, which sends the model away from text it can read.
-        #
-        # #175 deletes all three bands by windowing retrieve on the API's own
-        # offset/limit, after which there is no byte cap in the path at all.
-        certain = [o for o, _c in hits if isinstance(o, int) and o >= _MAX_FILING_BYTES]
-        maybe = [
-            o for o, _c in hits
-            if isinstance(o, int) and _MAX_FILING_BYTES // 4 <= o < _MAX_FILING_BYTES
-        ]
-        if certain:
-            suffix += (
-                f" — NOTE: {len(certain)} of these hits are past character "
-                f"{_MAX_FILING_BYTES}, so filings_markdown_retrieve cannot reach "
-                "them yet; the context shown here is the whole passage available"
-            )
-        if maybe:
-            suffix += (
-                f" — NOTE: {len(maybe)} of these hits may be out of reach for "
-                "filings_markdown_retrieve: the offset counts CHARACTERS and that "
-                f"tool stops at {_MAX_FILING_BYTES} BYTES, which is fewer "
-                "characters in non-ASCII text. Try it; the context here is the "
-                "whole passage if it fails"
-            )
+        # retrieve now windows upstream on the SAME character offsets, so every
+        # hit this tool reports is fetchable and there is nothing to disclose.
+        # Removing the warning is part of the fix, not housekeeping: leaving it
+        # would tell a model a passage is out of reach when it is not, which
+        # sends it away from text it can read.
         if isinstance(total_hits, int) and total_hits > len(hits):
             # Exact, not "more than the cap": the server counted every match, so
             # the caller learns HOW MANY were hidden rather than that some were.

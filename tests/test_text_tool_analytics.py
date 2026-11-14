@@ -337,7 +337,14 @@ async def test_markdown_retrieve_response_bytes_equals_received_text_through_rea
 
     _auth_as(mcp_module, monkeypatch, fake_access_token)
     respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/").mock(
-        return_value=httpx.Response(200, text=_NEWLINE_DENSE)
+        # #175: the markdown endpoint is windowed, so every 200 carries the
+        # paging headers. This test is about analytics, not paging; the mock
+        # gains the headers so it remains a response the endpoint can produce.
+        return_value=httpx.Response(
+            200,
+            text=_NEWLINE_DENSE,
+            headers={"X-Total-Chars": str(len(_NEWLINE_DENSE)), "X-Offset": "0"},
+        )
     )
     captured: list[dict] = []
     monkeypatch.setattr(mcp_module._usage_emitter, "emit", lambda ev: captured.append(ev))
