@@ -6368,9 +6368,7 @@ async def filings_search(
     `ordering`: relevance (default), or release_datetime or added_to_platform, with
     "-" for descending. For recent material keep relevance and bound the dates
     (release_datetime_from); sort by date when the user wants the newest matches
-    (a date sort lists matches newest first; when the result says more filings
-    match than it keeps, also bound release_datetime_from, so the newest are
-    among those kept).
+    (a date sort keeps the newest matches of all, newest first).
     A search keeps a capped number of matches, and the result says how many;
     count, pages and group_by cover only those. When the result says more filings
     match, narrow the search (dates, countries, types, companies).
@@ -6587,9 +6585,16 @@ async def filings_search(
             # The endpoint applies every valid field in order (relevance is the
             # default; naming it anywhere keeps it in the chain). Name the ordering
             # this page used, or a date-ordered page reads as a ranking. Only a
-            # LEADING relevance is a ranking; any other lead reorders the capped set.
+            # LEADING relevance is a ranking. `search.sorted_by` (web#10424) says what
+            # chose the kept matches: a leading date sorts every match in the index,
+            # so the cap keeps the newest (or oldest) of all; any other lead reorders
+            # the relevance-chosen set, as does a server that does not send it.
+            sorted_by = search.get("sorted_by")
             if order is None or order.split(",")[0].lstrip("-") == "relevance":
                 order_note = "ranked by relevance"
+            elif isinstance(sorted_by, str) and sorted_by.lstrip("-") in ("release_datetime", "added_to_platform"):
+                which = "oldest" if not sorted_by.startswith("-") else "newest"
+                order_note = f"ordered by {order}: the {which} of all matches, at most {cap}"
             else:
                 order_note = f"ordered by {order} among the first {cap} matches by relevance"
             lines = [
@@ -6879,8 +6884,8 @@ async def find_filing_section(
         f"   SHORTCUT: `filings_search` with queries=[\\"{section_keyword}\\", "
         "<its translations>], companies=<id>, types=<mapped>, "
         "ordering=\\"-release_datetime\\" lists this company's filings of that "
-        "type that mention it, newest first among its top matches by relevance "
-        "(the result header names that set), with snippets. It does "
+        "type that mention it, newest first across all its matches, with snippets. "
+        "The newest filing of that type may not mention it at all, so it does "
         "not decide which filing is newest; step 3 does. Use it when the newest filing has no hit or no Markdown: "
         "say so first, then name the older filing you answered from.\\n"
         f"5. Return ONLY the markdown excerpt containing "

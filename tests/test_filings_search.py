@@ -700,6 +700,25 @@ async def test_an_empty_search_records_no_ids_and_does_not_leak_into_the_next_ca
 
 
 @pytest.mark.asyncio
+async def test_a_date_sorted_header_says_the_newest_of_all_when_the_endpoint_sorted_by_it(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """web#10424: a leading date sorts every match in the index and `search.sorted_by`
+    says so; the header then says the cap kept the newest (or oldest) of ALL matches."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    for ordering, sorted_by, expected in (
+        ("-release_datetime", "-release_datetime", "ordered by -release_datetime: the newest of all matches, at most 1000;"),
+        ("added_to_platform", "added_to_platform", "ordered by added_to_platform: the oldest of all matches, at most 1000;"),
+        ("-id", "relevance", "ordered by -id among the first 1000 matches by relevance;"),
+    ):
+        body = _page([_filing(1, LITERAL)], count=1, capped=False, scan_complete=True)
+        body["search"]["sorted_by"] = sorted_by
+        respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+        out = await _call(mcp_module, {"queries": ["x"], "ordering": ordering})
+        assert expected in out.splitlines()[0], (ordering, out.splitlines()[0])
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("ordering", "expected"),
     [
@@ -710,7 +729,7 @@ async def test_an_empty_search_records_no_ids_and_does_not_leak_into_the_next_ca
         ("-release_datetime,relevance", "ordered by -release_datetime,relevance among the first 1000"),
     ],
 )
-async def test_the_header_names_the_ordering_the_page_used(
+async def test_the_header_names_the_ordering_the_page_used_without_sorted_by(
     mcp_module, monkeypatch, fake_access_token, respx_router, ordering, expected
 ):
     """A date-ordered page headed "ranked by relevance" reads as a ranking."""

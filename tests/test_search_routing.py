@@ -230,11 +230,11 @@ async def test_find_filing_section_does_not_retrieve_an_unreachable_hit(mcp_modu
 
 @pytest.mark.asyncio
 async def test_find_filing_section_shortcut_does_not_decide_the_newest(mcp_module) -> None:
-    # The date ordering only reorders the relevance-capped set, so the newest
-    # matching filing can be outside it; filings_list (step 3) decides newest.
+    # Since web#10424 a date sort keeps the newest matches of all, but the newest
+    # filing of the type may not mention the keyword: filings_list (step 3) decides.
     text = await _render_find_filing_section(mcp_module)
-    assert "newest first among its top matches by relevance" in text
-    assert "It does not decide which filing is newest; step 3 does." in text
+    assert "newest first across all its matches" in text
+    assert "may not mention it at all, so it does not decide which filing is newest; step 3 does." in text
 
 
 @pytest.mark.asyncio
