@@ -1,16 +1,15 @@
 # Token-budget audit
 
-Total tools registered: **20**
+Total tools registered: **19**
 
 | Tool | Description chars | Schema chars | Approx tokens |
 |---|---:|---:|---:|
 | `filings_list` | 1870 | 5157 | 1756 |
-| `companies_financials_retrieve` | 4554 | 1645 | 1549 |
+| `companies_financials_retrieve` | 4554 | 1552 | 1526 |
 | `filings_search` | 3740 | 1595 | 1333 |
 | `companies_list` | 1057 | 1888 | 736 |
 | `companies_resolve_create` | 2727 | 87 | 702 |
 | `filings_markdown_retrieve` | 2465 | 171 | 658 |
-| `filings_markdown_search_create` | 1447 | 259 | 425 |
 | `filings_markdown_search_batch` | 1496 | 202 | 424 |
 | `filings_markdown_search` | 1427 | 164 | 397 |
 | `filings_retrieve` | 1179 | 74 | 312 |
@@ -25,7 +24,7 @@ Total tools registered: **20**
 | `get_fr_industry_classification_isic` | 190 | 33 | 55 |
 | `get_fr_markdown_fetch_strategy` | 187 | 33 | 54 |
 
-**Total approx tokens for `tools/list`: 9552**
+**Total approx tokens for `tools/list`: 9104**
 
 > **Methodology**: token count is approximated as `len(chars) // 4`
 > (per-tool description + JSON-serialized parameter schema). The actual
