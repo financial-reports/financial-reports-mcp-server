@@ -100,7 +100,21 @@ ALLOWED_ARG_KEYS = frozenset({
     # with "query"/"q" above, under #163's ruling. "filing_ids_count" is in
     # DERIVED_ARG_KEYS below, deliberately NOT here — see that comment.
     "max_hits_per_filing",
+    # The batch tool's filing id list itself (Alex, 2026-11-16: "log them"; receiver
+    # web#10413). Kept out at first as a user's research set; without it the batch
+    # reads that follow a search were invisible to search_rank_feedback, so search
+    # usefulness was under-measured. Stored as ids only: see ID_LIST_KEYS.
+    "filing_ids",
 })
+
+# Allowlisted keys whose value is a list of filing ids: stored as the ids the
+# batch tool actually searches — positive ints (short ASCII digit strings
+# converted), duplicates dropped in order, the first MAX_ID_LIST — so a follow-up
+# open is matched against what was read. Anything else in the list is dropped; a
+# non-list is redacted. `filing_ids_count` keeps the demand as requested.
+ID_LIST_KEYS = frozenset({"filing_ids"})
+MAX_ID_LIST = 20  # the batch tool's _BATCH_MAX_FILINGS
+_MAX_ID_DIGITS = 19  # a BigAutoField id; also keeps int() far from its digit limit
 
 # Keys this sender SETS from other arguments and NEVER accepts from the caller.
 # A key must be in exactly one of these two sets: a derived key that is ALSO
@@ -344,6 +358,27 @@ def _truncate(value: Any) -> Any:
     return _scrub_and_cap(str(value))
 
 
+def _ids_only(value: Any) -> Any:
+    """A filing id list as stored: see ID_LIST_KEYS."""
+    if not isinstance(value, (list, tuple)):
+        return REDACTED
+    ids: dict = {}
+    # The whole list, as the tool dedupes the whole list before taking 20; it stops
+    # at the 20th distinct id.
+    for item in value:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, str):
+            if not (len(item) <= _MAX_ID_DIGITS and item.isascii() and item.isdigit()):
+                continue
+            item = int(item)
+        if isinstance(item, int) and item > 0:
+            ids[item] = None
+            if len(ids) >= MAX_ID_LIST:
+                break
+    return list(ids)
+
+
 def sanitize_mcp_arguments(arguments: Any) -> dict:
     """Allowlist values, redact everything else. Returns a new dict."""
     if not isinstance(arguments, dict):
@@ -354,16 +389,16 @@ def sanitize_mcp_arguments(arguments: Any) -> dict:
         key_lower = key.lower()
         if any(bad in key_lower for bad in DENY_ARG_SUBSTRINGS):
             clean[key] = REDACTED
+        elif key_lower in ID_LIST_KEYS:
+            clean[key] = _ids_only(value)
         elif key_lower in ALLOWED_ARG_KEYS:
             grammar = _GRAMMARS.get(key_lower)
             clean[key] = _apply_grammar(value, grammar) if grammar else _truncate(value)
         else:
             clean[key] = REDACTED
-    # `filing_ids` is allowlisted on NEITHER end, so it stays <redacted> above: a
-    # 20-filing id list is a user's research set, not one public identifier like
-    # `filing_id`. The COUNT is what makes batch fan-out observable — how many
-    # filings a call asks for is the number web#8000 is sized against — and it
-    # cannot be reversed into the set.
+    # `filing_ids` is stored as ids only above (ID_LIST_KEYS, since 2026-11-16).
+    # The COUNT is still derived: how many filings a call ASKED for is the number
+    # web#8000 is sized against, and the stored list is capped and cleaned.
     #
     # Derived here, never read off the wire: `filing_ids_count` is in
     # DERIVED_ARG_KEYS and NOT in ALLOWED_ARG_KEYS, so the loop above has already
