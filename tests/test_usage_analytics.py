@@ -769,6 +769,8 @@ _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
     # COUNT of the filing ids (the raw list is deliberately on NEITHER end) and
     # the per-filing hit cap.
     "queries", "filing_ids_count", "max_hits_per_filing",
+    # web#10413: the batch tool's id list, stored as ids only on both ends.
+    "filing_ids",
 })
 
 
@@ -999,22 +1001,15 @@ def test_free_text_keys_still_use_the_best_effort_scrub(key):
 
 # --- M1: the batch tool's arguments (web#8551 receiver, mcp-server #165) ------
 
-def test_batch_filing_ids_become_a_count_and_the_raw_list_stays_redacted():
-    """`filing_ids` is on NEITHER allowlist: a 20-filing id list is a user's
-    research set, not one public identifier like `filing_id`. The COUNT is the
-    part that makes batch fan-out observable, and it cannot be reversed into the
-    set.
-
-    `query` passes through as TEXT, which is the opposite of what this test
-    asserted when it was written: #163 (on main since 2026-10-27, from Alex's
-    2026-10-26 ruling) allowlisted raw in-text search terms. The expectation
-    changed because the product decision changed, not to accommodate this
-    branch — the identity of the id list is still the thing under test."""
+def test_batch_filing_ids_are_stored_as_ids_with_their_count():
+    """`filing_ids` was kept off both allowlists as a user's research set; Alex
+    ruled on 2026-11-16 to log it, because without it the batch reads that follow
+    a search were invisible (web#10413 on the receiver). Stored as ids only."""
     out = sanitize_mcp_arguments(
         {"filing_ids": [11, 22, 33], "query": "going concern", "max_hits_per_filing": 3}
     )
     assert out == {
-        "filing_ids": REDACTED,
+        "filing_ids": [11, 22, 33],
         "filing_ids_count": 3,
         "query": "going concern",
         "max_hits_per_filing": 3,
@@ -1056,11 +1051,11 @@ def test_a_count_sent_without_a_list_is_redacted_not_logged():
     }
 
 
-def test_the_derivation_still_fires_though_the_key_is_no_longer_accepted():
-    """Control for the fix: removing the key from the allowlist must not disable the
-    derived value, which is the only reason the argument is logged at all."""
+def test_the_derivation_still_fires_though_the_count_is_not_accepted():
+    """Control for the fix: keeping the count off the allowlist must not disable the
+    derived value."""
     assert sanitize_mcp_arguments({"filing_ids": [1, 2, 3]}) == {
-        "filing_ids": REDACTED,
+        "filing_ids": [1, 2, 3],
         "filing_ids_count": 3,
     }
 
@@ -1094,3 +1089,29 @@ def test_each_entry_of_a_queries_list_is_scrubbed_like_a_single_query():
     assert "eyJhbGciOiJIUzI1NiJ9" not in out["queries"][1]
     # The singular is the control: same value, same scrubber, same result.
     assert out["queries"][1] == sanitize_mcp_arguments({"query": f"leaked {jwt} here"})["query"]
+
+
+def test_a_filing_id_list_keeps_only_positive_int_ids():
+    out = sanitize_mcp_arguments({"filing_ids": [1, "2", 0, -3, True, "x", "Bearer abc", 4.5, None, 5]})
+    assert out["filing_ids"] == [1, 2, 5]
+    assert out["filing_ids_count"] == 10  # demand as requested, before cleaning
+
+
+def test_a_filing_id_list_is_capped_at_what_the_batch_tool_searches():
+    out = sanitize_mcp_arguments({"filing_ids": list(range(1, 100))})
+    assert out["filing_ids"] == list(range(1, 21))
+    assert out["filing_ids_count"] == 99
+
+
+def test_duplicates_do_not_hide_a_searched_id():
+    # SPECHT on #210: 25 repeats of 1 then 2 — the tool searches 1 and 2.
+    out = sanitize_mcp_arguments({"filing_ids": [1] * 25 + [2]})
+    assert out["filing_ids"] == [1, 2]
+    # and past any scan bound: the tool dedupes the whole list (SPECHT round 2)
+    assert sanitize_mcp_arguments({"filing_ids": [1] * 1000 + [2]})["filing_ids"] == [1, 2]
+
+
+def test_unconvertible_digit_strings_are_dropped_not_raised():
+    # SPECHT on #210: "²".isdigit() is True but int("²") raises; a huge digit run trips int()'s limit.
+    out = sanitize_mcp_arguments({"filing_ids": ["²", "9" * 5000, "١٢", "7"]})
+    assert out["filing_ids"] == [7]

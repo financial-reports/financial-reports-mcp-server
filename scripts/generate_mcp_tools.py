@@ -203,7 +203,7 @@ from fastmcp.server.auth.oauth_proxy import OAuthProxy, ProxyDCRClient
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware
 from mcp.types import Icon, ToolAnnotations
-from pydantic import Field
+from pydantic import Field, StrictInt
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.session_id import McpSessionIdMiddleware
@@ -1500,9 +1500,11 @@ _RECENCY_RULE = (
     "RECENCY — do NOT assume the current year from your training data; it may be "
     "older than today. Each tool description ends with the server's live current "
     "date — trust THAT over any year you assume. For 'latest', 'recent', 'current', "
-    "'this year', or year-to-date requests, query WITHOUT an upper date bound and "
-    "sort newest-first (ordering=-release_datetime; the ONLY orderable fields are release_datetime, added_to_platform and id — any other value is silently ignored and you get default order back); the "
-    "newest result IS the latest even if it post-dates your knowledge cutoff.\\n\\n"
+    "'this year', or year-to-date requests, query WITHOUT an upper date bound; on "
+    "filings_list sort newest-first (ordering=-release_datetime); on filings_search "
+    "keep relevance and set release_datetime_from, or sort by date to list the "
+    "matches newest first. The newest result IS the latest even "
+    "if it post-dates your knowledge cutoff.\\n\\n"
 )
 
 
@@ -1572,8 +1574,8 @@ mcp = FastMCP(
         "10-Q -> IR, 20-F -> 10-K, Form 4 -> DIRS, DEF 14A proxy -> PSI "
         "(NOT the code spelled `DEF 14A`), 8-K -> no single code.\\n"
         "   These codes are BROADER than the form: `IR` is 92% 10-Q, the "
-        "rest 6-K/424B3. To pin the exact form the user asked for, ALSO pass `search=\\"10-Q\\"` "
-        "(titles carry the form name ~94% of the time). "
+        "rest 6-K/424B3. To pin the exact form on filings_list, ALSO pass "
+        "`search=\\"10-Q\\"` (titles carry the form name ~94% of the time). "
         "Filing rows carry `source_filing_type` — the source's "
         "own form label (\\"10-Q\\", \\"8-K\\", \\"4\\") — so CHECK IT to "
         "confirm the form. It is NULLABLE: "
@@ -2756,8 +2758,8 @@ def _upstream_hint(
         return (
             "This search is too heavy to answer in time, so retrying the same "
             "search will not help. Narrow the queries or add filters (a country, "
-            "a type, a release-date range), or lower max_results, then search "
-            "again. Nothing was billed."
+            "a type, a release-date range), then search again. Nothing was "
+            "billed."
         )
     if status >= 500:
         # The server already retried once before surfacing this (see _api_get),
@@ -6022,6 +6024,11 @@ async def filings_markdown_search_batch(
 #                search.max_results; anything else is a 400
 #                `invalid_max_results`. Same price per page; a raised cap
 #                gets the same scan time, so it stops early more often.
+#                This tool does NOT send it (usage audit 2026-11-16): agents
+#                read it as "how many results to show" and set it tiny (30%
+#                of the calls that sent it were <= 2x page_size; 14.5% empty
+#                vs 5.0% without it). The endpoint's default applies; the
+#                served cap is still read back from search.max_results.
 #   group_by     (web#10016, 082cfe9c6) only "company": one row per company
 #                (company_id, company_name, country_code, isin, hit_count,
 #                first/last_release_datetime, best_filing_id), best match
@@ -6057,11 +6064,8 @@ async def filings_markdown_search_batch(
 #                no dedup, so every page is billed again
 _CROSS_SEARCH_MAX_Q = 5
 _CROSS_SEARCH_MAX_PAGE_SIZE = 100
-# web#10008: `max_results` is a whole number from 1 to this ceiling
-# (CROSS_SEARCH_MAX_RESULTS_CEILING); the default cap is 1000. Both are platform
-# settings mirrored here so a bad value is refused without a request: if the
-# platform raises its ceiling, raise this one too, or valid values are refused.
-_CROSS_SEARCH_MAX_RESULTS_CEILING = 10_000
+# web#10008: the endpoint's default cap. Only a fallback for the header when an
+# answer does not echo search.max_results; this tool never sends a cap.
 _CROSS_SEARCH_DEFAULT_MAX_RESULTS = 1000
 # web#10016: `group_by` takes only "company"; `companies` takes at most 50 ids.
 _CROSS_SEARCH_GROUP_BY_VALUES = ("company",)
@@ -6117,9 +6121,13 @@ def _cross_search_queries(queries: Any, query: Any = None) -> list[str]:
         q.strip() for q in queries if isinstance(q, str) and q.strip()
     ))
     if not cleaned:
+        # 11 of the 19 refusals in the usage audit (2026-11-16) were this one,
+        # all a company plus dates and no query: the agent wanted a filing list.
         raise ToolInputError(
             "queries must contain at least one non-empty string "
-            '(e.g. queries=["going concern", "Unternehmensfortführung"])'
+            '(e.g. queries=["going concern", "Unternehmensfortführung"]). '
+            "To list filings by company, type or date without search text, use "
+            "filings_list."
         )
     if len(cleaned) > _CROSS_SEARCH_MAX_Q:
         raise ToolInputError(
@@ -6165,32 +6173,6 @@ def _cross_search_ordering(ordering: Any) -> Optional[str]:
         )
     # Punctuation only (",") names no field: unset, so the header says relevance.
     return ",".join(fields) or None
-
-
-def _cross_search_max_results(max_results: Any) -> Optional[int]:
-    """`max_results` checked as the endpoint checks it (a whole number from 1 to
-    10000), or None when unset. Refused here, not as the endpoint's 400, so the
-    refusal names the range and no request is made."""
-    if max_results is None or (isinstance(max_results, str) and not max_results.strip()):
-        return None
-    value = max_results
-    if isinstance(value, str):
-        text = value.strip()
-        # The length check first: int() refuses a string of more than 4,300
-        # digits with a ValueError.
-        if text.isascii() and text.isdigit() and len(text) <= 12:
-            value = int(text)
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int)
-        or not 1 <= value <= _CROSS_SEARCH_MAX_RESULTS_CEILING
-    ):
-        raise ToolInputError(
-            f"max_results must be a whole number from 1 to "
-            f"{_CROSS_SEARCH_MAX_RESULTS_CEILING} (default "
-            f"{_CROSS_SEARCH_DEFAULT_MAX_RESULTS}); got {str(max_results)[:20]!r}."
-        )
-    return value
 
 
 def _cross_search_group_by(group_by: Any) -> Optional[str]:
@@ -6333,25 +6315,32 @@ def _cross_search_result_lines(item: dict) -> list[str]:
 @subscription_required
 async def filings_search(
     queries: Optional[list[str] | str] = None,
-    company: Optional[int] = None,
-    companies: Optional[list[int] | str] = None,
-    include_predecessors: Optional[bool] = None,
+    # StrictInt: a bare id is taken as one company, but `true` is not company 1.
+    companies: Optional[list[int] | StrictInt | str] = None,
     countries: Optional[str] = None,
-    languages: Optional[str] = None,
     types: Optional[str] = None,
     release_datetime_from: Optional[str] = None,
     release_datetime_to: Optional[str] = None,
-    added_to_platform_from: Optional[str] = None,
-    added_to_platform_to: Optional[str] = None,
     ordering: Optional[str] = None,
-    max_results: Optional[int] = None,
     group_by: Optional[str] = None,
     page: int = 1,
-    page_size: int = 20,
+    # None = not sent (the default page is 20), so a `limit` alias can tell an
+    # omitted page_size from an explicit 20.
+    page_size: Optional[int] = None,
+    # Accepted but NOT listed in the tool's schema (_FILINGS_SEARCH_UNLISTED,
+    # below the function): FastMCP refuses an argument the signature does not
+    # name, so each must stay here to be accepted.
+    company: Optional[int] = None,
+    include_predecessors: Optional[bool] = None,
+    languages: Optional[str] = None,
+    added_to_platform_from: Optional[str] = None,
+    added_to_platform_to: Optional[str] = None,
+    max_results: Any = None,
     query: Optional[str] = None,
     q: Optional[list[str] | str] = None,
     company_id: Optional[int] = None,
     view: Optional[str] = None,
+    limit: Optional[int] = None,
 ) -> str:
     """Find WHICH filings, and which companies, say something: one full-text search
     across the text of every filing, ranked by relevance. Use it for "which companies
@@ -6359,49 +6348,40 @@ async def filings_search(
     not yet know the filing. Once you have a filing, search INSIDE it with
     filings_markdown_search. For a company-and-period line item (revenue, assets, EPS)
     call companies_financials_retrieve instead.
-    `queries`: 1 to 5 phrases, OR-ed, each at most 200 characters (a single `query`
-    string is accepted too). Filings are in many languages, so pass the term AND its
-    translations into the languages of the markets you care about, plus close
-    synonyms, as separate entries (e.g.
+    `queries`: 1 to 5 phrases, OR-ed, each at most 200 characters. Filings are in
+    many languages, so pass the term AND its translations into the languages of the
+    markets you care about, plus close synonyms, as separate entries (e.g.
     ["going concern", "continuité d'exploitation", "Unternehmensfortführung"]).
     With NO country filter, also pass Chinese, Japanese and Korean phrasings of the
     term as separate entries, within the 5: an English query and its native-language
     phrasing find different filings, not the same ones in another language.
     Matching folds case and accents and also matches word stems.
-    Filters (all optional, combinable): company (internal id) or companies (up to
-    50 internal ids, a list or comma-separated: filings of any of them). For
-    several companies, pass companies= in ONE call, not one call per company:
-    parallel calls are throttled;
-    include_predecessors adds the issuers each one succeeded; countries / languages
-    (comma-separated ISO codes), types (comma-separated filing type codes; a
-    regulator form name such as 10-Q, 8-K, 20-F or S-1 is accepted too and searched
-    as the type(s) its filings are filed under, and the result says how: tell the
-    user when it says the types also hold other filings or may miss some),
-    release_datetime_from / _to and added_to_platform_from / _to
-    (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and period filters are NOT available here;
-    use a release-date range.
-    `max_results` (default 1000): how many matches, best first, the search keeps;
-    count, pages, ordering and group_by cover only those. Enterprise and
-    pay-as-you-go plans may raise it to 10000; other plans may only lower it (a
-    higher value is lowered to the plan's limit, and the result says so). Raise it for broad screens and
-    "how many companies / filings" questions. It costs nothing extra per page, but
-    a larger value is slower and more likely to stop early.
-    `ordering`: relevance (default), or release_datetime, added_to_platform, id,
-    filing_type_confidence, with "-" for descending. It reorders the first
-    max_results matches by relevance, it does not reach past them; filters do.
-    WHAT IS NEW SINCE MY LAST CHECK: added_to_platform_from=<time of the last check>
-    with ordering="-added_to_platform".
+    Filters (all optional, combinable): companies (internal company ids: one, or up
+    to 50 as a list or comma-separated; filings of any of them). For several
+    companies, pass them in ONE call, not one call per company: parallel calls are
+    throttled. countries (comma-separated ISO codes), types (comma-separated filing
+    type codes; a regulator form name such as 10-Q, 8-K, 20-F or S-1 is accepted too
+    and searched as the type(s) its filings are filed under, and the result says
+    how: tell the user when it says the types also hold other filings or may miss
+    some), release_datetime_from / _to (YYYY-MM-DDTHH:MM:SSZ). Fiscal year and
+    period filters are NOT available here; use a release-date range.
+    `ordering`: relevance (default), or release_datetime or added_to_platform, with
+    "-" for descending. For recent material keep relevance and bound the dates
+    (release_datetime_from); for the newest matches use ordering="-release_datetime"
+    (it keeps the newest matches of all, newest first; without the "-", the oldest).
+    A search keeps a capped number of matches, and the result says how many;
+    count, pages and group_by cover only those. When the result says more filings
+    match, narrow the search (dates, countries, types, companies).
     WHICH COMPANIES MENTION X: group_by="company" returns one row per company
     (country, ISIN, matching-filing count, first and last release date, best
-    filing) instead of filings, best match first, counted over the first
-    max_results matches only; then filings_search with company=<id> (or
-    companies=<ids>) for that company's hits. No ordering, no snippets.
+    filing) instead of filings, best match first, counted over the kept matches
+    only; then filings_search with companies=<id(s)> for those companies' hits.
+    No ordering, no snippets.
     An EMPTY result means no filing within the filters matched, among filings with
     extracted text, within the first 20 MB of each filing's text, unless the result
     says the search stopped early: then matches may exist and you should narrow the
-    queries or filters. At most the first max_results results by relevance are
-    returned. Each result's snippets show where the text matched; only the first 10
-    results of a page carry snippets.
+    queries or filters. Each result's snippets show where the text matched; only the
+    first 10 results of a page carry snippets (page_size: default 20, at most 100).
     Cost: one Markdown request (6 credits, 12 if any filing on the page is a premium
     type) for each page that returns at least one result, company rows included. A
     search with no results bills nothing. Every page is billed separately, so fetch
@@ -6409,9 +6389,12 @@ async def filings_search(
     try:
         _require_auth_context()
         # Aliases models send (prod MCP errors, 11-14..16): `q` (the REST name)
-        # for `queries`, `company_id` for `company`. `view` is a REST param with
-        # no meaning here (this tool renders its own rows): accepted, ignored.
-        del view
+        # for `queries`, `company_id` for `company`, `limit` for `page_size`.
+        # `view` is a REST param with no meaning here (this tool renders its own
+        # rows): accepted, ignored. `max_results` is no longer offered (usage
+        # audit 2026-11-16): a client that still sends it is not refused, and
+        # the value is not forwarded, so the endpoint's default cap applies.
+        del view, max_results
         if q is not None:
             # An empty or blank part (`queries=[]` beside a real `q`) is absent,
             # not an error; the merged list still gets the 5-query limit below.
@@ -6424,6 +6407,9 @@ async def filings_search(
             if company is not None and company != company_id:
                 raise ToolInputError("company and company_id name different companies; send one")
             company = company_id
+        # `limit` only when page_size was not sent: the listed name wins.
+        if page_size is None:
+            page_size = 20 if limit is None else limit
         values = _cross_search_queries(queries, query)
         order = _cross_search_ordering(ordering)
         try:
@@ -6431,7 +6417,6 @@ async def filings_search(
             size = max(1, min(int(page_size), _CROSS_SEARCH_MAX_PAGE_SIZE))
         except (TypeError, ValueError):
             raise ToolInputError("page and page_size must be integers")
-        cap_sent = _cross_search_max_results(max_results)
         group = _cross_search_group_by(group_by)
         company_ids = _cross_search_companies(companies)
         # The endpoint refuses any ordering but relevance with group_by (400
@@ -6456,7 +6441,6 @@ async def filings_search(
             ("added_to_platform_from", added_to_platform_from),
             ("added_to_platform_to", added_to_platform_to),
             ("ordering", order),
-            ("max_results", cap_sent),
             ("group_by", group),
         ):
             if value is None or value == "":
@@ -6507,8 +6491,9 @@ async def filings_search(
             and entry["note"].strip()
         ]
         # What the endpoint changed about the request (web#10232, #10233): a
-        # max_results lowered to the plan's limit, or a long query relaxed to
-        # most of its words. On every answer, empty ones too.
+        # max_results lowered to the plan's limit (not expected from this tool,
+        # which sends none, but forwarded if the endpoint says so), or a long
+        # query relaxed to most of its words. On every answer, empty ones too.
         for key in ("max_results_note", "relaxed_note", "expanded_note"):
             note = search.get(key)
             if isinstance(note, str) and note.strip():
@@ -6548,14 +6533,11 @@ async def filings_search(
                 "with extracted text, the first 20 MB of each). Nothing was billed. "
                 "Try translations or synonyms as extra queries, or widen the filters."
             ) + type_tail
-        # The cap this request was SERVED with (the endpoint echoes it), not the
-        # one sent: an endpoint that ignored max_results served the default.
+        # The cap this request was SERVED with (the endpoint echoes it; this
+        # tool sends none, so it is the endpoint's default for the caller's
+        # plan). A capped answer says to narrow, never to raise the cap: the
+        # cap is not an agent-facing parameter any more.
         cap = search.get("max_results") or _CROSS_SEARCH_DEFAULT_MAX_RESULTS
-        raise_cap = (
-            f"raise max_results (up to {_CROSS_SEARCH_MAX_RESULTS_CEILING} on Enterprise "
-            "and pay-as-you-go plans) or "
-            if cap < _CROSS_SEARCH_MAX_RESULTS_CEILING else ""
-        )
         # Rows are company rows only when the endpoint SAYS it grouped. One that
         # did not know group_by answers with filings, and rendering those as
         # companies would print every field as "?" and record filing ids as
@@ -6577,8 +6559,8 @@ async def filings_search(
                 "extracted text).",
                 (
                     f"Rows are counted over {over} you can see, by relevance "
-                    f"(max_results={cap}), not over every match: each company's "
-                    "matching-filing count and dates cover only those."
+                    f"(this search keeps the top {cap}), not over every match: each "
+                    "company's matching-filing count and dates cover only those."
                     if partial else
                     f"Rows are counted over {over} you can see: every match "
                     "within these filters."
@@ -6593,8 +6575,8 @@ async def filings_search(
             elif search.get("capped"):
                 lines.append(
                     f"More than {cap} filings match, so a company's count can be "
-                    f"higher and more companies may exist: {raise_cap}narrow the "
-                    "queries or filters."
+                    "higher and more companies may exist: narrow the search (dates, "
+                    "countries, types, companies) to count every match."
                 )
             message = search.get("message")
             if isinstance(message, str) and message.strip():
@@ -6603,9 +6585,21 @@ async def filings_search(
             # The endpoint applies every valid field in order (relevance is the
             # default; naming it anywhere keeps it in the chain). Name the ordering
             # this page used, or a date-ordered page reads as a ranking. Only a
-            # LEADING relevance is a ranking; any other lead reorders the capped set.
+            # LEADING relevance is a ranking. `search.sorted_by` (web#10424) says what
+            # chose the kept matches: a leading date sorts every match in the index,
+            # so the cap keeps the newest (or oldest) of all; any other lead reorders
+            # the relevance-chosen set, as does a server that does not send it.
+            sorted_by = search.get("sorted_by")
+            by_date = (order is not None and order.split(",")[0].lstrip("-") != "relevance"
+                       and isinstance(sorted_by, str)
+                       and sorted_by.lstrip("-") in ("release_datetime", "added_to_platform"))
+            # What chose the kept matches, for the header and the capped warnings below.
+            which = ("newest" if sorted_by.startswith("-") else "oldest") if by_date else None
+            kept = f"the {which} {cap}" if by_date else f"the first {cap} by relevance"
             if order is None or order.split(",")[0].lstrip("-") == "relevance":
                 order_note = "ranked by relevance"
+            elif by_date:
+                order_note = f"ordered by {order}: the {which} of all matches, at most {cap}"
             else:
                 order_note = f"ordered by {order} among the first {cap} matches by relevance"
             lines = [
@@ -6620,14 +6614,14 @@ async def filings_search(
             if stopped_early:
                 lines.append(
                     "This search stopped before checking every candidate (it returns at "
-                    f"most the first {cap} by relevance), so more matching filings may "
+                    f"most {kept}), so more matching filings may "
                     "exist. Narrow the queries or filters to reach them."
                 )
             elif search.get("capped"):
                 lines.append(
-                    f"More than {cap} filings match; only the first {cap} by relevance "
-                    f"can be returned. To see the rest, {raise_cap}narrow the queries "
-                    "or filters."
+                    f"More than {cap} filings match; only {kept} "
+                    "can be returned. To reach the rest, narrow the search (dates, "
+                    "countries, types, companies)."
                 )
         lines.extend(type_notes)  # type notes, then search notes (relaxed = near matches)
         if payload.get("next"):
@@ -6689,6 +6683,43 @@ async def filings_search(
     except Exception as exc:
         logger.exception("filings_search failed")
         return _safe_error("filings_search", exc)
+
+
+# Arguments filings_search ACCEPTS but does not LIST (usage audit of 531 external
+# searches, 2026-11-10..16). They stay in the signature, because FastMCP checks a
+# call against the function's own signature and refuses a name it does not have
+# (`limit` failed that way), and they are taken out of the advertised schema
+# only, so a client does not pay for them in every tools/list or read them as
+# things to set:
+#   aliases      query, q (for queries), company_id (for company), limit (for
+#                page_size), company (one id; `companies` takes one too). Same
+#                behaviour as before.
+#   rare         include_predecessors (0.4% of calls), added_to_platform_from
+#                (1.7%; 3 of 3 runs returned nothing) and _to (0.2%), languages (7.0%, sent
+#                with countries on 32 of 37 calls): still forwarded if sent.
+#   ignored      view (a REST parameter), max_results (no longer sent: the
+#                endpoint's default cap applies).
+_FILINGS_SEARCH_UNLISTED = frozenset({
+    "company", "include_predecessors", "languages", "added_to_platform_from",
+    "added_to_platform_to", "max_results", "query", "q", "company_id", "view", "limit",
+})
+
+
+def _unlisted_schema(schema: dict, names: frozenset) -> dict:
+    """`schema` without the properties in `names` (and without them in
+    `required`, though none of them is required). Validation does not read
+    this schema: FastMCP validates against the function signature, which
+    still holds every name."""
+    pruned = dict(schema)
+    pruned["properties"] = {
+        k: v for k, v in (schema.get("properties") or {}).items() if k not in names
+    }
+    if "required" in schema:
+        pruned["required"] = [r for r in schema["required"] if r not in names]
+    return pruned
+
+
+filings_search.parameters = _unlisted_schema(filings_search.parameters, _FILINGS_SEARCH_UNLISTED)
 
 '''
 
@@ -6856,10 +6887,10 @@ async def find_filing_section(
         "reach, do not retrieve it: quote the search context and say only that "
         "passage was available.\\n"
         f"   SHORTCUT: `filings_search` with queries=[\\"{section_keyword}\\", "
-        "<its translations>], company=<id>, types=<mapped>, "
+        "<its translations>], companies=<id>, types=<mapped>, "
         "ordering=\\"-release_datetime\\" lists this company's filings of that "
-        "type that mention it, newest first among its top matches by relevance "
-        "(the result header names that set), with snippets. It does "
+        "type that mention it, newest first across all its matches, with snippets. "
+        "The newest filing of that type may not mention it at all, so it does "
         "not decide which filing is newest; step 3 does. Use it when the newest filing has no hit or no Markdown: "
         "say so first, then name the older filing you answered from.\\n"
         f"5. Return ONLY the markdown excerpt containing "
