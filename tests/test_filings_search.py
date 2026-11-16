@@ -448,6 +448,62 @@ async def test_query_and_a_bare_string_are_accepted_through_real_dispatch(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("args", "expected_q", "expected_company"),
+    [
+        # `q` is the REST name; models send it (prod MCP errors, 11-14..16).
+        ({"q": "going concern"}, ["going concern"], None),
+        ({"q": ["going concern", "ransomware"]}, ["going concern", "ransomware"], None),
+        ({"queries": ["going concern"], "q": "ransomware"}, ["going concern", "ransomware"], None),
+        ({"queries": ["going concern"], "q": "going concern"}, ["going concern"], None),
+        # An empty `queries` beside a real `q` is absent, not an error (SPECHT on #209).
+        ({"queries": [], "q": "going concern"}, ["going concern"], None),
+        ({"queries": "", "q": ["going concern"]}, ["going concern"], None),
+        ({"queries": ["going concern"], "q": []}, ["going concern"], None),
+        # `company_id` is the name models use for `company`.
+        ({"queries": ["x"], "company_id": 42}, ["x"], "42"),
+        ({"queries": ["x"], "company": 42, "company_id": 42}, ["x"], "42"),
+        # `view` is a REST parameter with no meaning here: accepted, not sent.
+        ({"queries": ["x"], "view": "full"}, ["x"], None),
+    ],
+)
+async def test_rest_names_are_accepted_as_aliases(
+    mcp_module, monkeypatch, fake_access_token, respx_router, args, expected_q, expected_company
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    out = await _call(mcp_module, args)
+    assert "filing 1" in out
+    params = route.calls.last.request.url.params
+    assert params.get_list("q") == expected_q
+    assert params.get("company") == expected_company
+    assert "view" not in params
+
+
+@pytest.mark.asyncio
+async def test_company_and_company_id_that_disagree_are_refused_locally(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _call(mcp_module, {"queries": ["x"], "company": 1, "company_id": 2})
+    assert "company and company_id name different companies" in out
+    assert not route.called
+
+
+@pytest.mark.asyncio
+async def test_q_beside_queries_still_has_the_five_query_limit(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _call(mcp_module, {"queries": ["a", "b", "c"], "q": ["d", "e", "f"]})
+    assert "at most 5 queries" in out
+    assert not route.called
+
+
+@pytest.mark.asyncio
 async def test_no_query_at_all_is_refused_locally(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
@@ -1194,6 +1250,21 @@ async def test_the_endpoints_search_notes_reach_the_model(
     out = await _call(mcp_module, {"queries": ["a b c d e f"]})
     assert "Search note: Asked for 2000 results; your plan allows up to 1000" in out
     assert "Search note: No filing contained every word" in out
+
+
+@pytest.mark.asyncio
+async def test_the_expanded_terms_note_reaches_the_model(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """web#8004 glossary: the endpoint adds known translations of a query and
+    says so in `expanded_note`; the model must see which terms were added."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([_filing(1, LITERAL)])
+    body["search"]["expanded_note"] = (
+        'Also searched known translations of "going concern": "継続企業の前提", "Unternehmensfortführung".')
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["going concern"]})
+    assert 'Search note: Also searched known translations of "going concern"' in out
 
 
 

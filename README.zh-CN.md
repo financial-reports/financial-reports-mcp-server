@@ -20,7 +20,7 @@
 
 1. 在 [financialfilings.com](https://financialfilings.com/) **注册免费账号**。任何 FinancialFilings 用户都可以免费使用 MCP 连接器，不需要付费套餐。
 2. 在你的 MCP 客户端里**添加连接器**，具体步骤见下文[连接你的客户端](#连接你的客户端)。最常用的两种：
-   - **Claude.ai / Claude Desktop**：Settings → Connectors → Add custom connector，URL 填 `https://mcp.financialfilings.com/mcp`
+   - **Claude.ai / Claude Desktop**：在 [Claude 目录](https://claude.ai/directory/connectors/financialreports-eu) 中找到 **FinancialFilings**，点击 **Connect**
    - **Claude Code**：`claude mcp add --transport http financialfilings https://mcp.financialfilings.com/mcp`
 3. 按提示用 FinancialFilings 账号**登录**，完成。
 
@@ -40,7 +40,9 @@
 
 ### Claude.ai / Claude Desktop
 
-Settings → Connectors → **Add custom connector**，URL 填 `https://mcp.financialfilings.com/mcp`，按提示登录。
+在 [Claude 目录](https://claude.ai/directory/connectors/financialreports-eu) 中找到 **FinancialFilings** 并点击 **Connect**；也可以手动添加：Settings → Connectors → **Add custom connector**，URL 填 `https://mcp.financialfilings.com/mcp`，按提示登录。
+
+如需插件（同一服务器，另附 `financial-filings-research` 技能），在 Claude 或 Cowork 中打开 **Customize → Plugins**，搜索 **FinancialFilings**，点击 **Add**。
 
 ### Claude Code
 
@@ -52,11 +54,11 @@ claude mcp add --transport http financialfilings https://mcp.financialfilings.co
 
 **也可以安装插件**。插件会添加同一个服务器，另外附带 `financial-filings-research` 技能（工具速查表和研究工作流）：
 
-```
-/plugin install financialfilings --marketplace financial-reports/financial-reports-mcp-server
+```bash
+claude plugin install financialfilings@anthropic-plugin-directory
 ```
 
-如果 Claude Code 版本低于 2.1.275，请先添加 marketplace：`/plugin marketplace add financial-reports/financial-reports-mcp-server`，再运行 `/plugin install financialfilings@financialfilings`。无论哪种方式，都需要运行一次 `/mcp` 登录。
+这是 Claude 目录中经过审核的版本。如果想直接跟随本仓库：先运行 `/plugin marketplace add financial-reports/financial-reports-mcp-server`，再运行 `/plugin install financialfilings@financialfilings`。无论哪种方式，都需要运行一次 `/mcp` 登录。
 
 ### Codex (OpenAI)
 
@@ -406,7 +408,7 @@ make e2e
 ## 项目状态
 
 - **生产环境**：已上线，地址 `https://mcp.financialfilings.com/mcp`
-- **已收录于**：[Claude 连接器目录](https://claude.ai/directory/connectors/financialreports-eu)、[Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp)
+- **已收录于**：[Claude 连接器目录](https://claude.ai/directory/connectors/financialreports-eu)、Claude 插件目录（Customize → Plugins，`financialfilings@anthropic-plugin-directory`）、[Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp)
 - **规范兼容性**：MCP 2025-11-25
 - **已测试客户端**：Claude.ai、Claude Code、Claude Desktop、Cursor、Windsurf。另外为 Codex、Kilo Code、opencode、Gemini CLI 和 Hermes 提供了配置示例（见[连接你的客户端](#连接你的客户端)）。
 

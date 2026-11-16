@@ -18,8 +18,8 @@ If you're an analyst, researcher, or anyone who wants to ask Claude about public
 
 1. **Create a free account** at [financialfilings.com](https://financialfilings.com/) — the MCP connector is free for any FinancialFilings user. No paid plan required.
 2. **Add the connector** in your MCP client — pick yours under [Connect your client](#connect-your-client) below. The two most common:
-   - **Claude.ai / Claude Desktop**: Settings → Connectors → Add custom connector → URL: `https://mcp.financialfilings.com/mcp`
-   - **Claude Code**: `claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp`
+   - **Claude.ai / Claude Desktop**: find **FinancialFilings** in the [Claude directory](https://claude.ai/directory/connectors/financialreports-eu) and click **Connect**
+   - **Claude Code**: `claude mcp add --transport http financialfilings https://mcp.financialfilings.com/mcp`
 3. **Sign in** with your FinancialFilings account when prompted. That's it.
 
 Full setup walkthrough with screenshots: [financialfilings.com/integrations/claude/](https://financialfilings.com/integrations/claude/).
@@ -38,23 +38,25 @@ Already added the server under the old name `financialreports`? Nothing to chang
 
 ### Claude.ai / Claude Desktop
 
-Settings → Connectors → **Add custom connector** → URL: `https://mcp.financialfilings.com/mcp`. Sign in when prompted.
+Find **FinancialFilings** in the [Claude directory](https://claude.ai/directory/connectors/financialreports-eu) and click **Connect**, or add it by hand: Settings → Connectors → **Add custom connector** → URL: `https://mcp.financialfilings.com/mcp`. Sign in when prompted.
+
+For the plugin (the same server plus the `financial-filings-research` skill) in Claude or Cowork: **Customize → Plugins**, search **FinancialFilings**, click **Add**.
 
 ### Claude Code
 
 ```bash
-claude mcp add --transport http financialreports https://mcp.financialfilings.com/mcp
+claude mcp add --transport http financialfilings https://mcp.financialfilings.com/mcp
 ```
 
 Run `/mcp` in-session to complete the browser sign-in.
 
 **Or install the plugin**, which adds the same server plus the `financial-filings-research` skill (tool cheat-sheet and research workflows):
 
-```
-/plugin install financialfilings --marketplace financial-reports/financial-reports-mcp-server
+```bash
+claude plugin install financialfilings@anthropic-plugin-directory
 ```
 
-On Claude Code before 2.1.275, add the marketplace first: `/plugin marketplace add financial-reports/financial-reports-mcp-server`, then `/plugin install financialfilings@financialfilings`. Either way, run `/mcp` once to sign in.
+That is the reviewed version from the Claude directory. To track this repository directly instead: `/plugin marketplace add financial-reports/financial-reports-mcp-server`, then `/plugin install financialfilings@financialfilings`. Either way, run `/mcp` once to sign in.
 
 ### Codex (OpenAI)
 
@@ -409,7 +411,7 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development se
 ## Project status
 
 - **Production**: live at `https://mcp.financialfilings.com/mcp`
-- **Listed on**: [Claude connector directory](https://claude.ai/directory/connectors/financialreports-eu), [Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp)
+- **Listed on**: [Claude connector directory](https://claude.ai/directory/connectors/financialreports-eu), Claude plugin directory (Customize → Plugins, `financialfilings@anthropic-plugin-directory`), [Cursor Directory](https://cursor.directory/plugins/financialfilings-mcp)
 - **Spec compliance**: MCP 2025-11-25
 - **Tested with**: Claude.ai, Claude Code, Claude Desktop, Cursor, Windsurf. Config snippets also provided for Codex, Kilo Code, opencode, Gemini CLI, and Hermes (see [Connect your client](#connect-your-client)).
 
