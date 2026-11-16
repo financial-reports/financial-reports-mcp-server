@@ -1161,8 +1161,10 @@ def test_every_unlisted_name_is_still_in_the_signature(mcp_module) -> None:
         # `limit` is the name models use for `page_size` (it was refused).
         ({"limit": 5}, {"page_size": "5"}),
         ({"limit": 500}, {"page_size": "100"}),
-        # An explicit page_size is the listed name and wins.
+        # An explicit page_size is the listed name and wins, an explicit 20
+        # included (SPECHT on #211: it read as "not sent").
         ({"limit": 5, "page_size": 50}, {"page_size": "50"}),
+        ({"limit": 5, "page_size": 20}, {"page_size": "20"}),
         ({}, {"page_size": "20"}),
     ],
 )
@@ -1178,6 +1180,29 @@ async def test_unlisted_arguments_are_accepted_through_real_dispatch(
     for key, value in expected.items():
         assert params.get(key) == value, key
     assert "limit" not in params and "max_results" not in params
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [True, 3.5])
+async def test_a_bare_companies_value_that_is_not_an_id_is_refused(
+    mcp_module, monkeypatch, fake_access_token, respx_router, bad
+):
+    """`companies` takes one bare id, so the signature admits an int. A JSON
+    `true` must not become company 1 on the way (lax int would coerce it)."""
+    from fastmcp import Client
+    from fastmcp.exceptions import ToolError
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    async with Client(mcp_module.mcp) as client:
+        try:
+            result = await client.call_tool("filings_search", {"queries": ["x"], "companies": bad})
+            out = result.content[0].text
+        except ToolError as exc:
+            out = str(exc)
+    assert "filing 1" not in out
+    assert not route.called
 
 
 @pytest.mark.asyncio

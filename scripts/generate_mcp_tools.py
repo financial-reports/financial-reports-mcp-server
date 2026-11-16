@@ -203,7 +203,7 @@ from fastmcp.server.auth.oauth_proxy import OAuthProxy, ProxyDCRClient
 from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware
 from mcp.types import Icon, ToolAnnotations
-from pydantic import Field
+from pydantic import Field, StrictInt
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.session_id import McpSessionIdMiddleware
@@ -6315,7 +6315,8 @@ def _cross_search_result_lines(item: dict) -> list[str]:
 @subscription_required
 async def filings_search(
     queries: Optional[list[str] | str] = None,
-    companies: Optional[list[int] | int | str] = None,
+    # StrictInt: a bare id is taken as one company, but `true` is not company 1.
+    companies: Optional[list[int] | StrictInt | str] = None,
     countries: Optional[str] = None,
     types: Optional[str] = None,
     release_datetime_from: Optional[str] = None,
@@ -6323,7 +6324,9 @@ async def filings_search(
     ordering: Optional[str] = None,
     group_by: Optional[str] = None,
     page: int = 1,
-    page_size: int = 20,
+    # None = not sent (the default page is 20), so a `limit` alias can tell an
+    # omitted page_size from an explicit 20.
+    page_size: Optional[int] = None,
     # Accepted but NOT listed in the tool's schema (_FILINGS_SEARCH_UNLISTED,
     # below the function): FastMCP refuses an argument the signature does not
     # name, so each must stay here to be accepted.
@@ -6365,7 +6368,9 @@ async def filings_search(
     `ordering`: relevance (default), or release_datetime or added_to_platform, with
     "-" for descending. For recent material keep relevance and bound the dates
     (release_datetime_from); sort by date when the user wants the newest matches
-    (a date sort lists matches newest first).
+    (a date sort lists matches newest first; when the result says more filings
+    match than it keeps, also bound release_datetime_from, so the newest are
+    among those kept).
     A search keeps a capped number of matches, and the result says how many;
     count, pages and group_by cover only those. When the result says more filings
     match, narrow the search (dates, countries, types, companies).
@@ -6378,7 +6383,7 @@ async def filings_search(
     extracted text, within the first 20 MB of each filing's text, unless the result
     says the search stopped early: then matches may exist and you should narrow the
     queries or filters. Each result's snippets show where the text matched; only the
-    first 10 results of a page carry snippets.
+    first 10 results of a page carry snippets (page_size: default 20, at most 100).
     Cost: one Markdown request (6 credits, 12 if any filing on the page is a premium
     type) for each page that returns at least one result, company rows included. A
     search with no results bills nothing. Every page is billed separately, so fetch
@@ -6404,10 +6409,9 @@ async def filings_search(
             if company is not None and company != company_id:
                 raise ToolInputError("company and company_id name different companies; send one")
             company = company_id
-        # `limit` only when page_size was left at its default: an explicit
-        # page_size is the listed name and wins.
-        if limit is not None and page_size == 20:
-            page_size = limit
+        # `limit` only when page_size was not sent: the listed name wins.
+        if page_size is None:
+            page_size = 20 if limit is None else limit
         values = _cross_search_queries(queries, query)
         order = _cross_search_ordering(ordering)
         try:
