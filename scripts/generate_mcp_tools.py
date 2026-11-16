@@ -6367,8 +6367,8 @@ async def filings_search(
     period filters are NOT available here; use a release-date range.
     `ordering`: relevance (default), or release_datetime or added_to_platform, with
     "-" for descending. For recent material keep relevance and bound the dates
-    (release_datetime_from); sort by date when the user wants the newest matches
-    (a date sort keeps the newest matches of all, newest first).
+    (release_datetime_from); for the newest matches use ordering="-release_datetime"
+    (it keeps the newest matches of all, newest first; without the "-", the oldest).
     A search keeps a capped number of matches, and the result says how many;
     count, pages and group_by cover only those. When the result says more filings
     match, narrow the search (dates, countries, types, companies).
@@ -6590,10 +6590,15 @@ async def filings_search(
             # so the cap keeps the newest (or oldest) of all; any other lead reorders
             # the relevance-chosen set, as does a server that does not send it.
             sorted_by = search.get("sorted_by")
+            by_date = (order is not None and order.split(",")[0].lstrip("-") != "relevance"
+                       and isinstance(sorted_by, str)
+                       and sorted_by.lstrip("-") in ("release_datetime", "added_to_platform"))
+            # What chose the kept matches, for the header and the capped warnings below.
+            which = ("newest" if sorted_by.startswith("-") else "oldest") if by_date else None
+            kept = f"the {which} {cap}" if by_date else f"the first {cap} by relevance"
             if order is None or order.split(",")[0].lstrip("-") == "relevance":
                 order_note = "ranked by relevance"
-            elif isinstance(sorted_by, str) and sorted_by.lstrip("-") in ("release_datetime", "added_to_platform"):
-                which = "oldest" if not sorted_by.startswith("-") else "newest"
+            elif by_date:
                 order_note = f"ordered by {order}: the {which} of all matches, at most {cap}"
             else:
                 order_note = f"ordered by {order} among the first {cap} matches by relevance"
@@ -6609,12 +6614,12 @@ async def filings_search(
             if stopped_early:
                 lines.append(
                     "This search stopped before checking every candidate (it returns at "
-                    f"most the first {cap} by relevance), so more matching filings may "
+                    f"most {kept}), so more matching filings may "
                     "exist. Narrow the queries or filters to reach them."
                 )
             elif search.get("capped"):
                 lines.append(
-                    f"More than {cap} filings match; only the first {cap} by relevance "
+                    f"More than {cap} filings match; only {kept} "
                     "can be returned. To reach the rest, narrow the search (dates, "
                     "countries, types, companies)."
                 )

@@ -719,6 +719,20 @@ async def test_a_date_sorted_header_says_the_newest_of_all_when_the_endpoint_sor
 
 
 @pytest.mark.asyncio
+async def test_a_capped_date_sorted_warning_names_the_newest_not_relevance(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    """SPECHT on #212: the capped warning must say which matches were kept, as the header does."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    body = _page([_filing(1, LITERAL)], count=1000, capped=True, scan_complete=True)
+    body["search"]["sorted_by"] = "-release_datetime"
+    respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
+    out = await _call(mcp_module, {"queries": ["x"], "ordering": "-release_datetime"})
+    assert "More than 1000 filings match; only the newest 1000 can be returned." in out
+    assert "by relevance" not in out
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("ordering", "expected"),
     [
