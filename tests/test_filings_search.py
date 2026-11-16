@@ -512,6 +512,11 @@ async def test_no_query_at_all_is_refused_locally(
     out = await _call(mcp_module, {"countries": "FR"})
     assert "at least one non-empty string" in out
     assert not route.called
+    # The usual cause is a filing list asked of the search (usage audit:
+    # company + dates, no query, on 11 of 19 refusals): say where that lives.
+    out = await _call(mcp_module, {"company": 42, "release_datetime_from": "2026-01-01T00:00:00Z"})
+    assert "use filings_list" in out
+    assert not route.called
 
 
 @pytest.mark.asyncio

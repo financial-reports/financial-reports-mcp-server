@@ -6121,9 +6121,13 @@ def _cross_search_queries(queries: Any, query: Any = None) -> list[str]:
         q.strip() for q in queries if isinstance(q, str) and q.strip()
     ))
     if not cleaned:
+        # 11 of the 19 refusals in the usage audit (2026-11-16) were this one,
+        # all a company plus dates and no query: the agent wanted a filing list.
         raise ToolInputError(
             "queries must contain at least one non-empty string "
-            '(e.g. queries=["going concern", "Unternehmensfortführung"])'
+            '(e.g. queries=["going concern", "Unternehmensfortführung"]). '
+            "To list filings by company, type or date without search text, use "
+            "filings_list."
         )
     if len(cleaned) > _CROSS_SEARCH_MAX_Q:
         raise ToolInputError(
