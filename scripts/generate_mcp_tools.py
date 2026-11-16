@@ -6338,6 +6338,9 @@ async def filings_search(
     page: int = 1,
     page_size: int = 20,
     query: Optional[str] = None,
+    q: Optional[list[str] | str] = None,
+    company_id: Optional[int] = None,
+    view: Optional[str] = None,
 ) -> str:
     """Find WHICH filings, and which companies, say something: one full-text search
     across the text of every filing, ranked by relevance. Use it for "which companies
@@ -6355,7 +6358,9 @@ async def filings_search(
     phrasing find different filings, not the same ones in another language.
     Matching folds case and accents and also matches word stems.
     Filters (all optional, combinable): company (internal id) or companies (up to
-    50 internal ids, a list or comma-separated: filings of any of them);
+    50 internal ids, a list or comma-separated: filings of any of them). For
+    several companies, pass companies= in ONE call, not one call per company:
+    parallel calls are throttled;
     include_predecessors adds the issuers each one succeeded; countries / languages
     (comma-separated ISO codes), types (comma-separated filing type codes; a
     regulator form name such as 10-Q, 8-K, 20-F or S-1 is accepted too and searched
@@ -6392,6 +6397,19 @@ async def filings_search(
     further pages only when you need them."""
     try:
         _require_auth_context()
+        # Aliases models send (prod MCP errors, 11-14..16): `q` (the REST name)
+        # for `queries`, `company_id` for `company`. `view` is a REST param with
+        # no meaning here (this tool renders its own rows): accepted, ignored.
+        del view
+        if q is not None:
+            if queries is None:
+                queries = q
+            else:
+                queries = [*_cross_search_queries(queries, None), *_cross_search_queries(q, None)]
+        if company_id is not None:
+            if company is not None and company != company_id:
+                raise ToolInputError("company and company_id name different companies; send one")
+            company = company_id
         values = _cross_search_queries(queries, query)
         order = _cross_search_ordering(ordering)
         try:
@@ -6477,7 +6495,7 @@ async def filings_search(
         # What the endpoint changed about the request (web#10232, #10233): a
         # max_results lowered to the plan's limit, or a long query relaxed to
         # most of its words. On every answer, empty ones too.
-        for key in ("max_results_note", "relaxed_note"):
+        for key in ("max_results_note", "relaxed_note", "expanded_note"):
             note = search.get(key)
             if isinstance(note, str) and note.strip():
                 type_notes.append("Search note: " + sanitize_error_detail(note, max_len=400))
