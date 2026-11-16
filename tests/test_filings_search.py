@@ -512,6 +512,11 @@ async def test_no_query_at_all_is_refused_locally(
     out = await _call(mcp_module, {"countries": "FR"})
     assert "at least one non-empty string" in out
     assert not route.called
+    # The usual cause is a filing list asked of the search (usage audit:
+    # company + dates, no query, on 11 of 19 refusals): say where that lives.
+    out = await _call(mcp_module, {"company": 42, "release_datetime_from": "2026-01-01T00:00:00Z"})
+    assert "use filings_list" in out
+    assert not route.called
 
 
 @pytest.mark.asyncio
@@ -777,15 +782,21 @@ def _last_event(captured):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("sent", "wire"), [(5000, "5000"), (1, "1"), (10000, "10000"), ("250", "250")])
-async def test_max_results_is_forwarded(
-    mcp_module, monkeypatch, fake_access_token, respx_router, sent, wire
+@pytest.mark.parametrize("sent", [5000, 1, 10000, "250", 0, 10001, -5, "1e3", True, "abc", None])
+async def test_max_results_is_accepted_and_never_forwarded(
+    mcp_module, monkeypatch, fake_access_token, respx_router, sent
 ):
+    """`max_results` left the agent-facing schema (usage audit 2026-11-16: 30%
+    of the calls that sent it used it as a result limit, <= 2x page_size, and
+    got 14.5% empty answers vs 5.0% without it). A client that still sends it,
+    any value, gets its search and the endpoint's default cap: no refusal (the
+    values here were refused before), and nothing on the wire."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
     route = respx_router.get(SEARCH_URL).mock(
         return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
-    await _call(mcp_module, {"queries": ["going concern"], "max_results": sent})
-    assert route.calls.last.request.url.params["max_results"] == wire
+    out = await _call(mcp_module, {"queries": ["going concern"], "max_results": sent})
+    assert "filing 1" in out
+    assert "max_results" not in route.calls.last.request.url.params
 
 
 @pytest.mark.asyncio
@@ -803,59 +814,31 @@ async def test_unset_max_results_group_by_and_companies_are_not_sent(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bad", [0, 10001, -5, "0", "1e3", "10001"])
-async def test_max_results_out_of_range_is_refused_locally(
-    mcp_module, monkeypatch, fake_access_token, respx_router, bad
-):
-    """The endpoint answers these with a 400; refusing here names the range
-    and costs no round trip."""
-    _auth_as(mcp_module, monkeypatch, fake_access_token)
-    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
-    from fastmcp import Client
-    from fastmcp.exceptions import ToolError
-
-    async with Client(mcp_module.mcp) as client:
-        try:
-            result = await client.call_tool("filings_search", {"queries": ["x"], "max_results": bad})
-            out = result.content[0].text
-        except ToolError as exc:  # FastMCP's own type check ("1e3" is not an int)
-            out = str(exc)
-    assert "max_results" in out
-    assert not route.called
-
-
-def test_max_results_bool_is_refused(mcp_module) -> None:
-    # True is an int to Python; the endpoint would read "true" as a 400.
-    with pytest.raises(mcp_module.ToolInputError):
-        mcp_module._cross_search_max_results(True)
-    assert mcp_module._cross_search_max_results(" 42 ") == 42
-    assert mcp_module._cross_search_max_results(None) is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("cap", "raise_hint"), [(5000, True), (10000, False)])
+@pytest.mark.parametrize("cap", [1000, 5000, 10000])
 async def test_the_header_reads_the_cap_the_endpoint_served(
-    mcp_module, monkeypatch, fake_access_token, respx_router, cap, raise_hint
+    mcp_module, monkeypatch, fake_access_token, respx_router, cap
 ):
-    """The header quotes `search.max_results`, and only offers a raise below
-    the ceiling (raising past 10000 is a 400)."""
+    """The header quotes `search.max_results` (the endpoint picks it now: the
+    default, or the plan ceiling for a grouped search) and tells the agent to
+    NARROW, never to raise a cap it can no longer set."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
     body = _page([_filing(1, LITERAL)], count=cap, capped=True, scan_complete=True)
     body["search"]["max_results"] = cap
     respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
-    out = await _call(mcp_module, {"queries": ["x"], "max_results": cap,
-                                   "ordering": "-release_datetime"})
+    out = await _call(mcp_module, {"queries": ["x"], "ordering": "-release_datetime"})
     assert f"More than {cap} filings match; only the first {cap}" in out
+    assert "narrow the search (dates, countries, types, companies)" in out
     assert f"among the first {cap} matches by relevance" in out.splitlines()[0]
-    assert ("raise max_results (up to 10000 on Enterprise and pay-as-you-go plans)" in out) is raise_hint
+    assert "max_results" not in out
 
 
 @pytest.mark.asyncio
 async def test_the_header_quotes_the_served_cap_not_the_sent_one(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
-    """An endpoint that did not apply max_results served the default; quoting
-    the sent value would overstate what was searched."""
+    """A max_results a client still sends is not forwarded, so the endpoint
+    serves its default; quoting the sent value would overstate what was
+    searched."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
     respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(
         200, json=_page([_filing(1, LITERAL)], count=1000, capped=True, scan_complete=True)))
@@ -901,10 +884,14 @@ async def test_a_capped_group_says_counts_may_be_higher(
         [_company_row(7)], grouped=1000, capped=True, scan_complete=True, message=GROUPED_MSG)))
     out = await _call(mcp_module, {"queries": ["x"], "group_by": "company"})
     assert "counted over the first 1000 matching filing(s)" in out
-    assert "(max_results=1000), not over every match" in out
+    assert "(this search keeps the top 1000), not over every match" in out
     assert "More than 1000 filings match, so a company's count can be higher" in out
-    assert "raise max_results (up to 10000 on Enterprise and pay-as-you-go plans)" in out
+    assert "narrow the search (dates, countries, types, companies) to count every match" in out
     assert "Search note: Grouped over the first 1000" in out
+    # The tool's own lines never invite a cap the agent cannot set. (The
+    # endpoint's note is forwarded as it is; its wording is the platform's.)
+    own = [ln for ln in out.splitlines() if not ln.startswith("Search note:")]
+    assert not any("max_results" in ln for ln in own)
 
 
 @pytest.mark.asyncio
@@ -929,7 +916,7 @@ async def test_a_group_without_filings_grouped_falls_back_to_the_cap(
     body = _grouped([_company_row(7)], cap=500)
     del body["search"]["filings_grouped"]
     respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
-    out = await _call(mcp_module, {"queries": ["x"], "group_by": "company", "max_results": 500})
+    out = await _call(mcp_module, {"queries": ["x"], "group_by": "company"})
     assert "counted over at most the first 500 matching filings" in out
 
 
@@ -1097,18 +1084,125 @@ async def test_include_predecessors_works_with_companies_alone(
     assert not route.called
 
 
-def test_the_description_teaches_max_results_and_the_basket_mode(mcp_module) -> None:
+def test_the_description_teaches_the_basket_mode_and_not_max_results(mcp_module) -> None:
     desc = mcp_module.mcp._tool_manager._tools["filings_search"].description or ""
     flat = " ".join(desc.split())
-    assert "`max_results` (default 1000)" in flat
-    assert "Enterprise and pay-as-you-go plans may raise it to 10000; other plans may only lower it" in flat
+    # max_results left the schema (usage audit 2026-11-16); the description
+    # must not teach it, and a capped answer is answered by narrowing.
+    assert "max_results" not in flat
+    # Neutral on WHICH matches are kept: relevance today, the newest for a date
+    # sort once web#10424 ships. True both ways.
+    assert "A search keeps a capped number of matches, and the result says how many" in flat
+    assert "narrow the search (dates, countries, types, companies)" in flat
     assert "a regulator form name such as 10-Q, 8-K, 20-F or S-1 is accepted too" in flat
-    assert 'Raise it for broad screens and "how many companies / filings" questions' in flat
-    assert "costs nothing extra per page" in flat and "slower" in flat
     assert 'WHICH COMPANIES MENTION X: group_by="company"' in flat
-    assert "then filings_search with company=<id> (or companies=<ids>)" in flat
-    assert "companies (up to 50 internal ids" in flat
-    assert "first 1000 matches by relevance" not in flat, "the cap is max_results now"
+    assert "then filings_search with companies=<id(s)>" in flat
+    assert "companies (internal company ids: one, or up to 50" in flat
+    # Unused in the audit window (0 calls): not advertised any more.
+    assert "filing_type_confidence" not in flat
+    assert ", id," not in flat
+
+
+# --- the advertised schema vs what is accepted (usage audit 2026-11-16) -------
+
+LISTED = ["queries", "companies", "countries", "types", "release_datetime_from",
+          "release_datetime_to", "ordering", "group_by", "page", "page_size"]
+
+
+@pytest.mark.asyncio
+async def test_tools_list_advertises_only_the_ten_listed_parameters(mcp_module) -> None:
+    """20 -> 10 listed. Read off the wire (tools/list), which is what a client
+    pays for and reads; the description must not name an unlisted one either."""
+    from fastmcp import Client
+
+    async with Client(mcp_module.mcp) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+    schema = tools["filings_search"].inputSchema
+    assert list(schema["properties"]) == LISTED
+    assert not schema.get("required")
+    flat = " ".join((tools["filings_search"].description or "").split())
+    for name in sorted(mcp_module._FILINGS_SEARCH_UNLISTED):
+        assert f"`{name}`" not in flat and f" {name}=" not in flat, name
+    # `added_to_platform` stays a valid ORDERING field; its range filters went.
+    for name in ("include_predecessors", "added_to_platform_from", "added_to_platform_to",
+                 "company_id", "max_results"):
+        assert name not in flat, name
+    # "languages" is also prose ("the languages of the markets"); the filter
+    # was listed as "countries / languages".
+    assert "countries / languages" not in flat
+
+
+def test_every_unlisted_name_is_still_in_the_signature(mcp_module) -> None:
+    """FastMCP validates a call against the signature, not the advertised
+    schema: a name pruned from the schema AND dropped from the signature would
+    be refused (as `limit` was)."""
+    import inspect
+
+    params = inspect.signature(_tool(mcp_module)).parameters
+    assert mcp_module._FILINGS_SEARCH_UNLISTED <= set(params)
+    assert set(LISTED) | mcp_module._FILINGS_SEARCH_UNLISTED == set(params)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        # `company` is accepted as before (one id; `companies` takes one too).
+        ({"company": 42}, {"company": "42"}),
+        ({"companies": 42}, {"companies": "42"}),
+        ({"companies": "42"}, {"companies": "42"}),
+        ({"companies": [12, 34], "include_predecessors": True},
+         {"companies": "12,34", "include_predecessors": "true"}),
+        ({"languages": "en,de"}, {"languages": "en,de"}),
+        ({"added_to_platform_from": "2026-11-09T00:00:00Z",
+          "added_to_platform_to": "2026-11-10T00:00:00Z"},
+         {"added_to_platform_from": "2026-11-09T00:00:00Z",
+          "added_to_platform_to": "2026-11-10T00:00:00Z"}),
+        # `limit` is the name models use for `page_size` (it was refused).
+        ({"limit": 5}, {"page_size": "5"}),
+        ({"limit": 500}, {"page_size": "100"}),
+        # An explicit page_size is the listed name and wins, an explicit 20
+        # included (SPECHT on #211: it read as "not sent").
+        ({"limit": 5, "page_size": 50}, {"page_size": "50"}),
+        ({"limit": 5, "page_size": 20}, {"page_size": "20"}),
+        ({}, {"page_size": "20"}),
+    ],
+)
+async def test_unlisted_arguments_are_accepted_through_real_dispatch(
+    mcp_module, monkeypatch, fake_access_token, respx_router, args, expected
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    out = await _call(mcp_module, {"queries": ["going concern"], **args})
+    assert "filing 1" in out
+    params = route.calls.last.request.url.params
+    for key, value in expected.items():
+        assert params.get(key) == value, key
+    assert "limit" not in params and "max_results" not in params
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [True, 3.5])
+async def test_a_bare_companies_value_that_is_not_an_id_is_refused(
+    mcp_module, monkeypatch, fake_access_token, respx_router, bad
+):
+    """`companies` takes one bare id, so the signature admits an int. A JSON
+    `true` must not become company 1 on the way (lax int would coerce it)."""
+    from fastmcp import Client
+    from fastmcp.exceptions import ToolError
+
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=_page([_filing(1, LITERAL)])))
+    async with Client(mcp_module.mcp) as client:
+        try:
+            result = await client.call_tool("filings_search", {"queries": ["x"], "companies": bad})
+            out = result.content[0].text
+        except ToolError as exc:
+            out = str(exc)
+    assert "filing 1" not in out
+    assert not route.called
 
 
 @pytest.mark.asyncio
@@ -1277,6 +1371,6 @@ async def test_an_empty_page_keeps_the_search_notes(
     body = _page([], count=0, scan_complete=True)
     body["search"]["max_results_note"] = "Asked for 2000 results; your plan allows up to 1000, so 1000 were searched."
     respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=body))
-    out = await _call(mcp_module, {"queries": ["going concern"], "max_results": 2000})
+    out = await _call(mcp_module, {"queries": ["going concern"]})
     assert out.startswith("No filing matched")
     assert out.endswith("Search note: Asked for 2000 results; your plan allows up to 1000, so 1000 were searched.")
