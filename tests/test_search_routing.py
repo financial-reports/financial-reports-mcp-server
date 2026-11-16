@@ -154,11 +154,38 @@ def test_the_batch_tool_no_longer_invites_a_peer_fan_out(mcp_module) -> None:
     assert "To find WHICH filings or companies mention it, call filings_search first" in desc
 
 
-def test_filings_search_names_the_cjk_line_and_the_new_since_recipe(mcp_module) -> None:
+def test_filings_search_names_the_cjk_line_and_not_the_new_since_recipe(mcp_module) -> None:
     desc = " ".join(_description(mcp_module, "filings_search").split())
     assert "With NO country filter, also pass Chinese, Japanese and Korean phrasings" in desc
-    assert "WHAT IS NEW SINCE MY LAST CHECK" in desc
-    assert "added_to_platform_from" in desc and 'ordering="-added_to_platform"' in desc
+    # The "WHAT IS NEW SINCE MY LAST CHECK" recipe was removed with its
+    # parameters (usage audit 2026-11-16: 9 calls, and all 3 that ran returned
+    # nothing). added_to_platform_from / _to are still accepted, unlisted.
+    assert "WHAT IS NEW SINCE MY LAST CHECK" not in desc
+    assert "added_to_platform_from" not in desc
+
+
+def test_the_recency_rule_scopes_the_date_sort_to_filings_list(mcp_module) -> None:
+    """The rule told every agent to sort 'latest' by -release_datetime and that
+    only three fields can be ordered, and was the likely source of the 34% of
+    filings_search calls that sorted by date (usage audit 2026-11-16). Both
+    claims are about filings_list; filings_search keeps relevance and bounds
+    the dates. Worded to stay true whether a date sort reorders the relevance-
+    capped set (before web#10424) or every match (after)."""
+    text = _instructions(mcp_module)
+    recency, _, _ = text.partition("\n\n")
+    assert recency.startswith("RECENCY")
+    assert "on filings_list sort newest-first (ordering=-release_datetime)" in recency
+    assert "on filings_search keep relevance and set release_datetime_from" in recency
+    assert "sort by date to list the matches newest first" in recency
+    assert "ONLY orderable fields" not in text
+
+
+def test_the_title_search_hint_is_scoped_to_filings_list(mcp_module) -> None:
+    """filings_search has no `search` parameter, and the endpoint refuses
+    `search` beside `q` (filter_not_supported_with_q)."""
+    rule = _core_rules(mcp_module)
+    assert 'To pin the exact form on filings_list, ALSO pass `search="10-Q"`' in rule
+    assert "To pin the exact form the user asked for, ALSO pass" not in rule
 
 
 # --- the find_filing_section prompt -------------------------------------------
@@ -184,7 +211,8 @@ async def test_find_filing_section_searches_instead_of_paging(mcp_module) -> Non
 @pytest.mark.asyncio
 async def test_find_filing_section_offers_the_filings_search_shortcut(mcp_module) -> None:
     text = await _render_find_filing_section(mcp_module)
-    assert '`filings_search` with queries=["supply chain", <its translations>], company=<id>' in text
+    # `companies` is the listed company parameter (`company` is accepted, unlisted).
+    assert '`filings_search` with queries=["supply chain", <its translations>], companies=<id>' in text
     assert 'ordering="-release_datetime" lists this company\'s filings' in text
     # The prompt asks for the MOST RECENT filing, so an answer from an older one
     # must say so.
@@ -202,11 +230,11 @@ async def test_find_filing_section_does_not_retrieve_an_unreachable_hit(mcp_modu
 
 @pytest.mark.asyncio
 async def test_find_filing_section_shortcut_does_not_decide_the_newest(mcp_module) -> None:
-    # The date ordering only reorders the relevance-capped set, so the newest
-    # matching filing can be outside it; filings_list (step 3) decides newest.
+    # Since web#10424 a date sort keeps the newest matches of all, but the newest
+    # filing of the type may not mention the keyword: filings_list (step 3) decides.
     text = await _render_find_filing_section(mcp_module)
-    assert "newest first among its top matches by relevance" in text
-    assert "It does not decide which filing is newest; step 3 does." in text
+    assert "newest first across all its matches" in text
+    assert "may not mention it at all, so it does not decide which filing is newest; step 3 does." in text
 
 
 @pytest.mark.asyncio
