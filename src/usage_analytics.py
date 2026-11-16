@@ -107,11 +107,15 @@ ALLOWED_ARG_KEYS = frozenset({
     "filing_ids",
 })
 
-# Allowlisted keys whose value is a list of filing ids: stored as positive ints
-# (digit strings converted), at most MAX_ID_LIST; anything else in the list is
-# dropped and a non-list is redacted. The receiver applies the same rule.
+# Allowlisted keys whose value is a list of filing ids: stored as the ids the
+# batch tool actually searches — positive ints (short ASCII digit strings
+# converted), duplicates dropped in order, the first MAX_ID_LIST — so a follow-up
+# open is matched against what was read. Anything else in the list is dropped; a
+# non-list is redacted. `filing_ids_count` keeps the demand as requested.
 ID_LIST_KEYS = frozenset({"filing_ids"})
-MAX_ID_LIST = 25
+MAX_ID_LIST = 20  # the batch tool's _BATCH_MAX_FILINGS
+_MAX_ID_DIGITS = 19  # a BigAutoField id; also keeps int() far from its digit limit
+_MAX_ID_SCAN = 1000  # items looked at, so a huge junk list costs nothing
 
 # Keys this sender SETS from other arguments and NEVER accepts from the caller.
 # A key must be in exactly one of these two sets: a derived key that is ALSO
@@ -356,20 +360,22 @@ def _truncate(value: Any) -> Any:
 
 
 def _ids_only(value: Any) -> Any:
-    """A filing id list as stored: positive ints, at most MAX_ID_LIST."""
+    """A filing id list as stored: see ID_LIST_KEYS."""
     if not isinstance(value, (list, tuple)):
         return REDACTED
-    ids: list = []
-    for item in value:
+    ids: dict = {}
+    for item in value[:_MAX_ID_SCAN]:
         if isinstance(item, bool):
             continue
-        if isinstance(item, str) and item.isdigit():
+        if isinstance(item, str):
+            if not (item.isascii() and item.isdigit() and len(item) <= _MAX_ID_DIGITS):
+                continue
             item = int(item)
         if isinstance(item, int) and item > 0:
-            ids.append(item)
-        if len(ids) >= MAX_ID_LIST:
-            break
-    return ids
+            ids[item] = None
+            if len(ids) >= MAX_ID_LIST:
+                break
+    return list(ids)
 
 
 def sanitize_mcp_arguments(arguments: Any) -> dict:

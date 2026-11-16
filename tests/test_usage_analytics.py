@@ -1097,7 +1097,19 @@ def test_a_filing_id_list_keeps_only_positive_int_ids():
     assert out["filing_ids_count"] == 10  # demand as requested, before cleaning
 
 
-def test_a_filing_id_list_is_capped():
+def test_a_filing_id_list_is_capped_at_what_the_batch_tool_searches():
     out = sanitize_mcp_arguments({"filing_ids": list(range(1, 100))})
-    assert out["filing_ids"] == list(range(1, 26))
+    assert out["filing_ids"] == list(range(1, 21))
     assert out["filing_ids_count"] == 99
+
+
+def test_duplicates_do_not_hide_a_searched_id():
+    # SPECHT on #210: 25 repeats of 1 then 2 — the tool searches 1 and 2.
+    out = sanitize_mcp_arguments({"filing_ids": [1] * 25 + [2]})
+    assert out["filing_ids"] == [1, 2]
+
+
+def test_unconvertible_digit_strings_are_dropped_not_raised():
+    # SPECHT on #210: "²".isdigit() is True but int("²") raises; a huge digit run trips int()'s limit.
+    out = sanitize_mcp_arguments({"filing_ids": ["²", "9" * 5000, "١٢", "7"]})
+    assert out["filing_ids"] == [7]
