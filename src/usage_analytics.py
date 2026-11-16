@@ -115,7 +115,6 @@ ALLOWED_ARG_KEYS = frozenset({
 ID_LIST_KEYS = frozenset({"filing_ids"})
 MAX_ID_LIST = 20  # the batch tool's _BATCH_MAX_FILINGS
 _MAX_ID_DIGITS = 19  # a BigAutoField id; also keeps int() far from its digit limit
-_MAX_ID_SCAN = 1000  # items looked at, so a huge junk list costs nothing
 
 # Keys this sender SETS from other arguments and NEVER accepts from the caller.
 # A key must be in exactly one of these two sets: a derived key that is ALSO
@@ -364,11 +363,13 @@ def _ids_only(value: Any) -> Any:
     if not isinstance(value, (list, tuple)):
         return REDACTED
     ids: dict = {}
-    for item in value[:_MAX_ID_SCAN]:
+    # The whole list, as the tool dedupes the whole list before taking 20; it stops
+    # at the 20th distinct id.
+    for item in value:
         if isinstance(item, bool):
             continue
         if isinstance(item, str):
-            if not (item.isascii() and item.isdigit() and len(item) <= _MAX_ID_DIGITS):
+            if not (len(item) <= _MAX_ID_DIGITS and item.isascii() and item.isdigit()):
                 continue
             item = int(item)
         if isinstance(item, int) and item > 0:

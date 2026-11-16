@@ -1107,6 +1107,8 @@ def test_duplicates_do_not_hide_a_searched_id():
     # SPECHT on #210: 25 repeats of 1 then 2 — the tool searches 1 and 2.
     out = sanitize_mcp_arguments({"filing_ids": [1] * 25 + [2]})
     assert out["filing_ids"] == [1, 2]
+    # and past any scan bound: the tool dedupes the whole list (SPECHT round 2)
+    assert sanitize_mcp_arguments({"filing_ids": [1] * 1000 + [2]})["filing_ids"] == [1, 2]
 
 
 def test_unconvertible_digit_strings_are_dropped_not_raised():
