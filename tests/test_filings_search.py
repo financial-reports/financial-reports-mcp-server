@@ -456,6 +456,10 @@ async def test_query_and_a_bare_string_are_accepted_through_real_dispatch(
         ({"q": ["going concern", "ransomware"]}, ["going concern", "ransomware"], None),
         ({"queries": ["going concern"], "q": "ransomware"}, ["going concern", "ransomware"], None),
         ({"queries": ["going concern"], "q": "going concern"}, ["going concern"], None),
+        # An empty `queries` beside a real `q` is absent, not an error (SPECHT on #209).
+        ({"queries": [], "q": "going concern"}, ["going concern"], None),
+        ({"queries": "", "q": ["going concern"]}, ["going concern"], None),
+        ({"queries": ["going concern"], "q": []}, ["going concern"], None),
         # `company_id` is the name models use for `company`.
         ({"queries": ["x"], "company_id": 42}, ["x"], "42"),
         ({"queries": ["x"], "company": 42, "company_id": 42}, ["x"], "42"),
@@ -485,6 +489,17 @@ async def test_company_and_company_id_that_disagree_are_refused_locally(
     route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
     out = await _call(mcp_module, {"queries": ["x"], "company": 1, "company_id": 2})
     assert "company and company_id name different companies" in out
+    assert not route.called
+
+
+@pytest.mark.asyncio
+async def test_q_beside_queries_still_has_the_five_query_limit(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    route = respx_router.get(SEARCH_URL).mock(return_value=httpx.Response(200, json=_page([])))
+    out = await _call(mcp_module, {"queries": ["a", "b", "c"], "q": ["d", "e", "f"]})
+    assert "at most 5 queries" in out
     assert not route.called
 
 

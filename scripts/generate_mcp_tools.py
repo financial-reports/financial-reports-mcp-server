@@ -6068,6 +6068,17 @@ _CROSS_SEARCH_GROUP_BY_VALUES = ("company",)
 _CROSS_SEARCH_MAX_COMPANIES = 50
 
 
+def _blank_queries(value: Any) -> bool:
+    """None, a blank string, or a list/tuple holding no non-blank string."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple)):
+        return not any(isinstance(v, str) and v.strip() for v in value)
+    return False
+
+
 def _cross_search_queries(queries: Any, query: Any = None) -> list[str]:
     """Normalise `queries` (plus the singular `query`) to 1..5 stripped strings
     of <= 200 chars.
@@ -6402,10 +6413,13 @@ async def filings_search(
         # no meaning here (this tool renders its own rows): accepted, ignored.
         del view
         if q is not None:
-            if queries is None:
-                queries = q
-            else:
-                queries = [*_cross_search_queries(queries, None), *_cross_search_queries(q, None)]
+            # An empty or blank part (`queries=[]` beside a real `q`) is absent,
+            # not an error; the merged list still gets the 5-query limit below.
+            parts = [part for part in (queries, q) if not _blank_queries(part)]
+            if len(parts) == 2:
+                queries = [*_cross_search_queries(parts[0], None), *_cross_search_queries(parts[1], None)]
+            elif parts:
+                queries = parts[0]
         if company_id is not None:
             if company is not None and company != company_id:
                 raise ToolInputError("company and company_id name different companies; send one")
