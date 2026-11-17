@@ -431,148 +431,56 @@ async def test_an_in_limit_comma_fallback_is_STILL_sent(
     assert sent == ["19409", "19,409"], f"the fallback was dropped: {sent}"
     assert "19,409" in out
 
-
 @pytest.mark.asyncio
-async def test_a_hit_past_the_retrieve_cap_is_DISCLOSED(
+async def test_no_hit_is_reported_as_OUT_OF_REACH_any_more(
     mcp_module, monkeypatch, fake_access_token, respx_router
-):
-    """⛔ An asymmetry THIS PR created, flagged by SPECHT and measured in prod.
+) -> None:
+    """#175 retired the reachability disclosure AT THE SOURCE.
 
-    The server searches the whole document; filings_markdown_retrieve still
-    streams from byte 0 and stops at _MAX_FILING_BYTES. So a hit past that cap is
-    a passage this tool found and that tool cannot reach — and the result used to
-    hand the model an offset with no hint that following it is futile.
+    WHAT WAS HERE BEFORE, and why it is gone. Five tests pinned a three-band
+    note on this tool's result: a hit past `_MAX_FILING_BYTES` was "certainly
+    unreachable", a hit below a quarter of it "certainly reachable", and the
+    span between "depends on this document's density" -- because this tool
+    reports CHARACTER offsets while `filings_markdown_retrieve` capped BYTES,
+    and in 2-byte text character 5.5M is byte 11M. SPECHT caught the first
+    version comparing the two units directly (3/3).
 
-    Reachable, not theoretical: 1,586 prod filings exceed the cap, largest
-    2.49 GB (control: 152,127 exceed 1 MB, so the predicate works). A share of
-    53M rows is the wrong denominator — a long filing is exactly what gets
-    SEARCHED rather than read.
+    Those bands were exact and they were correct. They are now MOOT: #175 moved
+    retrieve to window upstream on the same CHARACTER offsets, so every hit this
+    tool reports is fetchable. Keeping the note would tell a model a passage is
+    out of reach when it is not -- sending it to a 440-character snippet instead
+    of the text it could have read. That is a worse failure than the one the
+    note prevented, which is why the removal is part of the fix rather than
+    cleanup.
 
-    The real fix windows retrieve on the API's own offset/limit (#175). This only
-    stops the tool from giving a confidently useless instruction."""
-    _auth_as(mcp_module, monkeypatch, fake_access_token)
-    far = mcp_module._MAX_FILING_BYTES + 5_000
-    _mock_search(
-        respx_router, 1,
-        hits=[(12, "Near the top."), (far, "Deep in a 2 GB filing.")],
-        total_hits=2, total_chars=mcp_module._MAX_FILING_BYTES * 2,
-    )
-    out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="covenant")
-    assert "cannot reach" in out, "an unreachable offset was handed over silently"
-    assert "1 of these hits" in out, "the count of unreachable hits is wrong"
-    assert "Deep in a 2 GB filing" in out, "the context must still be shown"
-
-
-@pytest.mark.asyncio
-async def test_hits_INSIDE_the_cap_carry_no_such_note(
-    mcp_module, monkeypatch, fake_access_token, respx_router
-):
-    """Control. A note on every result would be worse than the gap it describes —
-    the same failure as a bound that rewrites every echo."""
-    _auth_as(mcp_module, monkeypatch, fake_access_token)
-    _mock_search(respx_router, 1, hits=[(12, "Near the top.")], total_hits=1)
-    out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="covenant")
-    assert "cannot reach" not in out
-
-
-@pytest.mark.asyncio
-async def test_the_cap_note_and_the_hit_cap_note_COEXIST(
-    mcp_module, monkeypatch, fake_access_token, respx_router
-):
-    """Both suffixes append. The first version assigned `suffix =`, so whichever
-    condition ran second erased the other — a bug the two tests above would each
-    have passed on their own."""
-    _auth_as(mcp_module, monkeypatch, fake_access_token)
-    far = mcp_module._MAX_FILING_BYTES + 1
-    _mock_search(respx_router, 1, hits=[(far, "Deep.")], total_hits=99)
-    out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="covenant")
-    assert "cannot reach" in out and "99 match(es) exist" in out
-
-
-@pytest.mark.asyncio
-async def test_an_offset_EXACTLY_at_the_cap_is_unreachable(
-    mcp_module, monkeypatch, fake_access_token, respx_router
-):
-    """The boundary, added because a mutation SURVIVED without it.
-
-    `>=` -> `>` passed the whole file: the other tests use cap+5000 and cap+1 and
-    never probe the edge itself. Offsets are 0-indexed and retrieve reads
-    [0, _MAX_FILING_BYTES), so the byte AT the cap is the first one it does not
-    read — `>=` is correct and only this test says so."""
-    _auth_as(mcp_module, monkeypatch, fake_access_token)
-    _mock_search(
-        respx_router, 1,
-        hits=[(mcp_module._MAX_FILING_BYTES, "The first unread byte.")],
-        total_hits=1, total_chars=mcp_module._MAX_FILING_BYTES * 2,
-    )
-    out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="covenant")
-    assert "cannot reach" in out, "off-by-one: the byte at the cap is NOT readable"
-
-
-@pytest.mark.asyncio
-async def test_the_three_offset_BANDS_are_exact_not_heuristic(
-    mcp_module, monkeypatch, fake_access_token, respx_router
-):
-    """⛔ REPLACES `test_the_LAST_READABLE_offset_is_not_flagged`, which became a
-    VACUOUS PASS and whose name was a lie.
-
-    That test used offset `cap - 1`, called it "the last readable byte", and
-    asserted `"cannot reach" not in out`. After the character/byte fix `cap - 1`
-    lands in the MAYBE band and IS flagged — the assertion survived only because
-    the new wording says "may be out of reach" instead. It passed on a string, not
-    on behaviour. Its premise was also wrong in the same way the finding was: a
-    CHARACTER offset of `cap - 1` is only reachable in pure ASCII.
-
-    The bands are exact, from UTF-8 bounds alone:
-        >= 1 byte per char  => byte_off >= char_off  => `>= cap` is CERTAINLY out
-        <= 4 bytes per char => byte_off <= 4*char_off => `< cap//4` is CERTAINLY in
-        in between                                    => depends on the document
+    So this asserts the INVERSE invariant: a far-offset hit carries no
+    reachability hedge. If a byte cap is ever reintroduced into retrieve, this
+    passes while the lie returns -- so it is paired with
+    tests/test_markdown_retrieve_windows_upstream.py, which pins the windowing
+    itself. Neither alone is sufficient and that is stated rather than implied.
     """
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    cap = mcp_module._MAX_FILING_BYTES
-
-    async def _run(offset):
-        respx_router.reset()
-        _mock_search(respx_router, 1, hits=[(offset, "Passage here.")],
-                     total_hits=1, total_chars=cap * 2)
-        return await _tool(mcp_module, "filings_markdown_search")(
-            filing_id=1, query="covenant"
+    far = 12_000_000
+    respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/search/").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "hits": [{"offset": far, "context": "the passage"}],
+                "total_hits": 1,
+                "total_chars": 20_000_000,
+            },
         )
+    )
+    out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="x")
 
-    # Band 1 — certainly reachable: no note of either kind.
-    out = await _run(cap // 4 - 1)
-    assert "cannot reach" not in out and "may be out of reach" not in out
-    assert "Passage here" in out, "positive guard: the tool actually ran"
-
-    # Band 2 — may be unreachable. NOT the certain wording, which is the whole
-    # point: a provably-fetchable-in-ASCII hit must not be called unreachable.
-    out = await _run(cap // 4)
-    assert "may be out of reach" in out, "the quarter-cap boundary enters the maybe band"
-    assert "cannot reach" not in out, "a maybe was reported as a certainty"
-
-    out = await _run(cap - 1)
-    assert "may be out of reach" in out
-    assert "cannot reach" not in out
-
-    # Band 3 — certainly unreachable, because bytes are never fewer than chars.
-    out = await _run(cap)
-    assert "cannot reach" in out
-    assert "may be out of reach" not in out, "a certainty was softened to a maybe"
-
-
-@pytest.mark.asyncio
-async def test_the_maybe_note_names_the_UNIT_CONFUSION_not_just_the_risk(
-    mcp_module, monkeypatch, fake_access_token, respx_router
-):
-    """The caveat has to say WHY, or the model cannot act on it.
-
-    "may be out of reach" alone invites giving up. Naming the cause — the offset
-    counts characters, the cap counts bytes — tells the model the hit is probably
-    fine in ASCII and worth attempting, which is what the band actually means."""
-    _auth_as(mcp_module, monkeypatch, fake_access_token)
-    cap = mcp_module._MAX_FILING_BYTES
-    _mock_search(respx_router, 1, hits=[(cap // 2, "Passage.")],
-                 total_hits=1, total_chars=cap * 2)
-    out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="covenant")
-    assert "CHARACTERS" in out and "BYTES" in out, "the cause is not stated"
-    assert "Try it" in out, "the model is not told the attempt is worthwhile"
+    assert str(far) in out, "the offset itself must still be reported"
+    for hedge in (
+        "cannot reach",
+        "out of reach",
+        "may be out of reach",
+        "whole passage available",
+    ):
+        assert hedge not in out, (
+            f"the result still hedges with {hedge!r}: every offset is fetchable "
+            "since #175, so this sends the model away from text it can read"
+        )

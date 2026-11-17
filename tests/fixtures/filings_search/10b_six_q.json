@@ -1,0 +1,15 @@
+{
+ "recorded_at": "2026-11-06T07:09:16+00:00",
+ "note": null,
+ "query": "q=going+concern&q=continuit%C3%A9+d%27exploitation&q=Unternehmensfortf%C3%BChrung&q=continuidad&q=continuit%C3%A0+aziendale&q=dividend",
+ "status": 400,
+ "headers": {
+  "Content-Type": "application/json; charset=utf-8"
+ },
+ "body": {
+  "detail": "At most 5 values.",
+  "type": "invalid_q",
+  "resolution": "Pass q 1 to 5 times, each value 1-200 characters.",
+  "param": "q"
+ }
+}

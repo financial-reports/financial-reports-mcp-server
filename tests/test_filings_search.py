@@ -2,8 +2,8 @@
 (financial-reports/web#8004, endpoint in web#9601).
 
 ⚠ The response bodies below are SYNTHETIC, built from web#9601's serializer and
-docstrings. Replace them with the allowlisted recordings when those arrive; a
-fixture written from the contract can only agree with the contract.
+docstrings, so they can only agree with the contract. The same paths replayed
+against REAL prod responses live in test_filings_search_recorded.py.
 
 What these pin, beyond "it calls the endpoint":
   - the three `match` states, none of which may read as "did not match"

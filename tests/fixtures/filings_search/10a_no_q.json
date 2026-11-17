@@ -1,0 +1,15 @@
+{
+ "recorded_at": "2026-11-06T07:09:16+00:00",
+ "note": null,
+ "query": "page_size=25",
+ "status": 400,
+ "headers": {
+  "Content-Type": "application/json; charset=utf-8"
+ },
+ "body": {
+  "detail": "Required: the text to find in filings.",
+  "type": "invalid_q",
+  "resolution": "Pass q 1 to 5 times, each value 1-200 characters.",
+  "param": "q"
+ }
+}

@@ -70,7 +70,14 @@ def probe_report() -> dict:
 
 def test_session_initializes(probe_report: dict) -> None:
     """The OAuth token authenticates and the MCP session comes up with the
-    full pruned surface (15 tools)."""
+    full pruned surface (19 tools as of 2026-11-13).
+
+    The assertion is a FLOOR, deliberately: this runs against whatever is
+    deployed, and prod lags `main` by however long it takes a web schema change
+    to fire the deploy. A floor catches "the surface collapsed" without failing
+    every time the curated set grows. The exact count is pinned against the
+    generator in tests/test_published_tool_counts.py instead.
+    """
     assert probe_report["tool_count"] >= 14, probe_report
 
 

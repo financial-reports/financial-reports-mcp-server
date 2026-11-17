@@ -1,0 +1,1142 @@
+{
+ "recorded_at": "2026-11-06T07:08:56+00:00",
+ "note": null,
+ "query": "q=Aeromexico&page_size=25",
+ "status": 200,
+ "headers": {
+  "Content-Type": "application/json; charset=utf-8",
+  "x-credits-charged": "12"
+ },
+ "body": {
+  "count": 1000,
+  "next": "https://api.financialreports.eu/filings/search/?page=2&page_size=25&q=Aeromexico",
+  "previous": null,
+  "results": [
+   {
+    "id": 49949300,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-04-23T01:59:02+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-04-23_428332fa-c507-42e0-ae99-cc9a022373ce.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/49949300/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/49949300/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 272995,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": {
+     "query": "Aeromexico",
+     "hits": [
+      {
+       "offset": 393,
+       "snippet": "rsuant to Rule 13a-16 or 15d-16**\n\n**Under the Securities Exchange Act of 1934**\n\n**For the month of April 2026**\n\n**Commission File Number: 001-42931**\n\n**Grupo Aeroméxico, S.A.B. de C.V.**\n\n**(Name of registrant)**\n\n**Aeromexico Group**\n\n**(Translation of registrant’s name into English)**\n\n**Avenida Paseo de la Reforma 243, 25th Floor**\n\n**Col. Renacimiento, Cuauhtémoc 06500**\n\n**Mexico City**\n\n**United Mexican States**\n\n**+52 (55) 9132 4000**\n"
+      },
+      {
+       "offset": 2298,
+       "snippet": "- |\n| Name: | Ernesto Gómez Pombo |\n| Title: | General Counsel |\n\n---\n\n## Exhibit 99.1\n\nEX-99.1 2 d332308dex991.htm EX-99.1 EX-99.1\n\n**Exhibit 99.1**\n\n![LOGO](g332308g0423050127285.jpg)\n\n| CONTACT: | aminvestorrelations@aeromexico.com |\n| --- | --- |\n| Corporate Communications | amcomunicacioncorporativa@aeromexico.com |\n\n**Aeroméxico Reports Unaudited First Quarter 2026 Results**\n\n Total Revenue growth of 13% year-on-year\n\n Adjusted EBITDAR Ma"
+      },
+      {
+       "offset": 2384,
+       "snippet": "\n\nEX-99.1 2 d332308dex991.htm EX-99.1 EX-99.1\n\n**Exhibit 99.1**\n\n![LOGO](g332308g0423050127285.jpg)\n\n| CONTACT: | aminvestorrelations@aeromexico.com |\n| --- | --- |\n| Corporate Communications | amcomunicacioncorporativa@aeromexico.com |\n\n**Aeroméxico Reports Unaudited First Quarter 2026 Results**\n\n Total Revenue growth of 13% year-on-year\n\n Adjusted EBITDAR Margin of 25%\n\n Operating Margin of 11%\n\n Liquidity to LTM Revenue ratio at 23%\n\nGrupo"
+      }
+     ],
+     "total_hits": 10
+    }
+   },
+   {
+    "id": 49310165,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-07-13T20:47:15+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-07-13_f1767f8e-a94a-4460-8c1a-054436ef0eed.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/49310165/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/49310165/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 135894,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": {
+     "query": "Aeromexico",
+     "hits": [
+      {
+       "offset": 392,
+       "snippet": "ursuant to Rule 13a-16 or 15d-16**\n\n**Under the Securities Exchange Act of 1934**\n\n**For the month of July 2026**\n\n**Commission File Number: 001-42931**\n\n**Grupo Aeroméxico, S.A.B. de C.V.**\n\n**(Name of registrant)**\n\n**Aeromexico Group**\n\n**(Translation of registrant’s name into English)**\n\n**Avenida Paseo de la Reforma 243, 25th Floor**\n\n**Col. Cuauhtémoc, Cuauhtémoc 06500**\n\n**Mexico City, Mexico**\n\n**(Address of principal executive offices)**"
+      },
+      {
+       "offset": 2248,
+       "snippet": "to Gómez Pombo |\n| Title: | General Counsel |\n\n---\n\n## Exhibit 99.1\n\nEX-99.1 2 d112634dex991.htm EX-99.1 EX-99.1\n\n**Exhibit 99.1**\n\n![LOGO](g112634g0713183639919.jpg)\n\n| CONTACT: Investor Relations | aminvestorrelations@aeromexico.com |\n| --- | --- |\n| Corporate Communications | amcomunicacioncorporativa@aeromexico.com |\n\n**Aeroméxico Reports Unaudited**\n\n**Second Quarter 2026 Results**\n\n Record 2Q Total Revenue of $1.5 billion\n\n Adjusted EBITD"
+      },
+      {
+       "offset": 2334,
+       "snippet": "dex991.htm EX-99.1 EX-99.1\n\n**Exhibit 99.1**\n\n![LOGO](g112634g0713183639919.jpg)\n\n| CONTACT: Investor Relations | aminvestorrelations@aeromexico.com |\n| --- | --- |\n| Corporate Communications | amcomunicacioncorporativa@aeromexico.com |\n\n**Aeroméxico Reports Unaudited**\n\n**Second Quarter 2026 Results**\n\n Record 2Q Total Revenue of $1.5 billion\n\n Adjusted EBITDAR Margin of 18%\n\n Operating Margin of 5%\n\n Liquidity (3) to LTM Revenue ratio at 22"
+      }
+     ],
+     "total_hits": 11
+    }
+   },
+   {
+    "id": 47220946,
+    "title": "News release - English.pdf",
+    "release_datetime": "2020-06-29T17:10:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2020/RNS/46343_rns_2020-06-29_0f63c65c-a89e-4180-8c99-c1dd5ed7873f.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2020/RNS/46343_rns_2020-06-29_0f63c65c-a89e-4180-8c99-c1dd5ed7873f.pdf",
+    "viewer_url": "https://financialfilings.com/filings/aimia-inc/ma-activity/2020/47220946/",
+    "company": {
+     "id": 46343,
+     "name": "Aimia Inc.",
+     "tagline": "A diversified conglomerate and global investment holding company.",
+     "isins": [
+      "CA00900Q1037"
+     ],
+     "lei": "5299005QK3KSTUZ66Y90",
+     "sub_industry_code": "6421",
+     "oics_code": "MA.CH.SAC.PFC",
+     "country_code": "CA",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 23,
+     "code": "TAR",
+     "name": "M&A Activity",
+     "description": "Announcements and documents related to merger proposals or takeover bids.",
+     "category": {
+      "id": 10,
+      "name": "M&A, Partnerships & Legal",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 39940,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": {
+     "query": "Aeromexico",
+     "hits": [
+      {
+       "offset": 52,
+       "snippet": "# **Aimia strengthens and extends relationship with Aeromexico** \n\n- Definitive agreement reached ensuring strong alignment of interest between the PLM joint venture partners \n\n- 20-year extension of current CPSA term to 2050 between Aeromexico and PLM Provides US$100 million in fi"
+      },
+      {
+       "offset": 234,
+       "snippet": "ngthens and extends relationship with Aeromexico** \n\n- Definitive agreement reached ensuring strong alignment of interest between the PLM joint venture partners \n\n- 20-year extension of current CPSA term to 2050 between Aeromexico and PLM Provides US$100 million in financial support for Aeromexico funded by PLM's cash Aeromexico granted a 7-year option to purchase Aimia's 48.9% equity interest in PLM with minimum price of US$400 million for Aimia"
+      },
+      {
+       "offset": 302,
+       "snippet": "reement reached ensuring strong alignment of interest between the PLM joint venture partners \n\n- 20-year extension of current CPSA term to 2050 between Aeromexico and PLM Provides US$100 million in financial support for Aeromexico funded by PLM's cash Aeromexico granted a 7-year option to purchase Aimia's 48.9% equity interest in PLM with minimum price of US$400 million for Aimia's equity interest \n\n- Parties agree to pursue initiatives to provid"
+      }
+     ],
+     "total_hits": 20
+    }
+   },
+   {
+    "id": 13892767,
+    "title": "News release - English.pdf",
+    "release_datetime": "2020-05-12T20:51:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2020/RNS/46343_rns_2020-05-12_cad46b8a-38d3-44ed-9a07-7b1596d94e8a.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2020/RNS/46343_rns_2020-05-12_cad46b8a-38d3-44ed-9a07-7b1596d94e8a.pdf",
+    "viewer_url": "https://financialfilings.com/filings/aimia-inc/capitalfinancing-update/2020/13892767/",
+    "company": {
+     "id": 46343,
+     "name": "Aimia Inc.",
+     "tagline": "A diversified conglomerate and global investment holding company.",
+     "isins": [
+      "CA00900Q1037"
+     ],
+     "lei": "5299005QK3KSTUZ66Y90",
+     "sub_industry_code": "6421",
+     "oics_code": "MA.CH.SAC.PFC",
+     "country_code": "CA",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 48,
+     "code": "CAP",
+     "name": "Capital/Financing Update",
+     "description": "Updates on company fundraising, financing activities, or capital structure changes.",
+     "category": {
+      "id": 8,
+      "name": "Debt Information",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 37901,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": {
+     "query": "Aeromexico",
+     "hits": [
+      {
+       "offset": 34,
+       "snippet": "# Aimia Expands Relationship with Aeromexico\n\n(All figures referenced in U.S. dollars, except where noted)\n\n- Binding letter of intent subject to negotiation of certain commercial and financial terms; anticipated to close in 60 days\n- Proposed amendments to commer"
+      },
+      {
+       "offset": 451,
+       "snippet": "s\n- Proposed amendments to commercial and shareholders agreements ensure strong alignment of interest between the joint venture partners\n- Proposed 20-year extension of current CPSA term\n- Proposed financial support for Aeromexico by PLM of US$100 million using intercompany loans and pre-purchases of award tickets, funded by PLM's cash on hand\n- Agreement in principle to grant Aeromexico a 7-year option to purchase Aimia's stake in PLM at a 7.5x "
+      },
+      {
+       "offset": 611,
+       "snippet": "nsion of current CPSA term\n- Proposed financial support for Aeromexico by PLM of US$100 million using intercompany loans and pre-purchases of award tickets, funded by PLM's cash on hand\n- Agreement in principle to grant Aeromexico a 7-year option to purchase Aimia's stake in PLM at a 7.5x Adjusted EBITDA multiple, with minimum price of US$400 million for Aimia's stake, subject to final agreement on certain terms and conditions\n- Parties agree to "
+      }
+     ],
+     "total_hits": 20
+    }
+   },
+   {
+    "id": 23446942,
+    "title": "News release - English.pdf",
+    "release_datetime": "2022-02-08T13:09:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2022/RNS/46343_rns_2022-02-08_c8554914-f062-4bd5-960d-1675676ca0c6.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2022/RNS/46343_rns_2022-02-08_c8554914-f062-4bd5-960d-1675676ca0c6.pdf",
+    "viewer_url": "https://financialfilings.com/filings/aimia-inc/capitalfinancing-update/2022/23446942/",
+    "company": {
+     "id": 46343,
+     "name": "Aimia Inc.",
+     "tagline": "A diversified conglomerate and global investment holding company.",
+     "isins": [
+      "CA00900Q1037"
+     ],
+     "lei": "5299005QK3KSTUZ66Y90",
+     "sub_industry_code": "6421",
+     "oics_code": "MA.CH.SAC.PFC",
+     "country_code": "CA",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 48,
+     "code": "CAP",
+     "name": "Capital/Financing Update",
+     "description": "Updates on company fundraising, financing activities, or capital structure changes.",
+     "category": {
+      "id": 8,
+      "name": "Debt Information",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 44607,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": {
+     "query": "Aeromexico",
+     "hits": [
+      {
+       "offset": 217,
+       "snippet": "## **AIMIA TO DIVEST ITS STAKE IN PLM LOYALTY PROGRAM FOR NET PROCEEDS OF UP TO $517 MILLION** \n\n_(All figures in Canadian dollars unless otherwise noted)_ \n\n- **Aimia has entered into a binding letter of intent with Aeromexico to divest its stake in PLM loyalty program for net proceeds, including an earn-out, of up to $517 million (USD $405 million), or $5.58 per common share** \n\n- **Net cash proceeds of approximately $492 million (USD $386 m"
+      },
+      {
+       "offset": 688,
+       "snippet": "sing, plus an earn-out of approximately $25 million (USD $19 million) on a net basis The Transaction will be consummated pursuant to the joint chapter 11 plan of reorganization (as amended, the \"Debtor's Plan\") of Grupo Aeromexico and its affiliates that are also debtors (collectively, the \"Debtors\") in the Debtors' chapter 11 bankruptcy cases pending in the United States Bankruptcy Court for the Southern District of New York (the \"Bankruptcy Cou"
+      },
+      {
+       "offset": 1291,
+       "snippet": "that its wholly-owned subsidiaries Aimia Holdings UK Limited and Aimia Holdings UK II Limited have entered into a binding letter of intent (the \" **Binding LOI** \") with PLM Premier, S.A.P.I. de C.V (\" **PLM** \"), Grupo Aeromexico, S.A.B. de C.V. and Aerovías de México, S.A. de C.V. (collectively, \" **Aeromexico** \") to divest the company's 48.9% equity stake in PLM, the owner and operator of Club Premier, the leading loyalty program in Mexico, a"
+      }
+     ],
+     "total_hits": 9
+    }
+   },
+   {
+    "id": 55833600,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-02-17T11:01:39+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-02-17_916158bc-5d31-422a-9b92-788e50e75e81.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/55833600/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/55833600/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 153213,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": {
+     "query": "Aeromexico",
+     "hits": [
+      {
+       "offset": 366,
+       "snippet": "ant to Rule 13a-16 or 15d-16**\n\n**Under the Securities Exchange Act of 1934**\n\n**For the month of February 2026**\n\n**Commission File Number: 001-42931**\n\n**Grupo Aeroméxico, S.A.B. de C.V.**\n\n**(Name of registrant)**\n\n**Aeromexico Group**\n\n**(Translation of registrant’s name into English)**\n\n**Avenida Paseo de la Reforma 243, 25th Floor**\n\n**Col. Renacimiento, Cuauhtémoc 06500**\n\n**Mexico City**\n\n**United Mexican States**\n\n**+52 (55) 9132 4000**\n"
+      },
+      {
+       "offset": 1803,
+       "snippet": ". — By: | /s/ Ernesto Gómez Pombo |\n| --- | --- |\n| Name: | Ernesto Gómez Pombo |\n| Title: | General Counsel |\n\n---\n\n## Exhibit 99.1\n\n**Exhibit 99.1**\n\n![LOGO](g89476g0216230658536.jpg)\n\n| CONTACT: | aminvestorrelations@aeromexico.com |\n| --- | --- |\n| Corporate Communications | amcomunicacioncorporativa@aeromexico.com |\n\n**Aeroméxico Reports Unaudited Fourth Quarter & Full Year 2025 Results**\n\n Total Revenue of $1.4 billion in 4Q25 and $5.4 bil"
+      },
+      {
+       "offset": 1889,
+       "snippet": "tle: | General Counsel |\n\n---\n\n## Exhibit 99.1\n\n**Exhibit 99.1**\n\n![LOGO](g89476g0216230658536.jpg)\n\n| CONTACT: | aminvestorrelations@aeromexico.com |\n| --- | --- |\n| Corporate Communications | amcomunicacioncorporativa@aeromexico.com |\n\n**Aeroméxico Reports Unaudited Fourth Quarter & Full Year 2025 Results**\n\n Total Revenue of $1.4 billion in 4Q25 and $5.4 billion in FY25\n\n Adjusted EBITDAR Margin of 35% in 4Q25 and 31% in FY25, highest on rec"
+      }
+     ],
+     "total_hits": 10
+    }
+   },
+   {
+    "id": 47394572,
+    "title": "News release - English.pdf",
+    "release_datetime": "2022-11-08T13:38:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/47594/2022/RNS/47594_rns_2022-11-08_81b017d8-5696-42c8-9734-9a7cf15e5a90.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/47594/2022/RNS/47594_rns_2022-11-08_81b017d8-5696-42c8-9734-9a7cf15e5a90.pdf",
+    "viewer_url": "https://financialfilings.com/filings/nowvertical-group-inc/regulatory-filings/2022/47394572/",
+    "company": {
+     "id": 47594,
+     "name": "NowVertical Group Inc.",
+     "tagline": "Global data and analytics firm providing Vertical Intelligence (VI) software and AI solutions.",
+     "isins": [
+      "CA67013H1064"
+     ],
+     "lei": "549300XOLRG0FNJK3749",
+     "sub_industry_code": "6220",
+     "oics_code": "TC.IT.ITS.ITC",
+     "country_code": "CA",
+     "date_public": "2026-10-31"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 20023,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": {
+     "query": null,
+     "hits": [],
+     "total_hits": 0
+    }
+   },
+   {
+    "id": 74271756,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-10-19T21:34:21+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-10-19_86c5919f-6d18-412a-8061-195a0643d7e7.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/74271756/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/earnings-release/2026/74271756/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 6,
+     "code": "ER",
+     "name": "Earnings Release",
+     "description": "Announcement of quarterly, half-year, or full-year financial results, including preliminary or unaudited ('final') results announcements, with key highlights and sometimes summary financial statements.",
+     "category": {
+      "id": 2,
+      "name": "Financial Reporting & Info",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 427783,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": {
+     "query": "Aeromexico",
+     "hits": [
+      {
+       "offset": 549,
+       "snippet": "16**\n\n**Under the Securities Exchange Act of 1934**\n\n**For the month of October 2026**\n\n**Commission File Number: 001-42931**\n\n_________________________\n\n**Grupo Aeroméxico, S.A.B. de C.V.**\n\n**(Name of registrant)**\n\n**Aeromexico Group**\n\n**(Translation of registrant’s name into English)**\n\n_________________________\n\n**Avenida Paseo de la Reforma 243, 25th Floor**\n\n**Col. Cuauhtémoc, Cuauhtémoc 06500**\n\n**Mexico City, Mexico**\n\n**(Address of pri"
+      },
+      {
+       "offset": 2533,
+       "snippet": "\n\n---\n\n## Exhibit 99.1\n\nEX-99.1 2 aeromxicoreportsunauditedt.htm EX-99.1 Document created using Wdesk Copyright 2026 Workiva Document\n\n![aerologoa.jpg](aerologoa.jpg)\n\n**CONTACT:** Investor Relations aminvestorrelations@aeromexico.com\n\nCorporate Communications amcomunicacioncorporativa@aeromexico.com\n\n**Aeroméxico Reports Unaudited**\n\n**Third Quarter 2026 Results**\n\n*• Record Quarterly Total Revenue of $1.6 billion*\n\n• *Adjusted EBITDAR *(1)** *M"
+      },
+      {
+       "offset": 2600,
+       "snippet": "-99.1 Document created using Wdesk Copyright 2026 Workiva Document\n\n![aerologoa.jpg](aerologoa.jpg)\n\n**CONTACT:** Investor Relations aminvestorrelations@aeromexico.com\n\nCorporate Communications amcomunicacioncorporativa@aeromexico.com\n\n**Aeroméxico Reports Unaudited**\n\n**Third Quarter 2026 Results**\n\n*• Record Quarterly Total Revenue of $1.6 billion*\n\n• *Adjusted EBITDAR *(1)** *Margin of 24%*\n\n• *Operating Margin of 12%*\n\n• *Liquidity (2) to LTM"
+      }
+     ],
+     "total_hits": 10
+    }
+   },
+   {
+    "id": 12054337,
+    "title": "6-K - Central North Airport Group",
+    "release_datetime": "2009-03-04T16:53:18+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/31017/2009/FFR/31017_ffr_2009-03-04_09e5b65e-566e-4cf5-8229-dd3ff691f27a.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/12054337/document/",
+    "viewer_url": "https://financialfilings.com/filings/central-north-airport-group/regulatory-filings/2009/12054337/",
+    "company": {
+     "id": 31017,
+     "name": "Central North Airport Group",
+     "tagline": "Develops, manages, and maintains 13 international airports in central and northern Mexico.",
+     "isins": [
+      "US4005011022"
+     ],
+     "lei": "",
+     "sub_industry_code": "5223",
+     "oics_code": "IN.TP.TIS.TIS",
+     "country_code": "US",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 32526,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": {
+     "query": null,
+     "hits": [],
+     "total_hits": 0
+    }
+   },
+   {
+    "id": 49907075,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-03-17T10:47:17+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-03-17_72e30764-1b76-4f97-bc03-83124d5d94d6.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/49907075/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/49907075/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 33745,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": {
+     "query": "Aeromexico",
+     "hits": [
+      {
+       "offset": 392,
+       "snippet": "rsuant to Rule 13a-16 or 15d-16**\n\n**Under the Securities Exchange Act of 1934**\n\n**For the month of March 2026**\n\n**Commission File Number: 001-42931**\n\n**Grupo Aeroméxico, S.A.B. de C.V.**\n\n**(Name of registrant)**\n\n**Aeromexico Group**\n\n**(Translation of registrant’s name into English)**\n\n**Avenida Paseo de la Reforma 243, 25th Floor**\n\n**Col. Renacimiento, Cuauhtémoc 06500**\n\n**Mexico City**\n\n**United Mexican States**\n\n**+52 (55) 9132 4000**\n"
+      },
+      {
+       "offset": 2820,
+       "snippet": "erm strategy, performance, results, business plan, and growth prospects. The acquisitions were made in full compliance with the Company’s securities trading policy and applicable law.\n\nContact: amcomunicacioncorporativa@aeromexico.com\n\n**About Grupo Aeroméxico**\n\nGrupo Aeroméxico, S.A.B. de C.V. is a holding company whose subsidiaries are engaged in commercial aviation in Mexico and the promotion of passenger loyalty programs. Aeroméxico, Mexico’"
+      },
+      {
+       "offset": 3722,
+       "snippet": "in more than 170 countries, through the 19 partner airlines. Aeroméxico created and implemented a Health and Hygiene Management System (SGSH) to protect its clients and collaborators at all stages of its operation.\n\nwww.aeromexico.com\n\nwww.skyteam.com\n\n**Forward-Looking Statements**\n\nThis press release contains certain forward-looking statements, within the meaning of the Private Securities Litigation Reform Act, that reflect the current views an"
+      }
+     ],
+     "total_hits": 3
+    }
+   },
+   {
+    "id": 74807911,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-10-27T20:25:26+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/51585/2026/RNS/51585_rns_2026-10-27_2e82c3cf-017b-4b07-93bb-dc5cde400c25.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/74807911/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/declaration-of-voting-results-voting-rights-announcements/2026/74807911/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 22,
+     "code": "DVA",
+     "name": "Declaration of Voting Results & Voting Rights Announcements",
+     "description": "Official results from shareholder votes at any general meeting (AGM or EGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 84256,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 55835331,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2025-11-12T14:00:13+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2025/RNS/74497_rns_2025-11-12_b411089f-f358-4d2c-bfa1-bde032a90b51.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/55835331/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2025/55835331/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 103430,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 55834288,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-01-09T22:50:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-01-12_f839d942-b5e2-408d-9c42-64e5f233b551.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/55834288/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/55834288/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 27617,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 57125676,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-08-21T01:26:18+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-08-21_81dadeb1-7b67-4911-9fc1-6b42e16c4240.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/57125676/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/57125676/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 34027,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 74864863,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-10-28T19:34:33+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/51585/2026/RNS/51585_rns_2026-10-28_a0118004-1549-43c4-88b7-4a35e5456aa5.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/74864863/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/74864863/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 202759,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 12054272,
+    "title": "6-K - Central North Airport Group",
+    "release_datetime": "2010-08-31T15:54:11+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/31017/2010/FFR/31017_ffr_2010-08-31_8c93c6fe-c9c5-4d30-b690-903d04ccdae5.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/12054272/document/",
+    "viewer_url": "https://financialfilings.com/filings/central-north-airport-group/regulatory-filings/2010/12054272/",
+    "company": {
+     "id": 31017,
+     "name": "Central North Airport Group",
+     "tagline": "Develops, manages, and maintains 13 international airports in central and northern Mexico.",
+     "isins": [
+      "US4005011022"
+     ],
+     "lei": "",
+     "sub_industry_code": "5223",
+     "oics_code": "IN.TP.TIS.TIS",
+     "country_code": "US",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 108365,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 55833398,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-02-23T22:51:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-02-24_57f1aeed-665e-48d8-af6f-5ca8bcc63e6f.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/55833398/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/55833398/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 31562,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 55834921,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2025-12-05T21:29:39+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2025/RNS/74497_rns_2025-12-05_913e4681-4e7d-469b-bddb-8383e868f62d.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/55834921/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2025/55834921/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 81810,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 13905520,
+    "title": "Material change report - English.pdf",
+    "release_datetime": "2020-05-22T20:43:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2020/RNS/46343_rns_2020-05-22_4297d07b-cb3d-49d0-a784-c0d95345060b.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2020/RNS/46343_rns_2020-05-22_4297d07b-cb3d-49d0-a784-c0d95345060b.pdf",
+    "viewer_url": "https://financialfilings.com/filings/aimia-inc/regulatory-filings/2020/13905520/",
+    "company": {
+     "id": 46343,
+     "name": "Aimia Inc.",
+     "tagline": "A diversified conglomerate and global investment holding company.",
+     "isins": [
+      "CA00900Q1037"
+     ],
+     "lei": "5299005QK3KSTUZ66Y90",
+     "sub_industry_code": "6421",
+     "oics_code": "MA.CH.SAC.PFC",
+     "country_code": "CA",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 14733,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": null
+   },
+   {
+    "id": 47222813,
+    "title": "News release - English.pdf",
+    "release_datetime": "2019-07-17T20:09:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2019/RNS/46343_rns_2019-07-17_65767dd9-e630-494d-9b3a-4f17dfe58c78.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2019/RNS/46343_rns_2019-07-17_65767dd9-e630-494d-9b3a-4f17dfe58c78.pdf",
+    "viewer_url": "https://financialfilings.com/filings/aimia-inc/regulatory-filings/2019/47222813/",
+    "company": {
+     "id": 46343,
+     "name": "Aimia Inc.",
+     "tagline": "A diversified conglomerate and global investment holding company.",
+     "isins": [
+      "CA00900Q1037"
+     ],
+     "lei": "5299005QK3KSTUZ66Y90",
+     "sub_industry_code": "6421",
+     "oics_code": "MA.CH.SAC.PFC",
+     "country_code": "CA",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 29012,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": null
+   },
+   {
+    "id": 49706249,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-05-01T20:16:48+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-05-01_910db226-95d6-4526-bca9-43a880eac13a.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/49706249/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/49706249/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 37257,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 74247033,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-10-19T21:28:37+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-10-19_468b3a27-c290-4372-a1a9-7951e96e4b22.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/74247033/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/74247033/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 203128,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 47225849,
+    "title": "News release - English.pdf",
+    "release_datetime": "2018-07-26T17:11:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2018/RNS/46343_rns_2018-07-26_fe1d4e72-0bf8-4eaa-bad2-6001f736455a.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/46343/2018/RNS/46343_rns_2018-07-26_fe1d4e72-0bf8-4eaa-bad2-6001f736455a.pdf",
+    "viewer_url": "https://financialfilings.com/filings/aimia-inc/ma-activity/2018/47225849/",
+    "company": {
+     "id": 46343,
+     "name": "Aimia Inc.",
+     "tagline": "A diversified conglomerate and global investment holding company.",
+     "isins": [
+      "CA00900Q1037"
+     ],
+     "lei": "5299005QK3KSTUZ66Y90",
+     "sub_industry_code": "6421",
+     "oics_code": "MA.CH.SAC.PFC",
+     "country_code": "CA",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 23,
+     "code": "TAR",
+     "name": "M&A Activity",
+     "description": "Announcements and documents related to merger proposals or takeover bids.",
+     "category": {
+      "id": 10,
+      "name": "M&A, Partnerships & Legal",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 22937,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": null
+   },
+   {
+    "id": 57444493,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-08-24T20:05:12+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-08-24_a261577a-5eaf-4e9f-b9b0-1c6b835ea339.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/57444493/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/57444493/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 37868,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   },
+   {
+    "id": 60413161,
+    "title": "6-K - Grupo Aeromexico, S.A.B. de C.V.",
+    "release_datetime": "2026-09-21T23:00:46+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74497/2026/RNS/74497_rns_2026-09-21_bdd99326-d334-4f21-b040-12a9e3b1ee1b.zip",
+    "proxy_url": "https://api.financialreports.eu/filings/60413161/document/",
+    "viewer_url": "https://financialfilings.com/filings/grupo-aeromexico-sab-de-cv/regulatory-filings/2026/60413161/",
+    "company": {
+     "id": 51585,
+     "name": "Grupo Aeroméxico, S.A.B. de C.V.",
+     "tagline": "Full-service carrier providing global passenger and cargo air transportation services.",
+     "isins": [
+      "MX01AE040002"
+     ],
+     "lei": "529900BECKHBL62WD126",
+     "sub_industry_code": "5110",
+     "oics_code": "IN.TP.AIR.AIR",
+     "country_code": "MX",
+     "date_public": "2026-10-28"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "ZIP",
+    "file_size": 202988,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": "6-K",
+    "match": null
+   }
+  ],
+  "search": {
+   "capped": true,
+   "scan_complete": false,
+   "max_results": 1000,
+   "scope": "filings_with_text"
+  }
+ }
+}

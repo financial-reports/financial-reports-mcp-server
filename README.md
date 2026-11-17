@@ -187,13 +187,13 @@ Two things the error page itself doesn't tell you:
 | Domain | Tools | Use cases |
 |---|---|---|
 | Companies | 5 | Search by name/ticker/ISIN, retrieve full company profiles, get normalized financials, predict next annual report, batch-resolve a list of identifiers to company IDs |
-| Filings | 4 | List, retrieve, fetch markdown content (capped at 150K chars), keyword-search inside a single filing |
+| Filings | 6 | List, retrieve, fetch markdown content (capped at 150K chars); full-text search across the corpus (`filings_search`) — filings with extracted text, first 20 MB of each; keyword-search inside one filing (`filings_markdown_search`) or across several at once (`filings_markdown_search_batch`) |
 | ISINs | 2 | Lookup by ISIN, list dual-listings |
 | Reference taxonomy | 2 | Filing categories and filing types |
 | Account | 1 | What your API and MCP usage has cost this cycle, spend caps and free credits left (free, never billed) |
 | Guides | 3 | Filing-type taxonomy, ISIC industry classification, and markdown-fetch strategy — callable references for tool-only clients that can't read MCP resources |
 
-Set `MCP_FULL_SURFACE=1` to restore the full **62-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, webhook subscriptions, the company-merge audit feed, per-exchange security listings, the agent account-onboarding endpoints (sign-up, key claim, key rotation, checkout link, owner confirmation, status), the raw `filings_markdown_search_retrieve` endpoint behind `filings_markdown_search`, the raw `filings_markdown_search_create` batch endpoint, and `filings_document_retrieve` (returns a file, not JSON).
+Set `MCP_FULL_SURFACE=1` to restore the full **62-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, webhook subscriptions, the company-merge audit feed, per-exchange security listings, the agent account-onboarding endpoints (sign-up, key claim, key rotation, checkout link, owner confirmation, status), the raw `filings_markdown_search_retrieve` endpoint behind `filings_markdown_search`, the raw `filings_markdown_search_create` batch endpoint, and `filings_document_retrieve` (returns a file, not JSON). Note that `MCP_FULL_SURFACE=1` is **not a superset**: it drops the three `get_fr_*` guide tools, which exist to stand in for the gated reference data and are emitted on the curated surface only. 16 tools are on both surfaces, 3 are default-only and 46 are gated.
 
 The shipped surface is generated from a committed, reviewed snapshot of the [FinancialFilings OpenAPI schema](https://financialreports.eu/api/schema/) (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build), so it's deterministic and never drifts silently on a rebuild.
 
@@ -296,6 +296,11 @@ Once connected, try:
 - *"Show me insider-transaction filings at Tesla in the last 30 days."*
 - *"Show the latest filings from companies on my watchlist."*
 - *"What's the LEI for Volkswagen AG?"*
+- *"Summarise Toyota's latest annual report and link the filing it came from."*
+- *"Compare Samsung Electronics' and SK hynix's revenue and operating profit over the last three years, with the source filing for each number."*
+- *"What did Infosys say about its outlook in its latest annual report? Quote the passage and link the filing."*
+- *"Show Petrobras' total debt and cash for the last five fiscal years, each linked to its filing."*
+- *"Which companies disclosed a cyberattack or ransomware incident in the last 90 days? Search in English, German and French, and link each filing."*
 
 ---
 
