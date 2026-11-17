@@ -56,7 +56,10 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # The default generated surface drops cold per-item reference singletons, the
 # ISIC hierarchy family (folded into the get_fr_industry_classification guide
 # tool), and webhooks/watchlist (real features, off the default surface per the
-# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full ~52-tool surface.
+# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full 61-tool surface
+# (NOT a superset: it drops the three get_fr_* guide tools below, which are
+# emitted on the curated surface only. tests/test_published_tool_counts.py
+# derives both counts from this generator, so neither can go stale here).
 #
 # THIS IS A DENYLIST, NOT AN ALLOWLIST. Every operation the OpenAPI schema gains
 # joins the curated default surface automatically the next time the snapshot is
