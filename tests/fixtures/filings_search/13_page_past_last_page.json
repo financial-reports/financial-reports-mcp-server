@@ -1,0 +1,15 @@
+{
+ "recorded_at": "2026-11-06T07:09:23+00:00",
+ "note": "page 3 of a result set with count=0 at page_size 25",
+ "query": "q=going+concern&company=390&type=10-K-ESEF&page_size=25&page=3",
+ "status": 404,
+ "headers": {
+  "Content-Type": "application/json; charset=utf-8",
+  "x-credits-charged": "0"
+ },
+ "body": {
+  "detail": "Invalid page. Page 3 is past the end of the results: this request matches about 0.",
+  "type": "page_out_of_range",
+  "resolution": "The results ended before this page. Follow `next` until it is null instead of computing the last page from `count`, which can be an estimate. To walk a large result set, use cursor=: send an empty cursor= first, then follow `next`; it has no offset limit."
+ }
+}

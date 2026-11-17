@@ -1,0 +1,1150 @@
+{
+ "recorded_at": "2026-11-06T07:08:39+00:00",
+ "note": null,
+ "query": "q=going+concern&page_size=25",
+ "status": 200,
+ "headers": {
+  "Content-Type": "application/json; charset=utf-8",
+  "x-credits-charged": "6"
+ },
+ "body": {
+  "count": 1000,
+  "next": "https://api.financialreports.eu/filings/search/?page=2&page_size=25&q=going+concern",
+  "previous": null,
+  "results": [
+   {
+    "id": 48722128,
+    "title": "Response to SGX Queries::",
+    "release_datetime": "2025-07-18T09:37:24+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/74299/2025/RNS/74299_rns_2025-07-18_1d714771-2dcf-4f50-9c35-c8e722409da4.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/74299/2025/RNS/74299_rns_2025-07-18_1d714771-2dcf-4f50-9c35-c8e722409da4.pdf",
+    "viewer_url": "https://financialfilings.com/filings/shanghai-turbo-enterprises-ltd/regulatory-filings/2025/48722128/",
+    "company": {
+     "id": 74299,
+     "name": "Shanghai Turbo Enterprises Ltd.",
+     "tagline": "",
+     "isins": [],
+     "lei": "",
+     "sub_industry_code": null,
+     "oics_code": "IN.EQ.ELE.PWR",
+     "country_code": "SG",
+     "date_public": "2026-10-08"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 133821,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 435,
+       "snippet": "INANCIAL YEAR ENDED 31 DECEMBER 2023** （ **FY2023** ） \n\n### **<u>Query</u>** \n\nIt is disclosed in the Announcement that \"Notwithstanding the Auditor’s disclaimer of opinion regarding the Group’s ability to continue as a going concern, the management is of the view that the use of going concern basis is appropriate and there is no material uncertainty exists based on the following facts and as disclosed in Note 2.2 to the Audited Financial Statements"
+      },
+      {
+       "offset": 496,
+       "snippet": "*<u>Query</u>** \n\nIt is disclosed in the Announcement that \"Notwithstanding the Auditor’s disclaimer of opinion regarding the Group’s ability to continue as a going concern, the management is of the view that the use of going concern basis is appropriate and there is no material uncertainty exists based on the following facts and as disclosed in Note 2.2 to the Audited Financial Statements\". Please disclose the following:- \n\na) the Board of Director"
+      },
+      {
+       "offset": 1365,
+       "snippet": "此系基于审计准则要求的审慎性 原则。该表述反映审计师需更多时间验证公司应对未来不确定性的措施，并非否定公司持续经营能 力。 \n\n### **Objectivity of the Auditor's Opinion** \n\nThe auditor stated in its report that it \"did not express an opinion on the Group’s ability to continue as a going concern.\" This conclusion is based on the principle of prudence required by auditing standards. The statement reflects the auditor’s need for additional time to verify the Company’s measures addressing future uncertainties, and"
+      }
+     ],
+     "total_hits": 8
+    }
+   },
+   {
+    "id": 69765315,
+    "title": "2019年３月期第２四半期決算補足説明資料",
+    "release_datetime": "2018-11-09T06:00:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/13843/2018/RNS/13843_rns_2018-11-09_7be47a78-b4cd-46db-8c53-86f6cc3b9a4b.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/13843/2018/RNS/13843_rns_2018-11-09_7be47a78-b4cd-46db-8c53-86f6cc3b9a4b.pdf",
+    "viewer_url": "https://financialfilings.com/filings/general-oysterinc/regulatory-filings/2018/69765315/",
+    "company": {
+     "id": 13843,
+     "name": "General Oyster,Inc.",
+     "tagline": "Operates oyster bars and a wholesale business focused on oyster purification.",
+     "isins": [
+      "JP3794490007"
+     ],
+     "lei": "",
+     "sub_industry_code": "0321",
+     "oics_code": "CL.SV.HSP.RST",
+     "country_code": "JP",
+     "date_public": "2026-11-05"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 811250,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "Financial information",
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 304,
+       "snippet": "Copyright © General Oyster Inc. All Rights Reserved.~~ \n\n<!-- page 2 -->\n\n## **事業再生のロードマップ（再掲）** \n\n\n\nゼネラル・オイスターの事業再生については、大きく2つの段階に分けて実施致します。 2019年3月期は、 **既存事業を通じた事業継続性の証明** に注力しております。 \n\n\n\n<!-- Start of picture text -->\nGoing Concern 事業成長<br>の証明 の実現<br>進行期（ 2019 年 3 月期） 来期以降<br>黒字化の実現を目的とした取り組み実施 価値最大化を目的とした取り組み実施<br> 適切な管理体制の実現<br> 店舗展開の本格化<br>事<br>今<br> 既存事業の収益性向上 後 業  新規事業の本格化<br>各<br>種<br> コスト構造の見直し 対<br>策<br>の 財  財務基盤の構築<br>務<br>・・・等の取り組み"
+      }
+     ],
+     "total_hits": 1
+    }
+   },
+   {
+    "id": 69765341,
+    "title": "2019年３月期第１四半期決算補足説明資料",
+    "release_datetime": "2018-08-10T06:00:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/13843/2018/RNS/13843_rns_2018-08-10_ca4c4273-c240-4a29-a75a-f88df4335020.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/13843/2018/RNS/13843_rns_2018-08-10_ca4c4273-c240-4a29-a75a-f88df4335020.pdf",
+    "viewer_url": "https://financialfilings.com/filings/general-oysterinc/regulatory-filings/2018/69765341/",
+    "company": {
+     "id": 13843,
+     "name": "General Oyster,Inc.",
+     "tagline": "Operates oyster bars and a wholesale business focused on oyster purification.",
+     "isins": [
+      "JP3794490007"
+     ],
+     "lei": "",
+     "sub_industry_code": "0321",
+     "oics_code": "CL.SV.HSP.RST",
+     "country_code": "JP",
+     "date_public": "2026-11-05"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 793313,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "Financial information",
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 293,
+       "snippet": "ター** \n\n\n\nCopyright © General Oyster Inc. All Rights Reserved. \n\n<!-- page 2 -->\n\n## **事業再生のロードマップ** \n\n\n\nゼネラル・オイスターの事業再生については、大きく2つの段階に分けて実施致します。 2019年3月期は、 **既存事業を通じた事業継続性の証明** に注力します。 \n\n\n\n<!-- Start of picture text -->\nGoing Concern 事業成長<br>の証明 の実現<br>進行期（ 2019 年 3 月期） 来期以降<br>黒字化の実現を目的とした取り組み実施 価値最大化を目的とした取り組み実施<br> 適切な管理体制の実現<br> 店舗展開の本格化<br>事<br>今<br> 既存事業の収益性向上 後 業  新規事業の本格化<br>各<br>種<br> コスト構造の見直し 対<br>策<br>の 財  財務基盤の構築<br>務<br>・・・等の取り組み"
+      }
+     ],
+     "total_hits": 1
+    }
+   },
+   {
+    "id": 63724970,
+    "title": "110年股東會相關資料 — 2021_2841_20210630FE3.pdf",
+    "release_datetime": "2021-09-14T09:36:45+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/88136/2021/RNS/88136_rns_2021-09-14_06ba05d9-5085-4de1-a44d-c2a50ee99459.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/88136/2021/RNS/88136_rns_2021-09-14_06ba05d9-5085-4de1-a44d-c2a50ee99459.pdf",
+    "viewer_url": "https://financialfilings.com/filings/taiwan-land-development-corp/declaration-of-voting-results-voting-rights-announcements/2021/63724970/",
+    "company": {
+     "id": 88136,
+     "name": "Taiwan Land Development Corp",
+     "tagline": "Formerly provided land development, real estate, and urban regeneration services; ceased operations.",
+     "isins": [
+      "TW0002841004"
+     ],
+     "lei": "",
+     "sub_industry_code": "6810",
+     "oics_code": "RE.DS.DEV.RSD",
+     "country_code": "TW",
+     "date_public": "2026-10-23"
+    },
+    "filing_type": {
+     "id": 22,
+     "code": "DVA",
+     "name": "Declaration of Voting Results & Voting Rights Announcements",
+     "description": "Official results from shareholder votes at any general meeting (AGM or EGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 2454800,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 15887,
+       "snippet": "filled our other ethical responsibilities in accordance with the Code. We believe that the audit evidence we have obtained is sufficient and appropriate to provide a basis for our opinion.\n\n## Significant uncertainty of going concern\n\nThe Company and its subsidiaries incurred a net loss of NT\\$1,832,999 thousand during the year ended December 31, 2020 and, as of that date, the current ratio was 85.76%. The current assets included the land developmen"
+      },
+      {
+       "offset": 16625,
+       "snippet": "perational policies in Note 12(1); however, the short-term financial liquidity indicate that a material uncertainty exists that may cast significant doubt on the Company’s and its subsidiaries’ ability to\n\ncontinue as a going concern. Our opinion is not modified in respect of this matter.\n\n## Key audit matters\n\nKey audit matters are those matters that, in our professional judgement, were of most significance in our audit of the financial statements "
+      },
+      {
+       "offset": 17125,
+       "snippet": "ssed in the context of our audit of the financial statements as a whole and, in forming our opinion thereon, we do not provide a separate opinion on these matters.\n\nExpect for the paragraph of significant uncertainty of going concern mentioned, the most significant key audit matters in our audit of the parent company only financial statements of the current period are as follows:\n\n## Investment property\n\n## Description\n\nFor a description of accounti"
+      }
+     ],
+     "total_hits": 18
+    }
+   },
+   {
+    "id": 63724949,
+    "title": "109年股東會相關資料 — 2020_2841_20200630FE3.pdf",
+    "release_datetime": "2020-07-15T07:47:45+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/88136/2020/RNS/88136_rns_2020-07-15_4a10c774-a3e0-459b-84b1-c55db4360388.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/88136/2020/RNS/88136_rns_2020-07-15_4a10c774-a3e0-459b-84b1-c55db4360388.pdf",
+    "viewer_url": "https://financialfilings.com/filings/taiwan-land-development-corp/agm-information/2020/63724949/",
+    "company": {
+     "id": 88136,
+     "name": "Taiwan Land Development Corp",
+     "tagline": "Formerly provided land development, real estate, and urban regeneration services; ceased operations.",
+     "isins": [
+      "TW0002841004"
+     ],
+     "lei": "",
+     "sub_industry_code": "6810",
+     "oics_code": "RE.DS.DEV.RSD",
+     "country_code": "TW",
+     "date_public": "2026-10-23"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 9314746,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 20771,
+       "snippet": " and compared with carrying amount.\n\n4. Obtained and checked the development contract and industrial park sales rate table, and verified and recalculated the accuracy of sales rate and service revenue.\n\n## Assessment of going concern postulate\n\n## Description\n\nAs of December 31, 2019, the current ratio of the Company and its subsidiaries was 100.69%. However, as described in the Emphasis of matter section of our report, the land development receivab"
+      },
+      {
+       "offset": 21406,
+       "snippet": "of the Company has proposed operational policies in Note 12(1). Because the aforementioned actions significantly affected financial situation within 12 months from the balance sheet date, we considered the assessment of going concern postulate as one of the key areas of focus for this year's audit.\n\n## How our audit addressed the matter\n\nWe performed the following audit procedures on the above key audit matter:\n\n1. Obtained the strategy of operating"
+      },
+      {
+       "offset": 22972,
+       "snippet": "ion of financial statements that are free from material misstatement, whether due to fraud or error.\n\nIn preparing the financial statements, management is responsible for assessing the Company's ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Company or to cease operations, or has no realistic alternat"
+      }
+     ],
+     "total_hits": 16
+    }
+   },
+   {
+    "id": 48941476,
+    "title": "115年股東會相關資料 — 2026_4999_20260623FE3.pdf",
+    "release_datetime": "2026-06-29T06:28:59+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/52458/2026/RNS/52458_rns_2026-06-29_beaa6ecf-3cfa-4b92-acdc-79b6dbc1afa1.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/52458/2026/RNS/52458_rns_2026-06-29_beaa6ecf-3cfa-4b92-acdc-79b6dbc1afa1.pdf",
+    "viewer_url": "https://financialfilings.com/filings/sinher-4999/agm-information/2026/48941476/",
+    "company": {
+     "id": 52458,
+     "name": "Sinher Technology Inc.",
+     "tagline": "Global manufacturer of precision hinges for notebooks, 3C electronics, and automotive sectors.",
+     "isins": [
+      "TW0004999008"
+     ],
+     "lei": "",
+     "sub_industry_code": "2593",
+     "oics_code": "TC.HW.ELC.ECP",
+     "country_code": "TW",
+     "date_public": "2026-10-03"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 1370637,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 17477,
+       "snippet": "cial statements that are free from material misstatement, whether due to fraud or error. \n\nIn preparing the consolidated financial statements, management is responsible for assessing the Group's ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Group or to cease operations, or has no realistic alternativ"
+      },
+      {
+       "offset": 17538,
+       "snippet": "ther due to fraud or error. \n\nIn preparing the consolidated financial statements, management is responsible for assessing the Group's ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Group or to cease operations, or has no realistic alternative but to do so. \n\nThose charged with governance (including th"
+      },
+      {
+       "offset": 17566,
+       "snippet": "\n\nIn preparing the consolidated financial statements, management is responsible for assessing the Group's ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Group or to cease operations, or has no realistic alternative but to do so. \n\nThose charged with governance (including the Audit Committee) are respo"
+      }
+     ],
+     "total_hits": 12
+    }
+   },
+   {
+    "id": 63744995,
+    "title": "110年股東會相關資料 — 2021_3426_20210610FE2.pdf",
+    "release_datetime": "2021-05-07T06:01:17+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2021/RNS/73221_rns_2021-05-07_3356ba53-6a34-4102-a3f2-3c5674aefa60.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2021/RNS/73221_rns_2021-05-07_3356ba53-6a34-4102-a3f2-3c5674aefa60.pdf",
+    "viewer_url": "https://financialfilings.com/filings/company-461/agm-information/2021/63744995/",
+    "company": {
+     "id": 73221,
+     "name": "台興",
+     "tagline": "Specialized in R&D and manufacturing of precision electromagnetic components, a leading global supplier.",
+     "isins": [
+      "TW0003426003"
+     ],
+     "lei": "",
+     "sub_industry_code": "2710",
+     "oics_code": "TC.HW.ELC.ECP",
+     "country_code": "TW",
+     "date_public": "2026-11-06"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 1305928,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 17146,
+       "snippet": "cial statements that are free from material misstatement, whether due to fraud or error. \n\nIn preparing the consolidated financial statements, management is responsible for assessing the Group’s ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Group or to cease operations, or has no realistic alternativ"
+      },
+      {
+       "offset": 17207,
+       "snippet": "ther due to fraud or error. \n\nIn preparing the consolidated financial statements, management is responsible for assessing the Group’s ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Group or to cease operations, or has no realistic alternative but to do so. \n\nThose charged with governance, including th"
+      },
+      {
+       "offset": 17235,
+       "snippet": "\n\nIn preparing the consolidated financial statements, management is responsible for assessing the Group’s ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Group or to cease operations, or has no realistic alternative but to do so. \n\nThose charged with governance, including the supervisors, are responsib"
+      }
+     ],
+     "total_hits": 12
+    }
+   },
+   {
+    "id": 71937360,
+    "title": "英20240627 第42回定時株主総会招集通知および株主総会資料",
+    "release_datetime": "2024-05-30T14:59:59+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/12635/2024/RNS/12635_rns_2024-05-30_43080e4a-6f61-4719-a647-78ebb925dbb6.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/12635/2024/RNS/12635_rns_2024-05-30_43080e4a-6f61-4719-a647-78ebb925dbb6.pdf",
+    "viewer_url": "https://financialfilings.com/filings/zensho-holdings-coltd/regulatory-filings/2024/71937360/",
+    "company": {
+     "id": 12635,
+     "name": "ZENSHO HOLDINGS CO.,LTD.",
+     "tagline": "A food holding company operating restaurant chains and retail food businesses.",
+     "isins": [
+      "JP3429300001"
+     ],
+     "lei": "353800DYF3UDM49ITT03",
+     "sub_industry_code": "5610",
+     "oics_code": "CL.SV.HSP.RST",
+     "country_code": "JP",
+     "date_public": "2026-11-05"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 4015345,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "Notice of General Shareholders Meeting /Informational Materials for a General Shareholders Meeting",
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 192602,
+       "snippet": " fraud or error. In preparing the Consolidated Financial Statements, management is responsible for assessing whether it is appropriate to prepare the Consolidated Financial Statements in accordance with the premise of a going concern, and for disclosing matters relating to going concern when it is required to do so in accordance with accounting <u>principles generally accepted in Japan.</u> \n\n75 \n\n<!-- page 78 -->\n\nMembers of the Audit & Supervisory"
+      },
+      {
+       "offset": 192656,
+       "snippet": "al Statements, management is responsible for assessing whether it is appropriate to prepare the Consolidated Financial Statements in accordance with the premise of a going concern, and for disclosing matters relating to going concern when it is required to do so in accordance with accounting <u>principles generally accepted in Japan.</u> \n\n75 \n\n<!-- page 78 -->\n\nMembers of the Audit & Supervisory Committee and the Audit & Supervisory Committee are r"
+      },
+      {
+       "offset": 194946,
+       "snippet": "asonableness of accounting estimates made by management and the adequacy of related notes. \n\n   - • Determine whether it is appropriate for management to prepare the Consolidated Financial Statements on the premise of a going concern and, based on the audit evidence obtained, determine whether there is a significant uncertainty in regard to events or conditions that may cast significant doubt on the entity’s ability to continue as a going concern. I"
+      }
+     ],
+     "total_hits": 12
+    }
+   },
+   {
+    "id": 63724903,
+    "title": "107年股東會相關資料 — 2018_2841_20180622FE3.pdf",
+    "release_datetime": "2018-07-10T06:53:58+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/88136/2018/RNS/88136_rns_2018-07-10_531b53af-a513-40e4-a716-4d5ac91ea6a3.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/88136/2018/RNS/88136_rns_2018-07-10_531b53af-a513-40e4-a716-4d5ac91ea6a3.pdf",
+    "viewer_url": "https://financialfilings.com/filings/taiwan-land-development-corp/agm-information/2018/63724903/",
+    "company": {
+     "id": 88136,
+     "name": "Taiwan Land Development Corp",
+     "tagline": "Formerly provided land development, real estate, and urban regeneration services; ceased operations.",
+     "isins": [
+      "TW0002841004"
+     ],
+     "lei": "",
+     "sub_industry_code": "6810",
+     "oics_code": "RE.DS.DEV.RSD",
+     "country_code": "TW",
+     "date_public": "2026-10-23"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 3775812,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 21539,
+       "snippet": "ion of financial statements that are free from material misstatement, whether due to fraud or error.\n\nIn preparing the financial statements, management is responsible for assessing the Company's ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Company or to cease operations, or has no realistic alternat"
+      },
+      {
+       "offset": 21600,
+       "snippet": "atement, whether due to fraud or error.\n\nIn preparing the financial statements, management is responsible for assessing the Company's ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Company or to cease operations, or has no realistic alternative but to do so.\n\nThose charge with governance, including au"
+      },
+      {
+       "offset": 21628,
+       "snippet": "d or error.\n\nIn preparing the financial statements, management is responsible for assessing the Company's ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Company or to cease operations, or has no realistic alternative but to do so.\n\nThose charge with governance, including audit committee, are responsib"
+      }
+     ],
+     "total_hits": 12
+    }
+   },
+   {
+    "id": 48334970,
+    "title": "115年股東會相關資料 — 2026_2484_20260623FE3.pdf",
+    "release_datetime": "2026-06-24T06:34:17+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/52117/2026/RNS/52117_rns_2026-06-24_62576a51-34e4-4117-885b-336479afc1bd.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/52117/2026/RNS/52117_rns_2026-06-24_62576a51-34e4-4117-885b-336479afc1bd.pdf",
+    "viewer_url": "https://financialfilings.com/filings/siward-2484/agm-information/2026/48334970/",
+    "company": {
+     "id": 52117,
+     "name": "Siward Crystal Technology Co., Ltd.",
+     "tagline": "Specializes in high-precision quartz frequency control components and timing solutions.",
+     "isins": [
+      "TW0002484003"
+     ],
+     "lei": "",
+     "sub_industry_code": "2619",
+     "oics_code": "TC.HW.ELC.ECP",
+     "country_code": "TW",
+     "date_public": "2026-10-03"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 186862,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": {
+     "query": "going concern",
+     "hits": [
+      {
+       "offset": 29072,
+       "snippet": "cial statements that are free from material misstatement, whether due to fraud or error. \n\nIn preparing the consolidated financial statements, management is responsible for assessing the Group’s ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Group or to cease operations, or has no realistic alternativ"
+      },
+      {
+       "offset": 29133,
+       "snippet": "ther due to fraud or error. \n\nIn preparing the consolidated financial statements, management is responsible for assessing the Group’s ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Group or to cease operations, or has no realistic alternative but to do so. \n\nThose charged with governance (including th"
+      },
+      {
+       "offset": 29161,
+       "snippet": "\n\nIn preparing the consolidated financial statements, management is responsible for assessing the Group’s ability to continue as a going concern, disclosing, as applicable, matters related to going concern and using the going concern basis of accounting unless management either intends to liquidate the Group or to cease operations, or has no realistic alternative but to do so. \n\nThose charged with governance (including the audit committee) are respo"
+      }
+     ],
+     "total_hits": 12
+    }
+   },
+   {
+    "id": 63745110,
+    "title": "112年股東會相關資料 — 2023_3426_20230531FE3.pdf",
+    "release_datetime": "2023-06-06T06:48:30+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2023/RNS/73221_rns_2023-06-06_e953f3e1-029e-412b-9f2b-3cc4efde7b1f.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2023/RNS/73221_rns_2023-06-06_e953f3e1-029e-412b-9f2b-3cc4efde7b1f.pdf",
+    "viewer_url": "https://financialfilings.com/filings/company-461/agm-information/2023/63745110/",
+    "company": {
+     "id": 73221,
+     "name": "台興",
+     "tagline": "Specialized in R&D and manufacturing of precision electromagnetic components, a leading global supplier.",
+     "isins": [
+      "TW0003426003"
+     ],
+     "lei": "",
+     "sub_industry_code": "2710",
+     "oics_code": "TC.HW.ELC.ECP",
+     "country_code": "TW",
+     "date_public": "2026-11-06"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 1349897,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": null
+   },
+   {
+    "id": 63745149,
+    "title": "113年股東會相關資料 — 2024_3426_20240530FE3.pdf",
+    "release_datetime": "2024-06-07T08:46:04+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2024/RNS/73221_rns_2024-06-07_9a4e6d06-2878-4a50-bda5-b7fb97ed0b62.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2024/RNS/73221_rns_2024-06-07_9a4e6d06-2878-4a50-bda5-b7fb97ed0b62.pdf",
+    "viewer_url": "https://financialfilings.com/filings/company-461/agm-information/2024/63745149/",
+    "company": {
+     "id": 73221,
+     "name": "台興",
+     "tagline": "Specialized in R&D and manufacturing of precision electromagnetic components, a leading global supplier.",
+     "isins": [
+      "TW0003426003"
+     ],
+     "lei": "",
+     "sub_industry_code": "2710",
+     "oics_code": "TC.HW.ELC.ECP",
+     "country_code": "TW",
+     "date_public": "2026-11-06"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 448775,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": null
+   },
+   {
+    "id": 63745035,
+    "title": "111年股東會相關資料 — 2022_3426_20220609FE2.pdf",
+    "release_datetime": "2022-05-09T08:14:30+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2022/RNS/73221_rns_2022-05-09_1e114b71-db60-4581-bdda-d9bef754dc0b.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2022/RNS/73221_rns_2022-05-09_1e114b71-db60-4581-bdda-d9bef754dc0b.pdf",
+    "viewer_url": "https://financialfilings.com/filings/company-461/agm-information/2022/63745035/",
+    "company": {
+     "id": 73221,
+     "name": "台興",
+     "tagline": "Specialized in R&D and manufacturing of precision electromagnetic components, a leading global supplier.",
+     "isins": [
+      "TW0003426003"
+     ],
+     "lei": "",
+     "sub_industry_code": "2710",
+     "oics_code": "TC.HW.ELC.ECP",
+     "country_code": "TW",
+     "date_public": "2026-11-06"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 1395053,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": null
+   },
+   {
+    "id": 48411414,
+    "title": "115年股東會相關資料 — 2026_1236_20260617FE3.pdf",
+    "release_datetime": "2026-06-25T04:45:14+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/51760/2026/RNS/51760_rns_2026-06-25_b3ee3da8-256c-4041-88fd-3749dd8f0a9a.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/51760/2026/RNS/51760_rns_2026-06-25_b3ee3da8-256c-4041-88fd-3749dd8f0a9a.pdf",
+    "viewer_url": "https://financialfilings.com/filings/hunya-1236/agm-information/2026/48411414/",
+    "company": {
+     "id": 51760,
+     "name": "Hunya Foods Co., Ltd.",
+     "tagline": "Produces confectionery, bakery items, and gift sets under brands like 77 and Rivon.",
+     "isins": [
+      "TW0001236008"
+     ],
+     "lei": "",
+     "sub_industry_code": "1073",
+     "oics_code": "CE.EG.FOD.PKG",
+     "country_code": "TW",
+     "date_public": "2026-10-31"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 758161,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": null
+   },
+   {
+    "id": 48284280,
+    "title": "115年股東會相關資料 — 2026_1233_20260609FE3.pdf",
+    "release_datetime": "2026-06-22T08:01:03+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/51757/2026/RNS/51757_rns_2026-06-22_ef1d7410-ad16-43e4-b385-0f53b206af71.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/51757/2026/RNS/51757_rns_2026-06-22_ef1d7410-ad16-43e4-b385-0f53b206af71.pdf",
+    "viewer_url": "https://financialfilings.com/filings/ten-ren-1233/agm-information/2026/48284280/",
+    "company": {
+     "id": 51757,
+     "name": "Ten Ren Tea Co., Ltd.",
+     "tagline": "Global producer and retailer of tea leaves, tea sets, and beverages with dining outlets.",
+     "isins": [
+      "TW0001233005"
+     ],
+     "lei": "",
+     "sub_industry_code": "4721",
+     "oics_code": "CE.EG.BEV.SFT",
+     "country_code": "TW",
+     "date_public": "2026-10-26"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 2138665,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": null
+   },
+   {
+    "id": 63745136,
+    "title": "113年股東會相關資料 — 2024_3426_20240530FE2.pdf",
+    "release_datetime": "2024-04-26T03:40:58+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2024/RNS/73221_rns_2024-04-26_cab7b81d-1a50-44fc-a6a7-cf6a08a5e4d3.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2024/RNS/73221_rns_2024-04-26_cab7b81d-1a50-44fc-a6a7-cf6a08a5e4d3.pdf",
+    "viewer_url": "https://financialfilings.com/filings/company-461/agm-information/2024/63745136/",
+    "company": {
+     "id": 73221,
+     "name": "台興",
+     "tagline": "Specialized in R&D and manufacturing of precision electromagnetic components, a leading global supplier.",
+     "isins": [
+      "TW0003426003"
+     ],
+     "lei": "",
+     "sub_industry_code": "2710",
+     "oics_code": "TC.HW.ELC.ECP",
+     "country_code": "TW",
+     "date_public": "2026-11-06"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 441466,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": null
+   },
+   {
+    "id": 63745091,
+    "title": "112年股東會相關資料 — 2023_3426_20230531FE2.pdf",
+    "release_datetime": "2023-04-28T01:38:16+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2023/RNS/73221_rns_2023-04-28_afb79b9a-edb2-4638-a255-f9c48c02a861.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/73221/2023/RNS/73221_rns_2023-04-28_afb79b9a-edb2-4638-a255-f9c48c02a861.pdf",
+    "viewer_url": "https://financialfilings.com/filings/company-461/agm-information/2023/63745091/",
+    "company": {
+     "id": 73221,
+     "name": "台興",
+     "tagline": "Specialized in R&D and manufacturing of precision electromagnetic components, a leading global supplier.",
+     "isins": [
+      "TW0003426003"
+     ],
+     "lei": "",
+     "sub_industry_code": "2710",
+     "oics_code": "TC.HW.ELC.ECP",
+     "country_code": "TW",
+     "date_public": "2026-11-06"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 1494937,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": null
+   },
+   {
+    "id": 35673166,
+    "title": "HEMISPHERE GNSS INC. 2021年度及2022年1-12月合并审计报告",
+    "release_datetime": "2023-04-11T16:00:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/54426/2023/RNS/54426_rns_2023-04-11_2b08424d-7c63-43c6-88b7-f36fa70abe6b.PDF",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/54426/2023/RNS/54426_rns_2023-04-11_2b08424d-7c63-43c6-88b7-f36fa70abe6b.PDF",
+    "viewer_url": "https://financialfilings.com/filings/beijing-unistrong-sciencetechnology-coltd/audit-report-information/2023/35673166/",
+    "company": {
+     "id": 54426,
+     "name": "Beijing UniStrong Science&Technology Co.,Ltd.",
+     "tagline": "Develops high-precision GNSS products and PNT solutions for geospatial applications.",
+     "isins": [
+      "CNE100000MY0"
+     ],
+     "lei": "",
+     "sub_industry_code": "2651",
+     "oics_code": "TC.HW.ELC.EIN",
+     "country_code": "CN",
+     "date_public": "2026-10-03"
+    },
+    "filing_type": {
+     "id": 53,
+     "code": "AR",
+     "name": "Audit Report / Information",
+     "description": "Standalone audit reports, applied accounting principles, and results of internal or regulatory stress tests. The code AR does not stand for Annual Report: a company's annual report or annual financial statements belong under Annual Report (10-K), even when they include the auditor's report. A credit-rating agency's report or rating action on the company or its debt is not an audit report: it belongs under Regulatory Filings.",
+     "category": {
+      "id": 2,
+      "name": "Financial Reporting & Info",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 968092,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": null
+   },
+   {
+    "id": 70704711,
+    "title": "第19期定時株主総会招集通知及び株主総会資料(英語訳)",
+    "release_datetime": "2024-02-26T14:59:59+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/13616/2024/RNS/13616_rns_2024-02-26_1d513e87-88aa-4518-a3b5-f52c63d0d56e.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/13616/2024/RNS/13616_rns_2024-02-26_1d513e87-88aa-4518-a3b5-f52c63d0d56e.pdf",
+    "viewer_url": "https://financialfilings.com/filings/symbio-pharmaceuticals-limited/regulatory-filings/2024/70704711/",
+    "company": {
+     "id": 13616,
+     "name": "SymBio Pharmaceuticals Limited",
+     "tagline": "Develops and commercializes drugs for oncology, hematology, and rare diseases.",
+     "isins": [
+      "JP3383050006"
+     ],
+     "lei": "",
+     "sub_industry_code": "2100",
+     "oics_code": "HC.PH.PHA.GNX",
+     "country_code": "JP",
+     "date_public": "2026-11-05"
+    },
+    "filing_type": {
+     "id": 18,
+     "code": "RNS",
+     "name": "Regulatory Filings",
+     "description": "General regulatory announcements, compliance documents, officer certifications, and fallback category for miscellaneous filings that do not neatly fit into other specific categories. Also covers corrections, amendments, or revisions to previously published filings.",
+     "category": {
+      "id": 11,
+      "name": "Other",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 835094,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "Notice of General Shareholders Meeting /Informational Materials for a General Shareholders Meeting",
+    "match": null
+   },
+   {
+    "id": 41612073,
+    "title": "重大资产购买项目标的资产UnitedFaithVenturesLimited审计报告（原文）",
+    "release_datetime": "2016-03-23T16:00:00+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/57020/2016/RNS/57020_rns_2016-03-23_a799e868-2fd5-43b3-a6a9-c13d6703f942.PDF",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/57020/2016/RNS/57020_rns_2016-03-23_a799e868-2fd5-43b3-a6a9-c13d6703f942.PDF",
+    "viewer_url": "https://financialfilings.com/filings/enn-natural-gas-co-ltd/audit-report-information/2016/41612073/",
+    "company": {
+     "id": 57020,
+     "name": "ENN Natural Gas Co., Ltd.",
+     "tagline": "Integrated energy provider managing the natural gas value chain and infrastructure.",
+     "isins": [
+      "CNE000000DG7"
+     ],
+     "lei": "300300KVDMGNQNP52Z98",
+     "sub_industry_code": "3520",
+     "oics_code": "UT.UT.GAS.GHN",
+     "country_code": "CN",
+     "date_public": "2026-10-03"
+    },
+    "filing_type": {
+     "id": 53,
+     "code": "AR",
+     "name": "Audit Report / Information",
+     "description": "Standalone audit reports, applied accounting principles, and results of internal or regulatory stress tests. The code AR does not stand for Annual Report: a company's annual report or annual financial statements belong under Annual Report (10-K), even when they include the auditor's report. A credit-rating agency's report or rating action on the company or its debt is not an audit report: it belongs under Regulatory Filings.",
+     "category": {
+      "id": 2,
+      "name": "Financial Reporting & Info",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 788517,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": null
+   },
+   {
+    "id": 63723125,
+    "title": "113年股東會相關資料 — 2024_2809_20240607FE3.pdf",
+    "release_datetime": "2024-06-25T06:54:03+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/88134/2024/RNS/88134_rns_2024-06-25_2f97ae7a-2b62-447c-90ba-6199ff888155.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/88134/2024/RNS/88134_rns_2024-06-25_2f97ae7a-2b62-447c-90ba-6199ff888155.pdf",
+    "viewer_url": "https://financialfilings.com/filings/kings-town-bank/declaration-of-voting-results-voting-rights-announcements/2024/63723125/",
+    "company": {
+     "id": 88134,
+     "name": "King’s Town Bank",
+     "tagline": "A commercial bank offering diverse financial services and an extensive local branch network.",
+     "isins": [
+      "TW0002809001"
+     ],
+     "lei": "",
+     "sub_industry_code": "6419",
+     "oics_code": "FI.BK.BNK.REG",
+     "country_code": "TW",
+     "date_public": "2026-10-23"
+    },
+    "filing_type": {
+     "id": 22,
+     "code": "DVA",
+     "name": "Declaration of Voting Results & Voting Rights Announcements",
+     "description": "Official results from shareholder votes at any general meeting (AGM or EGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 1782000,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": null
+   },
+   {
+    "id": 48954016,
+    "title": "115年股東會相關資料 — 2026_5489_20260623FE3.pdf",
+    "release_datetime": "2026-06-29T08:44:20+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/72688/2026/RNS/72688_rns_2026-06-29_f900c63a-5382-4187-becc-a75271c25a72.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/72688/2026/RNS/72688_rns_2026-06-29_f900c63a-5382-4187-becc-a75271c25a72.pdf",
+    "viewer_url": "https://financialfilings.com/filings/dynacolor/agm-information/2026/48954016/",
+    "company": {
+     "id": 72688,
+     "name": "DYNACOLOR,INC.",
+     "tagline": "",
+     "isins": [
+      "TW0005489009"
+     ],
+     "lei": "",
+     "sub_industry_code": null,
+     "oics_code": "IN.EQ.ELE.ELP",
+     "country_code": "TW",
+     "date_public": "2026-10-02"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 1444707,
+    "ingestion_mode": "REALTIME",
+    "source_url": null,
+    "source_filing_type": null,
+    "match": null
+   },
+   {
+    "id": 63723040,
+    "title": "110年股東會相關資料 — 2021_2809_20210518FE3.pdf",
+    "release_datetime": "2021-06-02T05:45:47+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/88134/2021/RNS/88134_rns_2021-06-02_1ecabcf3-9b5f-4ad1-be26-54286d0a2aca.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/88134/2021/RNS/88134_rns_2021-06-02_1ecabcf3-9b5f-4ad1-be26-54286d0a2aca.pdf",
+    "viewer_url": "https://financialfilings.com/filings/kings-town-bank/agm-information/2021/63723040/",
+    "company": {
+     "id": 88134,
+     "name": "King’s Town Bank",
+     "tagline": "A commercial bank offering diverse financial services and an extensive local branch network.",
+     "isins": [
+      "TW0002809001"
+     ],
+     "lei": "",
+     "sub_industry_code": "6419",
+     "oics_code": "FI.BK.BNK.REG",
+     "country_code": "TW",
+     "date_public": "2026-10-23"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 829565,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": null
+   },
+   {
+    "id": 63715091,
+    "title": "107年股東會相關資料 — 2018_1902_20180613FE2.pdf",
+    "release_datetime": "2018-05-09T12:15:48+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/88124/2018/RNS/88124_rns_2018-05-09_0fed3729-f7f5-4fbc-8335-2bde257047f5.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/88124/2018/RNS/88124_rns_2018-05-09_0fed3729-f7f5-4fbc-8335-2bde257047f5.pdf",
+    "viewer_url": "https://financialfilings.com/filings/taiwan-pulp-paper-corporation/agm-information/2018/63715091/",
+    "company": {
+     "id": 88124,
+     "name": "Taiwan Pulp & Paper Corporation",
+     "tagline": "Manufactured and marketed pulp, paper, and chemical products; also developed real estate.",
+     "isins": [
+      "TW0001902005"
+     ],
+     "lei": "",
+     "sub_industry_code": "1701",
+     "oics_code": "MA.PK.FOR.PAP",
+     "country_code": "TW",
+     "date_public": "2026-10-06"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 1837695,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": null
+   },
+   {
+    "id": 63791005,
+    "title": "107年股東會相關資料 — 2018_6251_20180530FE3.pdf",
+    "release_datetime": "2018-06-15T06:35:29+00:00",
+    "document_url": "https://cdn.financialreports.eu/financialreports/media/filings/88158/2018/RNS/88158_rns_2018-06-15_2d109c7d-1cbb-43f4-93e8-089f1a512514.pdf",
+    "proxy_url": "https://cdn.financialreports.eu/financialreports/media/filings/88158/2018/RNS/88158_rns_2018-06-15_2d109c7d-1cbb-43f4-93e8-089f1a512514.pdf",
+    "viewer_url": "https://financialfilings.com/filings/dynamic-electronics-co-ltd-1/agm-information/2018/63791005/",
+    "company": {
+     "id": 88158,
+     "name": "Dynamic Electronics Co Ltd",
+     "tagline": "High-technology manufacturer of multi-layer printed circuit boards (PCBs) and electronic components.",
+     "isins": [
+      "TW0006251002"
+     ],
+     "lei": "",
+     "sub_industry_code": "2619",
+     "oics_code": "TC.HW.ELC.ECP",
+     "country_code": "TW",
+     "date_public": "2026-10-06"
+    },
+    "filing_type": {
+     "id": 13,
+     "code": "AGM-R",
+     "name": "AGM Information",
+     "description": "Presentations and materials shared during the Annual General Meeting (AGM).",
+     "category": {
+      "id": 1,
+      "name": "Annual General Meeting",
+      "sort_order": 0
+     }
+    },
+    "processing_status": "COMPLETED",
+    "file_extension": "PDF",
+    "file_size": 1632578,
+    "ingestion_mode": "BACKFILLED",
+    "source_url": null,
+    "source_filing_type": "股東會相關資料",
+    "match": null
+   }
+  ],
+  "search": {
+   "capped": true,
+   "scan_complete": false,
+   "max_results": 1000,
+   "scope": "filings_with_text"
+  }
+ }
+}
