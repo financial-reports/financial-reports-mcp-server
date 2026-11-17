@@ -7417,9 +7417,16 @@ _MAX_PARAM_DESCRIPTION = 320
 # and can spend a 40-credit call on a combination the API refuses. The sentence
 # does not need hand-picking: `_OPERATIVE_RE` matches its `400` and `_param_cap`
 # widens to fit the lead, so it lands in front of the 320-char cut.
+# `min_trust_tier` added with the 2026-11-17 catch-up refresh: it arrives with a
+# 626-char description whose 4th of 5 sentences is "Cannot be combined with
+# `include=preliminary`, `include=ratios` or `include=standalone_quarters`" —
+# three combinations the API refuses on a 40-credit call, written nowhere else.
+# Found by SPECHT at 3/3 passes; the census below MISSED it, which is why
+# `_OPERATIVE_RE` gained `combined with` in the same commit.
 _DESCRIBED_PARAMS = frozenset(
     {"type", "types", "source_filing_type", "line_items", "fiscal_period",
-     "cursor", "include", "primary_annual_report", "include_predecessors"}
+     "cursor", "include", "primary_annual_report", "include_predecessors",
+     "min_trust_tier"}
 )
 
 # Params whose schema `enum` lists the legal MEMBERS of a comma-separated list
@@ -7481,7 +7488,30 @@ _CSV_ENUM_PARAMS = frozenset({"include"})
 # no control behind it, and the cap pushes the value lists out when it does.
 # *The 320-char cap plus a human choosing what matters is a race the human
 # loses — so is a human asserting what a regex would match.*
-_OPERATIVE_RE = re.compile(r"(?:\b4\d\d\b|\b503\b|Not served with|\bRequires\b)")
+# ⛔⛔ `combined with` ADDED 2026-11-17 BECAUSE THIS RULE RETURNED A FALSE
+# NEGATIVE ON ITS SECOND REFRESH, AND A CENSUS THAT MISSES A PHRASING
+# REPORTS "no new arrivals" — the same observable as a genuinely clean
+# refresh. The 59->62 refresh added `min_trust_tier`, whose description ends
+# "Cannot be combined with `include=preliminary`, `include=ratios` or
+# `include=standalone_quarters`" — a stated incompatibility with NO status
+# code, in the 4th of 5 sentences of 626 chars, so the 320-char cap ate it.
+# ⇒ UPSTREAM WRITES THE SAME INCOMPATIBILITY AT LEAST THREE WAYS: "Not
+# served with X" (a literal here), "Not combined with X (`400`)" (matched
+# only by its trailing code), and "Cannot be combined with X" (matched by
+# nothing). Keying on the PREDICATE rather than on each negation word is
+# what stops the fourth phrasing from being another silent miss.
+# ⚠ THE CONTROL CANNOT CHOOSE THIS PATTERN, AND SAYING SO IS THE POINT:
+# five candidate widenings (`combined with`, `cannot be combined`,
+# `(not|cannot be) combined`, `cannot be`, and a verb list) each newly match
+# EXACTLY ONE sentence of the snapshot's 405 — the real one. They are
+# indistinguishable on today's data, so the choice is a DESIGN judgement and
+# not a measurement. `combined with` is the broadest of the five, so it is
+# the one a new negation word cannot slip past.
+# ⚠ KNOWN IMPRECISION, stated rather than discovered later: it would also
+# match a POSITIVE "Combined with `as_of`, ..." sentence. That costs tokens
+# in a lead, not correctness — and today nothing matches it ("Combines with
+# `as_of`" is a different inflection).
+_OPERATIVE_RE = re.compile(r"(?:\b4\d\d\b|\b503\b|Not served with|\bRequires\b|\bcombined with\b)")
 # Chars of the schema's OWN prose kept after the derived rules. The opening
 # sentences are where the "what do I actually send" instruction lives, and for
 # `cursor` that instruction is load-bearing: send an EMPTY cursor for the first
