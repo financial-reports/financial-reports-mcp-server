@@ -5649,9 +5649,22 @@ def _echo_query(raw: str) -> str:
 def _md_scan_hits(full_text: str, raw_query: str, cap: int) -> list:
     """Case-insensitive substring scan -> [(offset, context), ...], document order.
 
-    Shared by `filings_markdown_search` and `filings_markdown_search_batch` so the
-    two cannot drift: a batch that matched differently from the single-filing tool
-    would make a miss impossible to interpret.
+    ⛔ THE SHARING THIS DOCSTRING CLAIMED ENDED ON 2026-11-04 AND THE CLAIM
+    OUTLIVED IT BY TWO WEEKS. It read: "Shared by `filings_markdown_search` and
+    `filings_markdown_search_batch` so the two cannot drift: a batch that matched
+    differently from the single-filing tool would make a miss impossible to
+    interpret." #173 moved the single tool onto the API's search endpoint, so
+    this has had ONE caller -- `filings_markdown_search_batch` -- ever since.
+    ⇒ The mechanism is worth keeping, because reading the file end to end cannot
+    catch it: neither this function nor its comment ever changed. THE OTHER
+    CALLER LEFT. Only counting the call sites sees that
+    (`git grep -n _md_scan_hits`), and a comment naming who ELSE uses a thing is
+    making a claim about a set it cannot observe.
+    ⇒ And the cost was not a stale sentence: it asserted the invariant could not
+    break, to anyone deciding whether to ship web#10487 -- which is what broke
+    it. The three live divergence axes are named on
+    `filings_markdown_search_batch`'s own description; mcp-server#213 tracks
+    closing them by moving the batch onto POST /filings/markdown/search/.
     """
     hay_l = full_text.lower()
     hits = []
@@ -5703,9 +5716,13 @@ async def filings_markdown_search(
     AND COME BACK HERE whenever that call does not answer: no coverage, an empty line
     item, or a refusal for your plan. A value that is absent or unavailable there is
     not an absent fact, and the figure is usually in the document.
-    Case-insensitive. Each hit shows ~440 chars of context and an offset you can pass
-    to filings_markdown_retrieve to read more around it. `query` is a SUBSTRING, at most
-    200 characters -- search a distinctive phrase, not a whole passage."""
+    Case-insensitive substring match, and a phrase of two or more words ALSO matches
+    where the conversion split it across lines, table cells or pages, or ran its words
+    together -- so quote the phrase as it reads in the filing, not as the page laid it
+    out. Exact hits come first in document order, then those split ones; `total_hits`
+    counts both. Each hit shows ~440 chars of context and an offset you can pass to
+    filings_markdown_retrieve to read more around it. `query` is at most 200 characters
+    -- search a distinctive phrase, not a whole passage."""
     try:
         _require_auth_context()
         if not isinstance(filing_id, int) or filing_id <= 0:
@@ -5716,9 +5733,10 @@ async def filings_markdown_search(
         if len(raw) > _MAX_QUERY_CHARS:
             raise ToolInputError(
                 f"query must be at most {_MAX_QUERY_CHARS} characters "
-                f"(got {len(raw)}). This is a substring search, so a passage "
-                "that long will not match; search a distinctive phrase from "
-                "it instead."
+                f"(got {len(raw)}). Search a distinctive phrase from it "
+                "instead: the matcher tolerates the conversion's line, cell "
+                "and page breaks inside a phrase, so quote the phrase as it "
+                "reads rather than padding it out to a whole passage."
             )
         try:
             cap = max(1, min(int(max_hits), 10))
@@ -5726,10 +5744,17 @@ async def filings_markdown_search(
             raise ToolInputError("max_hits must be an integer between 1 and 10")
         # SERVER-SIDE SEARCH (#166). This used to fetch /markdown/ in FULL — up
         # to _MAX_FILING_BYTES — and scan here, moving 10 MB to return ~440
-        # characters. The API's own endpoint does the same match (its contract:
-        # case-insensitive substring, document order, ~440 chars of context, an
-        # offset for filings_markdown_retrieve, and total_hits over the whole
-        # document), so the bytes stop crossing this hop.
+        # characters. The API's own endpoint does the same match, so the bytes
+        # stop crossing this hop. Its contract, taken from the COMMITTED
+        # snapshot (`/filings/{id}/markdown/search/`, refreshed in #214) rather
+        # than paraphrased, so this comment cannot drift from the thing it
+        # describes: case-insensitive substring match; a phrase of two or more
+        # words ALSO matches where the conversion split it across lines, table
+        # cells or pages, or ran its words together (web#10487, live
+        # 2026-11-17); exact hits first in document order, then those split
+        # ones; ~440 chars of context and an offset for
+        # filings_markdown_retrieve; and total_hits over the whole document,
+        # counting both kinds.
         #
         # ⭐ AND IT RETIRES A FALSE-ABSENCE CLASS RATHER THAN RELOCATING ONE: the
         # byte cap could cut a document, so a miss here was UNKNOWN and had to
@@ -5846,10 +5871,14 @@ async def filings_markdown_search_batch(
     reported: that tool may answer with a later restatement of the period instead.
     And come back here whenever it does not answer — no coverage, an empty line item,
     or a refusal for your plan; unavailable there is not absent.
-    Case-insensitive. Returns per-filing hits with character offsets you can pass to
-    filings_markdown_retrieve. Outcomes are reported SEPARATELY — matched, no match,
-    searched only in part, and not searched — so you can tell a real absence from a
-    filing that was truncated or never read. A filing can be BOTH matched and only
+    Case-insensitive EXACT substring match only — ⚠ a NARROWER matcher than
+    filings_markdown_search, which also finds a phrase the conversion split or ran
+    together. So NO MATCH here is not an absence for a phrase query: re-run it through
+    filings_markdown_search on that filing before concluding the text is not there.
+    Returns per-filing hits with character offsets you
+    can pass to filings_markdown_retrieve. Outcomes are reported SEPARATELY — matched,
+    no match, searched only in part, and not searched — so you can tell a real absence
+    from a filing that was truncated or never read. A filing can be BOTH matched and only
     partly searched — hits found before the byte cap are real, the tail past it is
     unknown. Max 20 filings per call.
     This searches only the filings you name — it does NOT search the whole corpus, so a

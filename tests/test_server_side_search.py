@@ -368,7 +368,12 @@ def test_the_limit_mirrors_the_servers_and_is_stated_in_the_contract(mcp_module)
     )
     doc = _tool(mcp_module, "filings_markdown_search").__doc__
     assert "200 characters" in doc, "the cap is enforced but not disclosed to the caller"
-    assert "SUBSTRING" in doc
+    # Was `assert "SUBSTRING" in doc`, which web#10487 made too narrow to keep:
+    # the matcher is no longer substring-ONLY, so the all-caps word went and the
+    # disclosure is now the pair — what it matches exactly, and what else it
+    # matches. Asserting the lowercase word alone would pass on copy that still
+    # claimed a plain substring search, which is the defect #213 filed.
+    assert "substring match" in doc, "the match TYPE is no longer disclosed at all"
 
 
 @pytest.mark.asyncio
@@ -484,3 +489,153 @@ async def test_no_hit_is_reported_as_OUT_OF_REACH_any_more(
             f"the result still hedges with {hedge!r}: every offset is fetchable "
             "since #175, so this sends the model away from text it can read"
         )
+
+
+def _snapshot_search_description() -> str:
+    """The committed snapshot's own text for GET /filings/{id}/markdown/search/.
+
+    Read with a parser, never with a line-oriented tool: the snapshot is a
+    SINGLE LINE of JSON, so `grep -c` on it is a constant and `head` sees the
+    whole file. A count that cannot vary reads as a measurement.
+    """
+    import json
+    import os
+
+    path = os.path.join(
+        os.path.dirname(__file__), "..", "scripts", "openapi.snapshot.json"
+    )
+    with open(path, encoding="utf-8") as handle:
+        snap = json.load(handle)
+    return " ".join(
+        snap["paths"]["/filings/{id}/markdown/search/"]["get"]["description"].split()
+    )
+
+
+def test_the_tool_describes_the_split_phrase_contract_upstream_actually_states(
+    mcp_module,
+) -> None:
+    """⛔ web#10487 WIDENED THE MATCHER AND FOUR COPY SITES KEPT SAYING "SUBSTRING".
+
+    They were false in the expensive direction: a model reading "this is a
+    substring search" avoids exactly the phrase queries that now work, so the
+    capability shipped and nothing used it (mcp-server#213 item 1).
+
+    The claim is pinned against the SNAPSHOT'S OWN SENTENCE rather than against
+    a string a human retyped here, so the test fails when upstream rewords the
+    contract instead of silently passing on stale prose — the same discipline as
+    `test_the_hand_written_lead_still_matches_upstream`. The sibling direction is
+    worth stating: our copy is hand-written, so nothing but this test connects it
+    to the thing it describes.
+    """
+    upstream = _snapshot_search_description()
+    # If upstream drops the clause this test exists for, say so plainly rather
+    # than failing on our copy — the fixture, not the tool, is what moved.
+    assert "ran its words together" in upstream, (
+        "the snapshot no longer states the split-phrase rule. Either the refresh "
+        "regressed or the API changed; re-read /filings/{id}/markdown/search/ "
+        "before touching the tool copy."
+    )
+    # ⚠ NORMALISE THE WHITESPACE BEFORE MATCHING. A docstring is wrapped and
+    # indented, so a phrase crossing a line break contains "\n    " and a
+    # substring test on the flat phrase fails on FORMATTING rather than content.
+    # It cost a red run here, and the same omission on an `assert ... not in`
+    # would have passed while the stale claim sat in the copy.
+    doc = " ".join((_tool(mcp_module, "filings_markdown_search").__doc__).split())
+    for claim in (
+        "ran its words together",   # what else matches
+        "Exact hits come first",    # the ORDER, which decides what a model reads first
+        "total_hits",               # that the count covers both kinds
+    ):
+        assert claim in doc, (
+            f"filings_markdown_search does not disclose {claim!r}; upstream states it"
+        )
+    assert "is a SUBSTRING" not in doc, (
+        "the pre-web#10487 claim survives in the tool copy"
+    )
+
+
+def test_the_batch_tool_declares_that_it_matches_LESS_than_the_single_one(
+    mcp_module,
+) -> None:
+    """The batch scans client-side (`_md_scan_hits`) and the single tool asks the
+    API, so since web#10487 a phrase the single tool finds is MISSED by the batch
+    on the same filing. Option 3 of mcp-server#213: until the batch moves onto
+    POST /filings/markdown/search/, the divergence has to be *interpretable*
+    rather than invisible — a bare "no match" from a weaker matcher is a false
+    absence a model cannot distinguish from a real one.
+
+    This is the stopgap, not the fix, and the test is written so that it keeps
+    passing only while the disclosure is there: closing the divergence for real
+    means deleting both the disclosure and this test in the same commit.
+    """
+    doc = " ".join((_tool(mcp_module, "filings_markdown_search_batch").__doc__).split())
+    assert "EXACT substring match only" in doc, (
+        "the batch does not say its matcher is the narrower one"
+    )
+    assert "filings_markdown_search" in doc, (
+        "the disclosure does not name the tool that DOES match the phrase, so a "
+        "model is told it may have a false absence and not told what to do"
+    )
+
+
+def test_md_scan_hits_has_exactly_one_caller(mcp_module) -> None:
+    """⛔ THE FAILURE THIS GUARDS CANNOT BE SEEN BY READING THE FILE.
+
+    `_md_scan_hits`' docstring claimed for two weeks that it was "shared by
+    `filings_markdown_search` and `filings_markdown_search_batch` so the two
+    cannot drift". #173 moved the single tool server-side on 2026-11-04 and the
+    claim became false — but NEITHER THE FUNCTION NOR ITS COMMENT CHANGED. The
+    other caller left. A read-through sees a self-consistent file (Phase 4.6
+    catches a comment describing an earlier revision of its OWN guard; this is a
+    different mechanism), and only counting the call sites sees it.
+
+    ⇒ So the call-site count is the instrument, asserted in BOTH directions: a
+    second caller returning makes the old invariant true again and the docstring
+    must then say so, and losing the last caller means the helper is dead.
+
+    ⛔⛔ AND THE INSTRUMENT HAS TO BE POINTED AT THE *GENERATED MODULE*, WHICH
+    COST TWO WRONG VERSIONS OF THIS TEST TO LEARN. `scripts/generate_mcp_tools.py`
+    holds this helper's definition AND its call as TEXT INSIDE A TEMPLATE STRING,
+    so measured on the generator:
+        regex  -> 1, but a probe appending the single comment line
+                  `# _md_scan_hits(a, b, c)` made it report 2. A text pattern
+                  matches MENTIONS as well as OCCURRENCES.
+        ast    -> 0 calls AND 0 defs, because there is no such code in that file.
+    Both were wrong, in opposite directions, and the regex was only ever right by
+    accident. The emitted module is where the def and the call are real Python
+    (`ast` finds exactly one of each), and it is also the thing that actually
+    ships — so it is both the correct instrument and the right subject.
+    """
+    import ast
+    import os
+
+    path = os.path.join(
+        os.path.dirname(__file__), "..", "src", "financial_reports_mcp.py"
+    )
+    with open(path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+    # Positive control FIRST: if the helper is not in the rendered module at all,
+    # a zero below would be a fact about the render and not about the callers.
+    defs = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_md_scan_hits"
+    ]
+    assert len(defs) == 1, (
+        f"_md_scan_hits is defined {len(defs)} times in the rendered module; the "
+        "call count below would be measuring the render, not the callers"
+    )
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_md_scan_hits"
+    ]
+    lines = sorted(node.lineno for node in calls)
+    assert len(calls) == 1, (
+        f"_md_scan_hits has {len(calls)} call sites, not 1. Its docstring records "
+        "WHO calls it and why that matters; a comment naming who else uses a thing "
+        "is a claim about a set it cannot observe, so update the docstring in the "
+        f"same commit. Lines: {lines}"
+    )
