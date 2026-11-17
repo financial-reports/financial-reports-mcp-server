@@ -5871,9 +5871,10 @@ async def filings_markdown_search_batch(
     reported: that tool may answer with a later restatement of the period instead.
     And come back here whenever it does not answer — no coverage, an empty line item,
     or a refusal for your plan; unavailable there is not absent.
-    Case-insensitive EXACT substring match only — ⚠ a NARROWER matcher than
-    filings_markdown_search, which also finds a phrase the conversion split or ran
-    together. So NO MATCH here is not an absence for a phrase query: re-run it through
+    Case-insensitive; matches your literal phrase, plus the thousands-separator
+    spelling of a number. ⚠ NARROWER THAN filings_markdown_search, which also finds a
+    phrase the conversion split across lines, table cells or pages, or ran together —
+    so NO MATCH here is not an absence for a phrase query: re-run it through
     filings_markdown_search on that filing before concluding the text is not there.
     Returns per-filing hits with character offsets you
     can pass to filings_markdown_retrieve. Outcomes are reported SEPARATELY — matched,

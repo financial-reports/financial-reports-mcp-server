@@ -569,12 +569,27 @@ def test_the_batch_tool_declares_that_it_matches_LESS_than_the_single_one(
     means deleting both the disclosure and this test in the same commit.
     """
     doc = " ".join((_tool(mcp_module, "filings_markdown_search_batch").__doc__).split())
-    assert "EXACT substring match only" in doc, (
+    assert "NARROWER THAN filings_markdown_search" in doc, (
         "the batch does not say its matcher is the narrower one"
     )
-    assert "filings_markdown_search" in doc, (
+    assert "filings_markdown_search on that filing" in doc, (
         "the disclosure does not name the tool that DOES match the phrase, so a "
         "model is told it may have a false absence and not told what to do"
+    )
+    # ⛔ AND IT MUST NOT OVERSTATE ITS OWN EXACTNESS, WHICH THE FIRST VERSION OF
+    # THIS COPY DID. It said "EXACT substring match only"; SPECHT caught that
+    # `_md_scan_hits` runs `_md_candidates`, which also tries the
+    # thousands-separator spelling, so `query='19409'` hits a document holding
+    # only `19,409`. A client asking whether the literal text occurs would have
+    # been told yes on the strength of a promise the code does not keep.
+    # ⇒ Worse, the fallback is NOT a divergence: `_md_candidates` is called by
+    # BOTH paths (asserted below), so advertising it as this tool's exactness was
+    # wrong twice over — false about itself and false as a contrast.
+    assert "thousands-separator" in doc, (
+        "the numeric fallback is not disclosed, so an exactness claim is implied"
+    )
+    assert "EXACT" not in doc, (
+        "the batch claims an exactness `_md_candidates` contradicts"
     )
 
 
@@ -638,4 +653,55 @@ def test_md_scan_hits_has_exactly_one_caller(mcp_module) -> None:
         "WHO calls it and why that matters; a comment naming who else uses a thing "
         "is a claim about a set it cannot observe, so update the docstring in the "
         f"same commit. Lines: {lines}"
+    )
+
+
+def test_the_numeric_fallback_is_shared_so_neither_tool_may_claim_literal_only() -> None:
+    """The fact that made "EXACT substring match only" wrong, pinned structurally.
+
+    `_md_candidates` adds the thousands-separator spelling of a number, and it is
+    called on BOTH paths — inside `_md_scan_hits` (the batch's client-side scan)
+    and inside `filings_markdown_search` (which sends the candidates to the API).
+    So the numeric fallback is COMMON BEHAVIOUR, not the batch's exactness and not
+    a divergence between the two tools.
+
+    ⇒ Two consequences, and the test exists because I got both wrong in one
+    sentence: neither description may advertise a literal-only match, and the
+    fallback must not be offered as a contrast between them. The genuine matcher
+    divergence is the split-phrase axis alone (mcp-server#213).
+
+    ⇒ Counted with `ast` on the RENDERED module, for the reason spelled out in
+    `test_md_scan_hits_has_exactly_one_caller`: the generator holds this code as
+    text inside a template string, so the structural signal is absent from the
+    file that contains it.
+    """
+    import ast
+    import os
+
+    path = os.path.join(
+        os.path.dirname(__file__), "..", "src", "financial_reports_mcp.py"
+    )
+    with open(path, encoding="utf-8") as handle:
+        tree = ast.parse(handle.read())
+    enclosing = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id == "_md_candidates"
+            ):
+                # Innermost wins: a nested def would otherwise be attributed to
+                # its parent and make the two paths look like one.
+                prev = enclosing.get(inner.lineno)
+                if prev is None or node.lineno > prev[1]:
+                    enclosing[inner.lineno] = (node.name, node.lineno)
+    callers = sorted({name for name, _ in enclosing.values()})
+    assert callers == ["_md_scan_hits", "filings_markdown_search"], (
+        "the numeric fallback's callers changed: "
+        f"{callers}. If only ONE path still has it, the two tools now really do "
+        "differ on numbers and both descriptions must say so; if a third appears, "
+        "check it is not a path that advertises a literal match."
     )
