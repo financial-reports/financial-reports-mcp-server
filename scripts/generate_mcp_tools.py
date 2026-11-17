@@ -56,7 +56,7 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # The default generated surface drops cold per-item reference singletons, the
 # ISIC hierarchy family (folded into the get_fr_industry_classification guide
 # tool), and webhooks/watchlist (real features, off the default surface per the
-# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full 62-tool surface
+# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full 64-tool surface
 # (NOT a superset: it drops the three get_fr_* guide tools below, which are
 # emitted on the curated surface only. tests/test_published_tool_counts.py
 # derives both counts from this generator, so neither can go stale here).
@@ -158,6 +158,38 @@ _PRUNED_EXCLUDE = {
     # from the drift report against the live schema, not supplied by hand: this
     # is a denylist, so a misspelt key would fail open and the tool would ship.
     "filings_markdown_search_create",
+    # Added with the 2026-11-17 catch-up refresh (59 -> 62 paths). Both keys were
+    # read from the live schema's own path list, not typed from memory: this is a
+    # DENYLIST, so a misspelt key fails OPEN and the tool ships.
+    #
+    # `filings_removed_list` is GET /filings/removed/, the polling twin of the
+    # `webhooks_*` family this set already prunes. It REQUIRES `since`, so it is
+    # not answerable without state the model does not have; its payload is
+    # content-free (ids and a removal reason, no filing to read); and it bills 1
+    # credit per request to tell a caller what is NOT there. A model that needs
+    # to know a filing went away learns it from the filing call returning
+    # nothing, which is the path it is already on.
+    "filings_removed_list",
+    # `companies_financials_trust_tiers_retrieve` is GET
+    # /companies/financials/trust-tiers/: the measured accuracy of each
+    # `trust_tier` — match rate against the issuer's own XBRL in a
+    # pre-registered sample, with n and a 95% interval.
+    # ⛔ THE FIRST REASON TO PRUNE IT WAS WRONG AND IS WORTH RECORDING, BECAUSE
+    # IT POINTED THE OTHER WAY: "the tiers' MEANING belongs in
+    # `companies_financials_retrieve`'s description" — but this endpoint does not
+    # publish what a tier means, it publishes how often one is RIGHT, which no
+    # other tool answers. On that reasoning it should have been INCLUDED.
+    # ⇒ What decides it is a field measured rather than assumed:
+    # `trust_tier_accuracy` is already on EVERY line item and is `required`,
+    # carrying the figure, the method in summary, the "rate for the class, not a
+    # probability for this value" caveat and the null case — inline with the
+    # value the model is about to quote. By its own cross-reference this endpoint
+    # adds "method and sample sizes" ONLY: reference material for a human
+    # auditing methodology, not a call an agent makes to answer a question.
+    # Second, independent ground: the 200 response is `type: object` with
+    # `additionalProperties: {}`, so the tool would ship an untyped blob whose
+    # `output_schema` tells the model nothing.
+    "companies_financials_trust_tiers_retrieve",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 
