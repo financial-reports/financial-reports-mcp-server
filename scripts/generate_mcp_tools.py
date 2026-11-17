@@ -7375,9 +7375,19 @@ _MAX_PARAM_DESCRIPTION = 320
 # `cursor` and `include` added with the #154 refresh (#170): `cursor` is
 # unusable without its text — the first page needs an EMPTY `cursor=`, which no
 # model will guess — and `include` became comma-separated in the same refresh.
+# `include_predecessors` added with the #199 refresh (this PR), which is the
+# allowlist cost the warning above predicts coming due: the parameter arrives
+# carrying "Not combined with `as_known_at`, `include=preliminary` or
+# `include=standalone_quarters` (`400`)" as the LAST sentence of 962 chars, and
+# that is the only place any of those three rules is written — `include`'s own
+# 1,897-char description mentions predecessors ZERO times, so there is no
+# reciprocal route to the fact. Without this entry a model sees a bare boolean
+# and can spend a 40-credit call on a combination the API refuses. The sentence
+# does not need hand-picking: `_OPERATIVE_RE` matches its `400` and `_param_cap`
+# widens to fit the lead, so it lands in front of the 320-char cut.
 _DESCRIBED_PARAMS = frozenset(
     {"type", "types", "source_filing_type", "line_items", "fiscal_period",
-     "cursor", "include", "primary_annual_report"}
+     "cursor", "include", "primary_annual_report", "include_predecessors"}
 )
 
 # Params whose schema `enum` lists the legal MEMBERS of a comma-separated list
@@ -7418,7 +7428,28 @@ _CSV_ENUM_PARAMS = frozenset({"include"})
 # The rule is deliberately narrow — a hard HTTP failure or a stated
 # incompatibility — because a loose one ("must", "should") would front-load half
 # the prose and push the value lists back out, which is the control test.
-_OPERATIVE_RE = re.compile(r"(?:\b4\d\d\b|\b503\b|Not served with)")
+# ⛔ `Requires` ADDED WITH THE #199 REFRESH, AND ONLY BECAUSE THE CONTROL TEST
+# PASSED: a PRECONDITION is as operative as a 4xx, but upstream states it with a
+# status code only SOMETIMES. `primary_annual_report` writes "Requires at least
+# one of: … ; otherwise returns 400" and matched on the `400`;
+# `filings_list.include_predecessors` writes "Requires `company`; `lei` and
+# `company_isin` do not follow predecessors." with NO code, so the rule missed
+# it — and at 500 chars against a 320-char cap the sentence was being cut, which
+# is strictly worse than not describing the parameter at all: the model is told
+# how to use predecessors and not told the filter they require.
+# ⇒ RUN THE CONTROL BEFORE WIDENING THIS, as the line above demands. Measured
+# over all nine `_DESCRIBED_PARAMS` against this snapshot: adding `\bRequires\b`
+# newly matches **exactly ONE** sentence, the 72-char one above.
+# ⚠ AND THE CONTROL CORRECTED ME ON THE LINE ABOVE IT: I wrote that "must"/
+# "should" still floods and then measured it — it newly matches **0 of the 61
+# sentences** in these nine descriptions. So the flooding is NOT a current
+# property of upstream prose, and "deliberately narrow" is a DESIGN choice, not
+# today's measurement. The reason to keep it narrow is therefore the other one:
+# a term matching nothing today front-loads whatever upstream writes next with
+# no control behind it, and the cap pushes the value lists out when it does.
+# *The 320-char cap plus a human choosing what matters is a race the human
+# loses — so is a human asserting what a regex would match.*
+_OPERATIVE_RE = re.compile(r"(?:\b4\d\d\b|\b503\b|Not served with|\bRequires\b)")
 # Chars of the schema's OWN prose kept after the derived rules. The opening
 # sentences are where the "what do I actually send" instruction lives, and for
 # `cursor` that instruction is load-bearing: send an EMPTY cursor for the first
