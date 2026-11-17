@@ -377,6 +377,24 @@ def test_every_hard_failure_rule_survives_the_cap(mcp_module) -> None:
         ("companies_financials_retrieve", "include"): ["as_known_at"],
         ("filings_list", "cursor"): ["400", "ordering"],
         ("filings_list", "primary_annual_report"): ["400"],
+        # Added with the #199 refresh. `include_predecessors` arrives stating
+        # THREE incompatibilities as the last sentence of 962 chars, and it is
+        # the only place any of them is written: `include`'s own 1,897-char
+        # description mentions predecessors zero times, so there is no
+        # reciprocal route to the fact.
+        ("companies_financials_retrieve", "include_predecessors"): [
+            "as_known_at",
+            "preliminary",
+            "standalone_quarters",
+            "400",
+        ],
+        # The same parameter on `filings_list` states a PRECONDITION with no
+        # status code — "Requires `company`; `lei` and `company_isin` do not
+        # follow predecessors." — which is why `Requires` had to join
+        # `_OPERATIVE_RE`. At 500 chars against a 320-char cap it was being cut,
+        # which is worse than not describing the parameter: the model is told
+        # how to use predecessors and not told the filter they require.
+        ("filings_list", "include_predecessors"): ["Requires `company`", "company_isin"],
     }
     for (tool, param), musts in checks.items():
         desc = _input_schema(mcp_module, tool)["properties"][param].get("description", "")
@@ -488,4 +506,89 @@ def test_include_keeps_its_real_antecedent(mcp_module) -> None:
     rules = [t for t in re.split(r"(?<=\.)\s+", desc) if "Not served" in t]
     assert rules and any("as_reported" in r or "split_adjusted" in r for r in rules), (
         f"include lost its antecedent: {rules!r}"
+    )
+
+
+# The acknowledged set: parameters whose snapshot description states a hard rule
+# and which are DELIBERATELY not in `_DESCRIBED_PARAMS`, because every described
+# character is sent on every `tools/list` for every client and these did not earn
+# it against 30 days of prod failures. Measured against the #199 snapshot.
+# ⚠ THIS IS NOT A WISHLIST AND NOT A BACKLOG. It is the record of a decision, so
+# that a NEW arrival is distinguishable from the seven already weighed.
+_RULE_STATING_BUT_UNDESCRIBED = {
+    ("companies_financials_retrieve", "as_known_at"),
+    ("companies_list", "date_public_cursor"),
+    ("filings_list", "listing_status"),
+    ("filings_list", "page"),
+    ("filings_list", "processing_status"),
+    ("filings_list", "processing_statuses"),
+    ("filings_list", "reasoning_contains"),
+}
+
+
+def test_a_refresh_cannot_add_an_undescribed_failure_rule_unnoticed() -> None:
+    """⛔ THE ALLOWLIST'S STATED COST HAD NO GATE, SO IT WAS PAID BY REMEMBERING.
+
+    `_DESCRIBED_PARAMS` is an ALLOWLIST, and the generator's own comment says the
+    cost of that design is that *"each refresh must ask which new params need
+    their text"* — an obligation on a human, with nothing to enforce it. The #199
+    refresh added `include_predecessors`, whose description is the ONLY place
+    three `400` incompatibilities are written, and it arrived with that text
+    silently discarded. No test failed. CI was green on every job.
+
+    This is that obligation, made mechanical: enumerate every parameter whose
+    upstream description states a hard rule, subtract the ones we describe, and
+    pin the remainder. A refresh that introduces a new one fails HERE, with the
+    decision named, instead of reaching a model as a bare `boolean`.
+
+    Deliberately NOT asserting "every rule-stating param must be described":
+    measured, seven already exist, and describing them all is exactly the token
+    cost the allowlist was created to avoid. The failure this guards is an
+    UNNOTICED arrival, not an undescribed one.
+
+    The matcher is the generator's own `_OPERATIVE_RE`, not a copy of it, so
+    widening the rule re-runs this census for free and cannot drift from it.
+    """
+    import json
+    import os
+    import re
+
+    gen = _generator()
+    snap = json.load(
+        open(os.path.join(os.path.dirname(__file__), "..", "scripts", "openapi.snapshot.json"))
+    )
+    found = set()
+    for item in snap["paths"].values():
+        for op in item.values():
+            if not isinstance(op, dict):
+                continue
+            oid = op.get("operationId")
+            for p in op.get("parameters", []) or []:
+                name = p.get("name")
+                if name in gen._DESCRIBED_PARAMS:
+                    continue
+                text = " ".join((p.get("description") or "").split())
+                if any(
+                    gen._OPERATIVE_RE.search(s)
+                    for s in re.split(r"(?<=\.)\s+", text)
+                    if s.strip()
+                ):
+                    found.add((oid, name))
+
+    new = found - _RULE_STATING_BUT_UNDESCRIBED
+    assert not new, (
+        "A refresh introduced parameter(s) whose description states a hard failure "
+        f"or an incompatibility and which nothing describes to the model: {sorted(new)}. "
+        "DECIDE, do not silence: add it to `_DESCRIBED_PARAMS` if a model needs the "
+        "rule to avoid a failing call, or add it to `_RULE_STATING_BUT_UNDESCRIBED` "
+        "with the reason it does not earn the tokens. The point of this test is that "
+        "the choice is made rather than defaulted."
+    )
+
+    gone = _RULE_STATING_BUT_UNDESCRIBED - found
+    assert not gone, (
+        f"{sorted(gone)} no longer state a hard rule (reworded, removed, or now "
+        "described). Re-read the new text and drop the stale entries — an "
+        "acknowledged-exception list that outlives its reason reads as a decision "
+        "nobody has revisited."
     )

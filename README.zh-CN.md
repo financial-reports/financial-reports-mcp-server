@@ -8,7 +8,7 @@
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **[FinancialFilings](https://financialfilings.com) API 的官方 Model Context Protocol (MCP) 服务器。**
-> 在 Claude 以及任何支持 MCP 的客户端里，直接查询全球上市公司的公告、财务数据和公司信息。**默认提供 19 个精选工具**（设置 `MCP_FULL_SURFACE=1` 可开启完整的 61 个工具）。**任何 FinancialFilings 账号均可免费使用。**
+> 在 Claude 以及任何支持 MCP 的客户端里，直接查询全球上市公司的公告、财务数据和公司信息。**默认提供 19 个精选工具**（设置 `MCP_FULL_SURFACE=1` 可开启完整的 62 个工具）。**任何 FinancialFilings 账号均可免费使用。**
 
 本文是英文 [README.md](README.md) 的中文版。两者如有出入，以英文版为准。
 
@@ -195,7 +195,7 @@ mcp_servers:
 | 账户 | 1 | 本计费周期内 API 和 MCP 的用量费用、消费上限和剩余免费点数（此工具本身免费，不计费） |
 | 指南 | 3 | 公告类型分类、ISIC 行业分类、Markdown 获取策略：供无法读取 MCP 资源、只能调用工具的客户端使用的参考资料 |
 
-设置 `MCP_FULL_SURFACE=1` 可恢复完整的 **61 个工具**：ISIC 门类/大类/中类/小类层级、其余参考数据（国家、语言、数据源、财务科目定义、公告历史）、个人关注列表、Webhook 订阅、公司合并审计记录、各交易所证券上市信息、智能体账户开通相关端点（注册、领取密钥、轮换密钥、结账链接、所有者确认、状态），`filings_markdown_search` 背后的原始端点 `filings_markdown_search_retrieve`，以及 `filings_document_retrieve`（返回文件而非 JSON）。注意 `MCP_FULL_SURFACE=1` **并非默认工具集的超集**：它会去掉 3 个 `get_fr_*` 指南工具——这些工具的作用正是替代被屏蔽的参考数据端点，因此只在精选工具集中生成。两种工具集共有 16 个工具，3 个仅在默认集中，45 个仅在完整集中。
+设置 `MCP_FULL_SURFACE=1` 可恢复完整的 **62 个工具**：ISIC 门类/大类/中类/小类层级、其余参考数据（国家、语言、数据源、财务科目定义、公告历史）、个人关注列表、Webhook 订阅、公司合并审计记录、各交易所证券上市信息、智能体账户开通相关端点（注册、领取密钥、轮换密钥、结账链接、所有者确认、状态），`filings_markdown_search` 背后的原始端点 `filings_markdown_search_retrieve`、批量搜索原始端点 `filings_markdown_search_create`，以及 `filings_document_retrieve`（返回文件而非 JSON）。注意 `MCP_FULL_SURFACE=1` **并非默认工具集的超集**：它会去掉 3 个 `get_fr_*` 指南工具——这些工具的作用正是替代被屏蔽的参考数据端点，因此只在精选工具集中生成。两种工具集共有 16 个工具，3 个仅在默认集中，46 个仅在完整集中。
 
 对外提供的工具集由已提交并经过审核的 [FinancialFilings OpenAPI schema](https://financialreports.eu/api/schema/) 快照（`scripts/openapi.snapshot.json`，在 CI 和 Docker 构建中通过 `FR_PIN_SCHEMA=1` 固定）生成，因此结果是确定的，重新构建也不会悄悄发生变化。
 
