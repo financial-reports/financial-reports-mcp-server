@@ -7034,7 +7034,7 @@ if MCP_UNSTD_FACTS_TOOLS:
         method: Annotated[
             _UNSTD_METHODS | None,
             Field(
-                description="Default: the filer's own (xbrl, else structured) when the "
+                description="Default: the filer's own (xbrl or structured) when the "
                 "filing has them, else llm (read from the report, not authoritative)."
             ),
         ] = None,
