@@ -258,9 +258,15 @@ def test_markdown_search_example_is_single_filing_shaped(mcp_module) -> None:
 
 def test_batch_search_closes_the_same_line_item_door(mcp_module) -> None:
     """#167's fix only closed one door. filings_markdown_search_batch takes ONE
-    query across up to 20 filings, so a line-item sweep across peers could route
-    around the new copy at 20x the cost — and the release that carries #167 also
-    carries #165, so both doors have to change together.
+    query across many filings, so a line-item sweep across peers could route
+    around the new copy at many times the cost — and the release that carries
+    #167 also carries #165, so both doors have to change together.
+
+    ⚠ This said "up to 20 filings" and "20x the cost" until #213 raised the cap to
+    the endpoint's own 50. The number was never what the test asserts, which is
+    why it stayed green while going stale — so it is now written as a magnitude
+    rather than a figure, and the figure lives in `_BATCH_MAX_FILINGS` where a
+    reader can only get it from the code.
 
     cross-corpus-search approved widening it and amended the PREREG to count batch
     calls in the after window, so a migration from the single tool to this one
