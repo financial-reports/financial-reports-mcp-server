@@ -148,15 +148,22 @@ _PRUNED_EXCLUDE = {
     "companies_dividends_retrieve",
     # Added with the 2026-11-04 refresh, after financial-reports/web#8991 (G6)
     # published the batch search. `filings_markdown_search_create` is
-    # POST /filings/markdown/search/. The hand-built
-    # `filings_markdown_search_batch` does the same job but does NOT call it yet:
-    # it downloads each filing via GET /filings/{id}/markdown/ and scans it here.
-    # Moving that tool onto this endpoint is the batch half of #166. Until then,
-    # a generated copy would put two batch-search tools on the default surface,
-    # and the generated one has a generic description, no response cap and none
-    # of the hand-built tool's matched/not-searched disclosure. The key was read
-    # from the drift report against the live schema, not supplied by hand: this
-    # is a denylist, so a misspelt key would fail open and the tool would ship.
+    # POST /filings/markdown/search/, and since #213 the hand-built
+    # `filings_markdown_search_batch` IS its wrapper — so this entry is no longer
+    # "not wired up yet", it is "already exposed, under a better description".
+    # ⚠ THE REASON CHANGED COMPLETELY WHILE THE ENTRY STAYED THE SAME, which is
+    # exactly how a correct exclusion comes to be justified by a sentence that
+    # has gone false. It previously read "does NOT call it yet: it downloads each
+    # filing via GET /filings/{id}/markdown/ and scans it here", and a reader
+    # checking that against the code today would find the download gone and could
+    # reasonably conclude the exclusion is stale and drop it.
+    # It is NOT stale. Shipping the generated copy as well would put two
+    # batch-search tools on the default surface, and the generated one has a
+    # generic description, no response ceiling, no per-filing outcome rendering
+    # and no idea that `queries` carries both spellings of a number. The key was
+    # read from the drift report against the live schema, not supplied by hand:
+    # this is a denylist, so a misspelt key would fail open and the tool would
+    # ship.
     "filings_markdown_search_create",
     # Added with the 2026-11-17 catch-up refresh (59 -> 62 paths). Both keys were
     # read from the live schema's own path list, not typed from memory: this is a
@@ -1962,6 +1969,52 @@ async def _api_get(url: str, **kwargs: Any) -> httpx.Response:
     )
     await _retry_sleep(delay)
     return await _api_client.get(url, **kwargs)
+
+
+async def _api_post(url: str, **kwargs: Any) -> httpx.Response:
+    """POST the upstream, retrying once on a transient failure.
+
+    The same policy and the same per-Request auth-hook reasoning as `_api_get`;
+    see that docstring for why a retry re-calls the verb instead of re-sending a
+    built Request.
+
+    ⚠ RETRYING A POST IS ONLY SAFE BECAUSE OF WHAT THIS PARTICULAR POST IS, AND
+    THE JUSTIFICATION IS BILLING, NOT IDEMPOTENCE. `POST
+    /filings/markdown/search/` is a POST solely because 50 filing ids and three
+    queries do not fit in a query string -- it searches, creates nothing and
+    mutates no FR state (the generator annotates it `readOnlyHint=True` for the
+    same reason). So a repeated call cannot corrupt anything. What it COULD do is
+    charge twice, and it does not: the endpoint bills per filing with a hit, and
+    the once-per-day MCP markdown dedup keys on (user, filing) rather than on the
+    endpoint or the request, so a retry over the same filing ids on the same day
+    is free (web #5691). ⇒ Do not reach for this helper for a POST that writes,
+    and do not assume the billing half carries to a non-MCP caller.
+
+    `_retry_delay` is shared with `_api_get`, so a non-retryable 429
+    (quota_exhausted / spend_cap_daily / spend_ceiling_monthly) is NOT retried
+    here either: those are facts about the account and the second attempt would
+    spend latency to be told the same thing.
+    """
+    try:
+        response = await _api_client.post(url, **kwargs)
+    except (httpx.TimeoutException, httpx.NetworkError) as exc:
+        logger.warning(
+            "upstream POST transport error, retrying once: %s",
+            exc.__class__.__name__,
+        )
+        await _retry_sleep(_RETRY_BACKOFF + random.uniform(0.0, _RETRY_JITTER))
+        return await _api_client.post(url, **kwargs)
+
+    delay = _retry_delay(response.status_code, response.text, _retry_after_seconds(response))
+    if delay is None:
+        return response
+    logger.warning(
+        "upstream POST returned %s, retrying once after %.2fs",
+        response.status_code,
+        delay,
+    )
+    await _retry_sleep(delay)
+    return await _api_client.post(url, **kwargs)
 
 
 @asynccontextmanager
@@ -5542,39 +5595,50 @@ MARKDOWN_SEARCH_TOOL_BLOCK = '''
 # WHOLE document (there is no server-side search endpoint — see
 # financial-reports/web#8000), so the batch is bounded three ways: how many
 # filings, how many bytes in total, and how long the whole call may take.
-_BATCH_MAX_FILINGS = 20
-# Matches the single-filing tool's _MAX_FILING_BYTES. A SMALLER cap here was
-# redundant: aggregate memory is bounded by _BATCH_MAX_TOTAL_BYTES via the
-# reservation (each worker takes min(cap, remaining), so a 10MB cap admits four
-# workers against a 40MB budget and the fifth waits) — the per-filing cap was
-# belt-and-braces that cost fidelity. Measured on live search traffic: a 4MB cap
-# would truncate 62 of 41,612 calls against 3 at 10MB, 20.7x, because large
-# documents are searched disproportionately often (62 calls over just 9 distinct
-# filings). Diverging from the single tool would also make a miss mean different
-# things in the two tools, which is what _md_scan_hits exists to prevent.
-_BATCH_MAX_FILING_BYTES = 10_000_000
-_BATCH_CONCURRENCY = 5
-# INVARIANT: total >= per-filing x concurrency. Reservation is up-front, so with
-# a smaller total the first workers reserve everything and a later one is told
-# "budget spent" while the earlier reads refund almost all of it moments later —
-# a filing silently missing from the answer despite ample real budget. The floor
-# keeps the aggregate bound explicit at 50 MB and lets every concurrent worker
-# take a FULL allowance.
-# It does NOT on its own make that false skip impossible — only rarer, which is
-# what this comment used to claim (SPECHT round 9, head aa407848). A worker that
-# fills its whole allowance refunds NOTHING, so a later worker can still find a
-# zero balance while the other reservations are outstanding and about to refund
-# almost everything. What rules the false skip out is the worker WAITING for an
-# outstanding reservation to settle before it calls a zero balance spent. Both
-# are load-bearing: the floor bounds the memory, the wait bounds the lie.
-_BATCH_MAX_TOTAL_BYTES = _BATCH_MAX_FILING_BYTES * _BATCH_CONCURRENCY
-_BATCH_DEADLINE_SECONDS = 50.0
-# A FOURTH bound, on the thing that leaves rather than the work done. The other
-# three cap filings, bytes read and wall clock; none of them caps the RESULT.
-# _md_scan_hits returns 200 + len(query) + 240 characters per hit, so the output
-# grows as _BATCH_MAX_FILINGS x 5 hits x (475 + len(query)) — past this ceiling
-# for any query over roughly 1,025 characters, and the query length is a
-# caller's free choice. 150k is Claude.ai's documented tool-result ceiling, the
+# THE ENDPOINT'S OWN CAP, and the number is no longer ours to choose. It was 20
+# while this tool downloaded each filing and scanned it here: 20 x 10 MB against
+# a 50 MB shared budget was the most that could be read inside one call's wall
+# clock without starving the later workers. ⇒ The constraint that SET the number
+# was the byte budget, and the move onto POST /filings/markdown/search/ (#213)
+# deletes that budget, so leaving 20 in place would have been a limit preserved
+# past its reason -- the shape of stale-constant that reads as deliberate because
+# it is a round number with a comment above it. 50 is the request serializer's
+# `maxItems` on `filing_ids`, read from the committed snapshot rather than
+# assumed; sending 51 is a 400, so this cap is what turns an over-long list into
+# the dropped-ids NOTE below instead of an upstream error.
+_BATCH_MAX_FILINGS = 50
+# `max_hits_per_filing` is 1-10 at the endpoint (it was 1-5 here, because every
+# extra hit was 475 more characters of a locally-scanned document). The server
+# bounds the snippets; what still has to be bounded HERE is the result string --
+# see _BATCH_MAX_RESULT_CHARS, whose arithmetic changed with these two numbers.
+_BATCH_MAX_HITS_PER_FILING = 10
+# ⛔ THREE BOUNDS WERE DELETED HERE BY #213 AND THEIR ABSENCE IS THE POINT, SO
+# THEY ARE NAMED RATHER THAN SILENTLY DROPPED: _BATCH_MAX_FILING_BYTES,
+# _BATCH_CONCURRENCY, _BATCH_MAX_TOTAL_BYTES and _BATCH_DEADLINE_SECONDS existed
+# because this tool moved whole documents across this hop to return ~440
+# characters. The reservation-with-refund, its condition variable, the
+# `inflight` counter and the wait-before-declaring-the-budget-spent all existed
+# to stop THAT machinery reporting a false skip. The search now happens at the
+# API, so there is no download, no shared byte budget, no concurrency to manage
+# and no local deadline to cut a read in half.
+# ⇒ What this retires is not complexity but a WHOLE CLASS OF FALSE ABSENCE. A
+# byte cap could cut a document mid-way, so a miss was UNKNOWN and had to be
+# hedged ("searched only in part", "the rest is UNKNOWN", and a filing that was
+# both matched and truncated). The server reads the whole document, so a
+# `no_match` is now an ABSENCE and there is nothing left to hedge -- the same
+# trade #166 made for the single-filing tool, arriving here fourteen days later.
+# The endpoint keeps its own deadline and byte budget and reports them PER PAIR
+# as `skipped` with a `reason`, which is strictly better than a client-side cap
+# whose effect had to be inferred from a byte count.
+#
+# A bound on the thing that LEAVES, which the endpoint cannot cap for us.
+# The server returns up to `max_hits_per_filing` snippets of ~440 characters per
+# (filing, query) pair, so the output grows as 50 filings x 10 hits x ~480
+# characters ≈ 240,000 — over this ceiling by itself at the maximum hit cap,
+# before the query echo. ⚠ BOTH TERMS GREW WITH #213: the filing cap went 20 ->
+# 50 and the hit cap 5 -> 10, so the worst case is 5x what this comment used to
+# describe and the budget below went from a guard that rarely fired to one that
+# fires at the documented maximum. 150k is Claude.ai's documented ceiling, the
 # same number filings_markdown_retrieve clamps `limit` to; past it the HOST
 # truncates, from the end, with no signal to anyone.
 # Which is the actual damage: the per-filing hit details used to be emitted
@@ -5644,44 +5708,6 @@ def _echo_query(raw: str) -> str:
         repr(raw[:_QUERY_ECHO_CHARS])
         + f" (query truncated for display; {len(raw)} chars total)"
     )
-
-
-def _md_scan_hits(full_text: str, raw_query: str, cap: int) -> list:
-    """Case-insensitive substring scan -> [(offset, context), ...], document order.
-
-    ⛔ THE SHARING THIS DOCSTRING CLAIMED ENDED ON 2026-11-04 AND THE CLAIM
-    OUTLIVED IT BY TWO WEEKS. It read: "Shared by `filings_markdown_search` and
-    `filings_markdown_search_batch` so the two cannot drift: a batch that matched
-    differently from the single-filing tool would make a miss impossible to
-    interpret." #173 moved the single tool onto the API's search endpoint, so
-    this has had ONE caller -- `filings_markdown_search_batch` -- ever since.
-    ⇒ The mechanism is worth keeping, because reading the file end to end cannot
-    catch it: neither this function nor its comment ever changed. THE OTHER
-    CALLER LEFT. Only counting the call sites sees that
-    (`git grep -n _md_scan_hits`), and a comment naming who ELSE uses a thing is
-    making a claim about a set it cannot observe.
-    ⇒ And the cost was not a stale sentence: it asserted the invariant could not
-    break, to anyone deciding whether to ship web#10487 -- which is what broke
-    it. The three live divergence axes are named on
-    `filings_markdown_search_batch`'s own description; mcp-server#213 tracks
-    closing them by moving the batch onto POST /filings/markdown/search/.
-    """
-    hay_l = full_text.lower()
-    hits = []
-    for cand in dict.fromkeys(_md_candidates(raw_query)):
-        cl = cand.lower()
-        start = 0
-        while len(hits) < cap:
-            i = hay_l.find(cl, start)
-            if i < 0:
-                break
-            lo = max(0, i - 200)
-            hi = min(len(full_text), i + len(cand) + 240)
-            hits.append((i, full_text[lo:hi]))
-            start = i + len(cand)
-        if hits:
-            break
-    return hits
 
 
 @mcp.tool(
@@ -5871,17 +5897,22 @@ async def filings_markdown_search_batch(
     reported: that tool may answer with a later restatement of the period instead.
     And come back here whenever it does not answer — no coverage, an empty line item,
     or a refusal for your plan; unavailable there is not absent.
-    Case-insensitive; matches your literal phrase, plus the thousands-separator
-    spelling of a number. ⚠ NARROWER THAN filings_markdown_search, which also finds a
-    phrase the conversion split across lines, table cells or pages, or ran together —
-    so NO MATCH here is not an absence for a phrase query: re-run it through
-    filings_markdown_search on that filing before concluding the text is not there.
-    Returns per-filing hits with character offsets you
-    can pass to filings_markdown_retrieve. Outcomes are reported SEPARATELY — matched,
-    no match, searched only in part, and not searched — so you can tell a real absence
-    from a filing that was truncated or never read. A filing can be BOTH matched and only
-    partly searched — hits found before the byte cap are real, the tail past it is
-    unknown. Max 20 filings per call.
+    Case-insensitive, and SAME MATCHER AS filings_markdown_search: a phrase of two or
+    more words also matches where the conversion split it across lines, table cells or
+    pages, or ran its words together, and a number also matches its thousands-separator
+    spelling. So a miss here means what a miss there means — you do not need to re-run
+    it through the single-filing tool to trust it.
+    Each filing comes back with ONE outcome, and they are NOT interchangeable: matched;
+    NO MATCH, which means the whole document was searched and the term is not in it, the
+    only outcome that is evidence of absence; UNAVAILABLE, meaning we could not search
+    that filing at all; NOT SEARCHED, meaning it was dropped from this request —
+    retry those; and, only for a numeric query, SEARCHED FOR ONLY SOME SPELLINGS,
+    where one spelling of the number was searched and another was not, so the
+    filing is unresolved rather than clear. Treat the last three as UNKNOWN, never
+    as 'no match'. Hits carry
+    character offsets you can pass to filings_markdown_retrieve, and the match count is
+    the exact total in the document even when only the first few are shown.
+    Max 50 filings per call.
     This searches only the filings you name — it does NOT search the whole corpus, so a
     'no match' result says nothing about filings outside your list."""
     try:
@@ -5890,6 +5921,26 @@ async def filings_markdown_search_batch(
             raise ToolInputError("filing_ids must be a non-empty list of positive integers")
         if not query or not query.strip():
             raise ToolInputError("query must be a non-empty string")
+        if len(query.strip()) > _MAX_QUERY_CHARS:
+            # ⛔ A REGRESSION THE MOVE INTRODUCES, AND THE SINGLE-FILING TOOL
+            # ALREADY PAID FOR IT (see _MAX_QUERY_CHARS' own comment): while this
+            # tool scanned locally, ANY query length worked and an over-long one
+            # was a harmless no-op. Now it crosses the wire, where `queries`
+            # items are `maxLength: 200` -- so without this guard the length
+            # filter below would drop the only candidate, send `queries: []`
+            # against a `minItems: 1` serializer, and turn a free local miss into
+            # an upstream 400 after a round trip. Validated HERE so it costs
+            # nothing and the message names the limit.
+            # ⚠ The filter below canNOT substitute for this check: `raw` is
+            # always the first candidate, so a filter that drops it empties the
+            # list rather than falling back to anything.
+            raise ToolInputError(
+                f"query must be at most {_MAX_QUERY_CHARS} characters "
+                f"(got {len(query.strip())}). Search a distinctive phrase from it "
+                "instead: the matcher tolerates the conversion's line, cell "
+                "and page breaks inside a phrase, so quote the phrase as it "
+                "reads rather than padding it out to a whole passage."
+            )
         seen = {}
         for fid in filing_ids:
             if not isinstance(fid, int) or isinstance(fid, bool) or fid <= 0:
@@ -5899,276 +5950,245 @@ async def filings_markdown_search_batch(
         dropped = max(0, len(ordered) - _BATCH_MAX_FILINGS)
         ordered = ordered[:_BATCH_MAX_FILINGS]
         try:
-            cap = max(1, min(int(max_hits_per_filing), 5))
+            cap = max(1, min(int(max_hits_per_filing), _BATCH_MAX_HITS_PER_FILING))
         except (TypeError, ValueError):
-            raise ToolInputError("max_hits_per_filing must be an integer between 1 and 5")
+            raise ToolInputError(
+                "max_hits_per_filing must be an integer between 1 and "
+                f"{_BATCH_MAX_HITS_PER_FILING}"
+            )
 
         raw = query.strip()
-        deadline = time.monotonic() + _BATCH_DEADLINE_SECONDS
-        budget = {"bytes": _BATCH_MAX_TOTAL_BYTES, "inflight": 0}
-        sem = asyncio.Semaphore(_BATCH_CONCURRENCY)
-        # The budget is read-modify-written across concurrent workers, so it needs
-        # a lock: without one, N workers each compute an allowance from the SAME
-        # balance before any of them subtracts, and the batch overruns its stated
-        # bound by up to (concurrency x per-filing cap). Reserve up front, refund
-        # the unused tail afterwards.
-        # A Condition rather than a bare Lock, and `inflight` alongside the
-        # balance, because a zero BALANCE is not a spent BUDGET while reservations
-        # are still outstanding — see the _BATCH_MAX_TOTAL_BYTES comment.
-        budget_cv = asyncio.Condition()
+        # SERVER-SIDE SEARCH (#213), the batch half of #166. This used to fetch
+        # /markdown/ in full for every filing and scan each one here, under a
+        # shared byte budget, a per-filing cap, a concurrency semaphore and a
+        # local deadline — see the retired constants above for what that cost in
+        # false skips. The API's own batch endpoint searches all of them, so the
+        # documents stop crossing this hop.
+        #
+        # ⭐ AND IT CLOSES A DIVERGENCE RATHER THAN MOVING ONE. Until now the two
+        # search tools used DIFFERENT matchers: the single one has been on the
+        # API's endpoint since #173, and this one scanned locally with
+        # _md_scan_hits, which never learned the split-phrase matching web#10487
+        # shipped. So a phrase the single tool found could be missed here on the
+        # same filing, and the tool had to SAY SO in its own description. Both
+        # now reach `markdown_window.search_query` — verified structurally, one
+        # real call site each in `filings/api_views.py` and
+        # `filings/markdown_batch.py`, not taken from the prose in either file
+        # that claims they are shared. ⇒ The warning comes out of the
+        # description, which is the fix and not housekeeping: a model told a miss
+        # here is unreliable re-runs 50 single searches to confirm it.
+        #
+        # THE COMMA FALLBACK RIDES ALONG FREE, where it used to cost a round
+        # trip. The endpoint takes up to THREE queries and bills a filing at most
+        # once however many of them it is searched for, so both spellings of a
+        # number go in ONE request as two queries, and the per-pair rows say
+        # which one matched. The old client-side loop issued one request per
+        # candidate and stopped at the first hit — which cannot work across 50
+        # filings anyway, because the typed form may hit filing A while only the
+        # bare form hits filing B. Per-filing selection below is strictly more
+        # correct than the global stop-at-first it replaces.
+        candidates = [
+            c for c in dict.fromkeys(_md_candidates(raw))
+            if len(c) <= _MAX_QUERY_CHARS
+        ]
+        response = await _api_post(
+            "/filings/markdown/search/",
+            json={
+                "filing_ids": ordered,
+                "queries": candidates,
+                "max_hits_per_filing": cap,
+            },
+        )
+        if response.is_error:  # 4xx/5xx only — 204/206 are not failures
+            # One request now, so there is no per-filing degradation to do and
+            # nothing to protect: an upstream failure here failed the WHOLE
+            # batch. It must stay an error rather than becoming "0 match(es)
+            # across 50 filing(s)", which is the #104 false-absence contract and
+            # the reason the old code re-raised account-wide 401/403/429 out of
+            # its workers.
+            _raise_upstream_text_error(response, response.text[:_MAX_ERROR_BODY])
+        payload = response.json()
+        rows = payload.get("results") or []
+        # `payload` also carries aggregate counters (`pairs`, `searched`, `hit`,
+        # `no_match`, `unavailable`, `skipped`) and `truncated`, which is just
+        # `skipped > 0` server-side. They are deliberately NOT read: every one of
+        # them is derivable from the per-pair rows, and rendering a second
+        # instrument for the same fact only creates a way for the headline and
+        # the detail to disagree. `billed_credits` is also not echoed — it is the
+        # credit LIST PRICE before the once-per-day dedup, and quoting it as the
+        # charge would be wrong; `X-Credits-Charged` is the actual one.
+        by_pair = {}
+        for row in rows:
+            fid = row.get("filing_id")
+            if isinstance(fid, int):
+                by_pair.setdefault((fid, row.get("query")), row)
 
-        async def _one(fid):
-            # Bounds are checked INSIDE the worker, not just before the gather, so a
-            # slow batch stops spending as soon as a budget is gone rather than
-            # running every scheduled fetch to completion. The deadline additionally
-            # wraps the stream itself: checking it only before the request lets an
-            # already-open slow read outlive the advertised bound, and gather waits.
-            async with sem:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    return (fid, None, "skipped: batch deadline reached", None, False)
-                async with budget_cv:
-                    # Wait out the outstanding reservations before calling the
-                    # budget spent. A predecessor that filled its whole allowance
-                    # refunds nothing, so a zero balance with reads still in
-                    # flight means "not back yet", not "gone" — reporting this
-                    # filing as unsearched there is a false skip on a batch with
-                    # ample real budget. `inflight` is only ever decremented by a
-                    # worker that notifies, so the wait cannot outlast the reads;
-                    # the deadline bounds it regardless, and is re-read each pass
-                    # because waiting itself consumes it.
-                    while budget["bytes"] <= 0 and budget["inflight"] > 0:
-                        wait_for = deadline - time.monotonic()
-                        if wait_for <= 0:
-                            return (fid, None, "skipped: batch deadline reached", None, False)
-                        try:
-                            async with asyncio.timeout(wait_for):
-                                await budget_cv.wait()
-                        except (TimeoutError, asyncio.TimeoutError):
-                            return (fid, None, "skipped: batch deadline reached", None, False)
-                    if budget["bytes"] <= 0:
-                        return (fid, None, "skipped: batch byte budget spent", None, False)
-                    allowance = min(_BATCH_MAX_FILING_BYTES, budget["bytes"])
-                    budget["bytes"] -= allowance          # reserve before any await
-                    budget["inflight"] += 1
-                used = 0
-                buf = bytearray()   # defined BEFORE the try: a read that fails
-                                    # part-way has still spent those bytes, and the
-                                    # finally block must charge them to the budget
-                err_bytes = 0       # an error body is downloaded too — charge it,
-                                    # or N failing filings bypass the batch bound
-                try:
-                    truncated = None
-                    # Re-read, do NOT reuse the value measured before the budget
-                    # wait: a worker that waited there has already spent part of
-                    # the batch deadline, and the stream must be bounded by what
-                    # is LEFT. A non-positive value makes asyncio.timeout fire at
-                    # once, which the handler below reports as not-searched.
-                    remaining = deadline - time.monotonic()
-                    async with asyncio.timeout(remaining):
-                        async with _api_stream_get(f"/filings/{fid}/markdown/") as response:
-                            if response.is_error:
-                                # BOUNDED read. `aread()` buffers the whole body, and
-                                # the budget charged len(buf) == 0 on this path, so a
-                                # large 5xx body was unbounded AND free. Only the
-                                # first _MAX_ERROR_BODY bytes are ever used for the
-                                # message, so reading past them bought nothing.
-                                err = bytearray()
-                                async for _chunk in response.aiter_bytes():
-                                    err.extend(_chunk[: _MAX_ERROR_BODY - len(err)])
-                                    if len(err) >= _MAX_ERROR_BODY:
-                                        break
-                                err_bytes = len(err)
-                                _raise_upstream_text_error(
-                                    response,
-                                    bytes(err).decode("utf-8", errors="replace"),
-                                )
-                            async for _chunk in response.aiter_bytes():
-                                if len(buf) + len(_chunk) > allowance:
-                                    buf.extend(_chunk[: allowance - len(buf)])
-                                    # WHICH bound cut the read decides what advice
-                                    # can help: a shared-budget cut is fixable by a
-                                    # narrower call, a filing over the per-filing
-                                    # cap is not fixable by any call. Truthy either
-                                    # way, so every `not t` / `if was_cut` test
-                                    # below keeps its meaning.
-                                    truncated = (
-                                        "budget"
-                                        if allowance < _BATCH_MAX_FILING_BYTES
-                                        else "filing"
-                                    )
-                                    break
-                                buf.extend(_chunk)
-                    text = buf.decode("utf-8", errors="replace")
-                    # Scan for ONE more than we will show, so we can say whether the
-                    # hit cap hid anything. Reporting "3 match(es)" when there are
-                    # four lets a client read an incomplete answer as a complete one.
-                    found = _md_scan_hits(text, raw, cap + 1)
-                    overflow = len(found) > cap
-                    return (fid, found[:cap], None, truncated, overflow)
-                except (TimeoutError, asyncio.TimeoutError):
-                    # An expired read is NOT an absence. Report it as not-searched.
-                    return (fid, None, "not searched: deadline reached mid-read", None, False)
-                except UpstreamHTTPError as exc:
-                    # An ACCOUNT-WIDE failure is not a per-filing fact — it fails
-                    # every filing in the batch, so degrading it to 20 "unavailable"
-                    # rows reports the call as SUCCESSFUL and hides it from any
-                    # client branching on MCP error status. Re-raise, matching the
-                    # single-filing tool's #104 contract that an upstream failure
-                    # must stay distinguishable from a result.
-                    #   401/403      — a revoked or unauthorised token.
-                    #   _NON_RETRYABLE_429 — quota_exhausted / spend_cap_daily /
-                    #     spend_ceiling_monthly are facts about the ACCOUNT, and
-                    #     "0 match(es) across 20 filing(s)" is then a false absence
-                    #     that also discards the upstream's own remediation copy —
-                    #     the one actionable sentence it sent. quota_exhausted is
-                    #     ~90% of all upstream errors on this surface.
-                    # Keyed on `error_kind`, not on the 429 status: a burst limit
-                    # DOES clear, and _api_stream_get has already spent its single
-                    # retry on it, so it stays per-filing below.
-                    if exc.upstream_status in (401, 403) or exc.error_kind in _NON_RETRYABLE_429:
-                        raise
-                    # Anything else IS per-filing: one missing filing must not cost
-                    # the caller the other answers, and an explicit status is what
-                    # lets them tell "no match" from "never searched".
-                    # UpstreamHTTPError carries `upstream_status`; there is no
-                    # `status_code` on it, so the old getattr fell back EVERY time
-                    # and 404 / 429 / 500 were indistinguishable to the caller.
-                    return (fid, None, f"unavailable: {exc.upstream_status or 'upstream error'}", None, False)
-                except Exception:
-                    # `Exception`, deliberately not `BaseException`: CancelledError
-                    # is a BaseException, so a worker cancelled by the sibling
-                    # cleanup below propagates instead of being recorded as
-                    # "unavailable: read failed" on a filing nobody ever read.
-                    logger.exception("filings_markdown_search_batch: filing %s failed", fid)
-                    return (fid, None, "unavailable: read failed", None, False)
-                finally:
-                    used = len(buf) + err_bytes   # charge what was actually
-                                                  # downloaded, including a partial
-                                                  # read and any error body
-                    async with budget_cv:
-                        budget["bytes"] += allowance - used   # refund only the unread tail
-                        budget["inflight"] -= 1
-                        # Wake the waiters above: without this a worker parked on a
-                        # zero balance sleeps to the batch deadline and the fix
-                        # becomes the slower shape of the same false skip.
-                        budget_cv.notify_all()
+        matched = []          # (fid, matched_query, [(offset, snippet)], total_hits)
+        no_match = []         # fid — searched in full for every spelling, absent
+        part_searched = []    # (fid, [unsearched spellings], [reasons])
+        unavailable = []      # (fid, reason)
+        skipped = []          # (fid, reason)
+        for fid in ordered:
+            present = [by_pair.get((fid, c)) for c in candidates]
+            present = [r for r in present if r is not None]
+            if not present:
+                # The endpoint contracts that every (filing_id, query) pair comes
+                # back exactly once, so this is unreachable on a conforming
+                # response. Reported rather than skipped: a filing that silently
+                # vanished from the output would be counted in neither the hits
+                # nor the absences, and the arithmetic would be the only clue.
+                unavailable.append((fid, "no result row returned for this filing"))
+                continue
+            hit_row = next((r for r in present if r.get("status") == "hit"), None)
+            if hit_row is not None:
+                hits = [
+                    (h.get("offset"), h.get("snippet") or "")
+                    for h in (hit_row.get("hits") or [])
+                ][:cap]
+                matched.append(
+                    (fid, hit_row.get("query"), hits, hit_row.get("total_hits"))
+                )
+                continue
+            statuses = {r.get("status") for r in present}
+            searched = [r for r in present if r.get("status") == "no_match"]
+            if len(searched) == len(candidates):
+                no_match.append(fid)
+            elif searched:
+                # ⚠ SOME SPELLINGS SEARCHED, SOME NOT — and this is the one
+                # outcome the endpoint's four statuses cannot express, because it
+                # is a fact about the SET of queries this tool sent rather than
+                # about any single pair. Folding it into `no_match` would claim
+                # the term is absent when a spelling of it was never tried; this
+                # only ever arises for a numeric query, where _md_candidates adds
+                # a second spelling.
+                not_searched = [
+                    r.get("query") for r in present if r.get("status") != "no_match"
+                ]
+                not_searched += [c for c in candidates if by_pair.get((fid, c)) is None]
+                reasons = sorted(
+                    {
+                        r.get("reason")
+                        for r in present
+                        if r.get("status") != "no_match" and r.get("reason")
+                    }
+                )
+                part_searched.append((fid, not_searched, reasons))
+            elif "unavailable" in statuses:
+                row = next(r for r in present if r.get("status") == "unavailable")
+                unavailable.append((fid, row.get("reason") or "unavailable"))
+            else:
+                row = next(
+                    (r for r in present if r.get("status") == "skipped"), present[0]
+                )
+                skipped.append((fid, row.get("reason") or "skipped"))
 
-        # Explicit tasks, because `gather` propagates the first exception but does
-        # NOT cancel the others: an account-wide 429 would otherwise leave queued
-        # workers fetching filings that cannot succeed, each with its own retry, on
-        # the account that just said it is out of allowance.
-        tasks = [asyncio.ensure_future(_one(f)) for f in ordered]
-        try:
-            results = await asyncio.gather(*tasks)
-        except BaseException:
-            for _t in tasks:
-                _t.cancel()
-            # Await the cancellations so nothing outlives this call. A worker's
-            # budget-refund `finally` may itself be cut short (it awaits a lock),
-            # which is harmless: `budget` is per-call state that dies with the call.
-            await asyncio.gather(*tasks, return_exceptions=True)
-            raise
-
-        total_hits = sum(len(h) for _f, h, _e, _t, _o in results if h)
-        with_hits = [(f, h, t, o) for f, h, _e, t, o in results if h]
-        # A filing whose read was CUT OFF at the byte cap was only partly searched.
-        # Reporting it as "no match" would manufacture exactly the false absence this
-        # tool exists to reduce — the unsearched tail is unknown, not empty.
-        no_hits = [f for f, h, e, t, _o in results if h == [] and e is None and not t]
-        # One symptom, two causes: see the worker's `truncated` assignment. These two
-        # carry the ADVICE lines, which only hold for a filing whose read portion
-        # contained no match ("no match in the portion read") — hence `h == []`.
-        partial_budget = [f for f, h, e, t, _o in results if h == [] and e is None and t == "budget"]
-        partial_cap = [f for f, h, e, t, _o in results if h == [] and e is None and t == "filing"]
-        partial = partial_budget + partial_cap
-        # A filing can be BOTH: a hit before the cut and an unread tail after it.
-        # Those used to fall out of the partial count entirely, because the two
-        # lists above require `h == []` — so a batch that truncated every filing it
-        # matched still summarised itself as "0 searched only in part" while the
-        # per-filing detail lines said "document truncated". The headline is the
-        # part a client summarises from, so the two halves have to agree.
-        cut_with_hits = [f for f, h, _e, t, _o in results if h and t]
-        unavailable = [(f, e) for f, h, e, _t, _o in results if e]
-        # Per-filing degradation exists to protect the answers the batch DID get.
-        # With ZERO successes there is no answer to protect, and "0 match(es) across
-        # N filing(s)" tells a client branching on error status that the corpus was
-        # searched and is empty. Same #104 false-absence class as the account-wide
-        # 429, one level up: at the batch boundary rather than the filing boundary.
-        # Keyed on "nothing was SEARCHED", never on "nothing was FOUND" — a definite
-        # "searched it all, it is not there" is a RESULT, and erroring on that would
-        # be a far worse bug than the one this prevents.
-        if results and len(unavailable) == len(results):
+        # Keyed on "nothing was SEARCHED", never on "nothing was FOUND" — a
+        # definite "searched it all, it is not there" is a RESULT and erroring on
+        # that would be a far worse bug than the one this prevents. `skipped` now
+        # counts toward not-searched alongside `unavailable`: an all-skipped
+        # batch (a quota or a deadline at the API) searched nothing either, and
+        # rendering it as "0 match(es) across 50 filing(s)" is the same false
+        # absence one status over.
+        if ordered and not (matched or no_match or part_searched):
+            detail = "; ".join(
+                f"{f} ({r})" for f, r in (unavailable + skipped)
+            )
             raise UpstreamHTTPError(
-                "No filing in this batch could be read, so nothing was searched "
-                "for " + _echo_query(raw) + " — this is not an empty result. Per filing: "
-                + "; ".join(f"{f} ({e})" for f, e in unavailable),
-                # The reasons above are our own short tokens, never upstream text.
-                # upstream_status stays unset: the failures need not share one.
+                "No filing in this batch was searched for "
+                + _echo_query(raw)
+                + " — this is not an empty result. Per filing: "
+                + detail,
+                # Our own short tokens and the endpoint's own reasons, never
+                # upstream prose. upstream_status stays unset: a mixed batch of
+                # per-filing reasons need not share one.
                 error_kind="unknown",
             )
+
+        shown = sum(len(h) for _f, _q, h, _t in matched)
+        total_hits = sum(
+            t if isinstance(t, int) else len(h) for _f, _q, h, t in matched
+        )
         record_result_count(total_hits)
 
         parts = [
-            f"{total_hits} match(es) for {_echo_query(query)} across {len(ordered)} filing(s): "
-            f"{len(with_hits)} with hits, {len(no_hits)} with none, "
-            f"{len(partial) + len(cut_with_hits)} searched only in part, "
-            f"{len(unavailable)} not searched."
+            f"{total_hits} match(es) for {_echo_query(raw)} across {len(ordered)} "
+            f"filing(s): {len(matched)} with hits, {len(no_match)} with none, "
+            f"{len(part_searched)} searched for only some spellings, "
+            f"{len(unavailable)} unavailable, {len(skipped)} not searched."
         ]
-        if cut_with_hits:
-            # Say the overlap out loud. The four counts above no longer sum to the
-            # filing count when it is non-empty, and an unexplained arithmetic
-            # mismatch reads as a bug in the tool rather than as the fact it is.
+        if total_hits != shown:
             parts.append(
-                f"\\nNOTE: {len(cut_with_hits)} filing(s) are counted BOTH in "
-                "'with hits' and in 'searched only in part' — the hits reported for "
-                "them are real, and the tail past the byte cap is UNKNOWN, not "
-                "empty: " + ", ".join(str(f) for f in cut_with_hits)
+                f"\\nShowing the first {shown} of them (max {cap} per filing); the "
+                f"{total_hits} is the EXACT total in the documents, not a floor."
             )
         if dropped:
             parts.append(
                 f"NOTE: {dropped} filing id(s) beyond the {_BATCH_MAX_FILINGS}-filing cap "
                 "were not searched — call again with the rest."
             )
-        if no_hits:
-            parts.append("\\nNo match in: " + ", ".join(str(f) for f in no_hits))
-        if partial_budget:
+        if no_match:
             parts.append(
-                "\\nSearched only in part — no match in the portion read, the rest is UNKNOWN "
-                "(the batch's shared byte budget left these filings less than the full "
-                "per-filing allowance; re-run with a narrower filing set, or use "
-                "filings_markdown_search on these directly): "
-                + ", ".join(str(f) for f in partial_budget)
+                "\\nNo match — these documents were searched IN FULL and the term is "
+                "not in them: " + ", ".join(str(f) for f in no_match)
             )
-        if partial_cap:
+        if part_searched:
             parts.append(
-                "\\nSearched only in part — no match in the portion read, the rest is UNKNOWN "
-                "(these filings are larger than the per-filing byte cap, which "
-                "filings_markdown_search shares — so neither a narrower batch nor that "
-                "tool can read the tail, and retrying will not change this answer): "
-                + ", ".join(str(f) for f in partial_cap)
+                "\\nSearched for only some spellings of the query, so the rest is "
+                "UNKNOWN rather than absent (re-run these through "
+                "filings_markdown_search with the spelling named): "
+                + "; ".join(
+                    f"{f} (not searched for {', '.join(repr(q) for q in qs)}"
+                    + (f": {', '.join(rs)}" if rs else "")
+                    + ")"
+                    for f, qs, rs in part_searched
+                )
             )
         if unavailable:
             parts.append(
-                "\\nNot searched (treat as UNKNOWN, not as 'no match'): "
-                + ", ".join(f"{f} ({e})" for f, e in unavailable)
+                "\\nUnavailable — we could not search these at all, treat as UNKNOWN "
+                "and NOT as 'no match': "
+                + ", ".join(f"{f} ({r})" for f, r in unavailable)
+            )
+        if skipped:
+            parts.append(
+                "\\nNot searched in this request — RETRY these, and treat them as "
+                "UNKNOWN meanwhile: "
+                + ", ".join(f"{f} ({r})" for f, r in skipped)
             )
         # Everything above is the per-filing OUTCOME, which is what a caller must
         # not lose: it is emitted unconditionally and sits where a truncation
         # from the end cannot reach it. Its size is bounded by the filing cap
-        # (20 ids and fixed prose) AND by _echo_query — this comment used to
-        # claim the first alone, which was false, because the headline quotes the
-        # caller's query and nothing capped its length (SPECHT round 13). The hit
-        # SPANS below are the other term in the query length, and they are the
-        # only part a budget can drop.
+        # (50 ids and fixed prose) AND by _echo_query, which caps the one part of
+        # the headline a caller chooses the length of. The hit SPANS below are
+        # the other term, and they are the only part a budget can drop.
         budget = _BATCH_MAX_RESULT_CHARS - sum(len(p) + 1 for p in parts)
         omitted = 0
-        for i, (fid, hits, was_cut, more) in enumerate(with_hits):
+        for i, (fid, matched_query, hits, row_total) in enumerate(matched):
             suffix = ""
-            if more:
-                suffix += f" — hit cap reached, MORE MATCHES EXIST beyond these {len(hits)}"
-            if was_cut:
-                suffix += " (document truncated at the byte cap — there may be more below)"
+            if isinstance(row_total, int) and row_total > len(hits):
+                suffix += (
+                    f" — showing the first {len(hits)} of {row_total}, which is the "
+                    "exact total in this document"
+                )
+            if matched_query is not None and matched_query != raw:
+                # Which SPELLING matched is load-bearing: the hit came from the
+                # fallback form, so the document contains that form and not the
+                # one the caller typed. Silently echoing the typed query would
+                # make the offsets look like hits on a string that is not there.
+                # ⚠ BOUND, NAMED RATHER THAN ROUNDED AWAY: this label is exact
+                # for a hit the SECOND candidate found and merely probable for
+                # one the FIRST did, because the endpoint runs its own
+                # comma-fallback over each `q` it receives
+                # (`markdown_window.search_candidates`, flag-gated) and echoes
+                # the query as SENT, not the spelling that matched. So a row for
+                # "19,409" can be a hit on "19409" with no note here. The
+                # remedy is upstream -- the response would have to say which
+                # candidate matched -- and the exposure is bounded: the hit is
+                # real text either way, and sending both spellings explicitly
+                # means the server's own fallback can only reach a match this
+                # tool's second query would also have found. The single-filing
+                # tool has had the same ambiguity since #166.
+                suffix += f" — matched as {_echo_query(matched_query)}"
             block = [f"\\n=== filing {fid} — {len(hits)} match(es){suffix} ==="]
             for off, span in hits:
                 block.append(f"--- near offset {off} ---\\n...{span}...")
@@ -6176,7 +6196,7 @@ async def filings_markdown_search_batch(
             # Reserve room for the notice itself, or the bound would be met by
             # dropping the sentence that explains the bound.
             if cost > budget - _BATCH_OMITTED_NOTICE_CHARS:
-                omitted = len(with_hits) - i
+                omitted = len(matched) - i
                 break
             parts.extend(block)
             budget -= cost
@@ -6188,15 +6208,15 @@ async def filings_markdown_search_batch(
                 f"\\nNOTE: hit detail for {omitted} filing(s) omitted to stay under the "
                 f"{_BATCH_MAX_RESULT_CHARS}-character result ceiling — they DID match and "
                 "are counted above; re-run with just these to read the passages: "
-                + ", ".join(str(f) for f, _h, _t, _o in with_hits[len(with_hits) - omitted:])
+                + ", ".join(str(f) for f, _q, _h, _t in matched[len(matched) - omitted:])
             )
         return "\\n".join(parts)
     except UpstreamHTTPError:
-        # A whole-batch failure must stay an ERROR. Three things reach here:
-        # 401/403 and an account-wide 429 re-raised by a worker, and the
+        # A whole-batch failure must stay an ERROR. Two things reach here: the
+        # upstream error raised on a non-2xx response, and the
         # nothing-was-searched raise above. Without this the outer handler below
-        # turns any of them back into a successful string and the re-raise is inert
-        # — which is what the first version of this fix did. Mirrors #104.
+        # turns either of them back into a successful string and the re-raise is
+        # inert — which is what the first version of the #104 fix did.
         raise
     except ToolInputError as exc:
         return _safe_error("filings_markdown_search_batch", exc)
