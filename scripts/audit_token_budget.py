@@ -36,6 +36,9 @@ os.environ.setdefault("COGNITO_CLIENT_SECRET", "audit_secret")
 os.environ.setdefault("COGNITO_REGION", "eu-central-1")
 os.environ.setdefault("MCP_BASE_URL", "http://localhost:8000")
 os.environ.setdefault("API_BASE_URL", "http://localhost:8001")
+# The published budget is the public surface: never count the hidden facts
+# tools (web#4964), even when the caller's shell has the flag set.
+os.environ.pop("MCP_UNSTD_FACTS_TOOLS", None)
 
 _AUDIT_POOL_ID = os.environ["COGNITO_USER_POOL_ID"]
 _AUDIT_REGION = os.environ["COGNITO_REGION"]

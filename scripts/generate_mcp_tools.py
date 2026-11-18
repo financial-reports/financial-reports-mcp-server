@@ -69,7 +69,14 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # them too would put two tools for one endpoint in front of the model. The
 # search endpoint is published in the schema while it is open (web
 # cross_search.schema_excluded), so the next snapshot refresh would add it.
-_REPLACED_BY_SYNTHETIC = {"filings_search_list"}
+# The as-reported pair (web#10586) is staff-only and out of the schema today;
+# listed now so the snapshot refresh that first carries it cannot add generic
+# twins next to the hand-built filings_facts / filings_statements.
+_REPLACED_BY_SYNTHETIC = {
+    "filings_search_list",
+    "filings_facts_retrieve",
+    "filings_statements_retrieve",
+}
 
 _PRUNED_EXCLUDE = {
     "countries_list", "countries_retrieve",
@@ -6947,6 +6954,138 @@ filings_search.parameters = _unlisted_schema(filings_search.parameters, _FILINGS
 '''
 
 
+# As-reported facts tools (web#10586, built in web#4964). Hand-written, 1:1 with
+# GET /filings/{id}/facts/ and GET /filings/{id}/statements/: same params, same
+# shapes, nothing MCP-only. Always EMITTED (the generated module is the same
+# whatever the flag), but REGISTERED only when MCP_UNSTD_FACTS_TOOLS=1 at
+# runtime, so with the default (unset) they are in no tools/list anywhere and out
+# of the README table and docs/token-budget.md. The flag stays off until the
+# routes are public (web#10584); until then they 403 every non-staff caller.
+# The company series routes (/companies/{id}/series/) are NOT here: they stay
+# staff-only after go-live (their plan fences on series rows are missing).
+# When the two routes land in the snapshot, the schema loop would emit generic
+# twins (filings_facts_retrieve, filings_statements_retrieve); _REPLACED_BY_SYNTHETIC
+# drops them, so these hand-built tools are the only ones for each job.
+UNSTD_FACTS_TOOLS_BLOCK = '''
+
+MCP_UNSTD_FACTS_TOOLS = os.environ.get("MCP_UNSTD_FACTS_TOOLS", "0").strip() == "1"
+
+_UnstdStatement = Annotated[
+    str | None,
+    Field(
+        description="Comma list of BS (balance sheet), IS (income statement), CI "
+        "(comprehensive income), CF (cash flow), EQ (changes in equity); "
+        "NOTE and OTHER also accepted."
+    ),
+]
+_UnstdMethod = Annotated[
+    Literal["xbrl", "structured", "llm"] | None,
+    Field(
+        description="xbrl or structured = the filer's own tagged figures; llm = "
+        "read from the report, not authoritative. Default: the filer's own when "
+        "the filing has them."
+    ),
+]
+
+
+async def _unstd_facts_get(func_name: str, url: str, params: dict[str, Any]) -> str:
+    """GET an as-reported facts endpoint, return its JSON compact (no indent).
+
+    The Django body is already compact and omits nulls, so this is a
+    pass-through re-serialisation. Errors follow the text-tool contract (#104):
+    an upstream 4xx/5xx raises with the forwarded field message.
+    """
+    try:
+        _require_auth_context()
+        for _pg_key in ("page", "page_size"):
+            _pg_val = params.get(_pg_key)
+            if _pg_val is not None and int(_pg_val) < 1:
+                raise ToolInputError(f"{_pg_key} must be >= 1")
+        query = {k: v for k, v in params.items() if v is not None}
+        if "page_size" in query:
+            query = {**query, "page_size": min(int(query["page_size"]), _MAX_PAGE_SIZE)}
+        response = await _api_get(url, params=query)
+        if response.is_error:
+            _raise_upstream_text_error(response, response.text[:_MAX_ERROR_BODY])
+        data = _scrub_response(response.json())
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            record_result_count(len(data["results"]))
+        return _json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
+    except ToolInputError as exc:
+        return _safe_error(func_name, exc)
+    except Exception as exc:
+        logger.exception("%s failed", func_name)
+        return _safe_error(func_name, exc)
+
+
+_UNSTD_ANNOTATIONS = dict(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False,
+)
+
+if MCP_UNSTD_FACTS_TOOLS:
+
+    @mcp.tool(
+        tags={"Filings"},
+        annotations=ToolAnnotations(title="Filing Statements As Reported", **_UNSTD_ANNOTATIONS),
+    )
+    @subscription_required
+    async def filings_statements(
+        id: int,
+        statement: _UnstdStatement = None,
+        method: _UnstdMethod = None,
+    ) -> str:
+        """ONE filing's financial statements AS REPORTED: the company's own line
+        items and labels, in printed order, nested as printed, with every period
+        column the filing shows (default BS,IS,CI,CF,EQ; one document, no pages).
+        Each statement lists `periods` once; each row's `values` and `refs` align
+        with them by index. Values are decimal strings, fully scaled. They are the
+        filer's XBRL (or other structured) figures where it tagged them, otherwise
+        read from the report (`method`: llm, flat rows, not authoritative). No note
+        numbers. For one comparable value per line item across companies and years
+        use companies_financials_retrieve instead; use this tool when the question
+        is what a PARTICULAR filing printed."""
+        return await _unstd_facts_get(
+            "filings_statements",
+            f"/filings/{_validate_path_param('id', id)}/statements/",
+            {"statement": statement, "method": method},
+        )
+
+    @mcp.tool(
+        tags={"Filings"},
+        annotations=ToolAnnotations(title="Filing Facts As Reported", **_UNSTD_ANNOTATIONS),
+    )
+    @subscription_required
+    async def filings_facts(
+        id: int,
+        statement: _UnstdStatement = None,
+        method: _UnstdMethod = None,
+        status: Annotated[
+            Literal["accepted", "all"] | None,
+            Field(description="Default accepted; all adds read-from-report facts still under review."),
+        ] = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> str:
+        """ONE filing's numeric facts AS REPORTED, as a flat list (paginated, max
+        100), notes included: the company's own label, the XBRL concept where
+        tagged, statement, period, unit and dimensions. `value` is a decimal
+        string, fully scaled (`as_printed` is the printed figure and scale, for
+        audit). XBRL or structured facts are the filer's own; llm facts are read
+        from the report, carry `confidence`/`status` and are not authoritative.
+        No note numbers. Prefer filings_statements for the statement tables; use
+        this for notes or to find one tagged figure."""
+        return await _unstd_facts_get(
+            "filings_facts",
+            f"/filings/{_validate_path_param('id', id)}/facts/",
+            {"statement": statement, "method": method, "status": status,
+             "page": page, "page_size": page_size},
+        )
+'''
+
+
 # Guide TOOLS — the fr://guide/* resource content exposed ALSO as tools, for
 # tool-only MCP clients that can't read MCP resources. Emitted on the pruned
 # default surface (they stand in for the dropped ISIC/reference tools).
@@ -8298,6 +8437,10 @@ def main() -> None:
     # Huge-filing search tool (synthetic) — emitted on every surface; pairs with
     # the in-result pointer filings_markdown_retrieve adds on big (>120k) filings.
     generated_code.append(MARKDOWN_SEARCH_TOOL_BLOCK)
+    # As-reported facts tools (web#10586) — emitted on every surface, registered
+    # only when MCP_UNSTD_FACTS_TOOLS=1 at runtime. Deliberately NOT added to
+    # generated_tools, so the README tool table never lists them.
+    generated_code.append(UNSTD_FACTS_TOOLS_BLOCK)
     generated_code.append(PROMPTS_BLOCK)
     missing_pay = sorted(set(X402_PAY_TOOLS) - {t["func_name"] for t in generated_tools})
     if missing_pay:

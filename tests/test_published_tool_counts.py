@@ -43,14 +43,37 @@ HAND_WRITTEN = {
 }
 
 
+# Runtime flags whose `if <FLAG>:` branch registers tools that are OFF by default
+# (unset in prod until their routes are public), so no published count includes
+# them. tests/test_unstd_facts_tools.py covers what the branch registers.
+FLAG_GATED = {"MCP_UNSTD_FACTS_TOOLS"}
+
+
 def _tool_names(source: str) -> set[str]:
-    tree = ast.parse(source)
-    return {
-        node.name
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and any("mcp.tool" in ast.unparse(d) for d in node.decorator_list)
-    }
+    names: set[str] = set()
+    pending: list[ast.AST] = [ast.parse(source)]
+    while pending:
+        node = pending.pop()
+        if (
+            isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id in FLAG_GATED
+        ):
+            pending.extend(node.orelse)  # the flag's tools are not on the surface
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+            "mcp.tool" in ast.unparse(d) for d in node.decorator_list
+        ):
+            names.add(node.name)
+        pending.extend(ast.iter_child_nodes(node))
+    return names
+
+
+def test_flag_gated_tools_are_emitted_but_not_counted() -> None:
+    """The skip above must hit a real branch, or it hides nothing and rots."""
+    source = GENERATED.read_text(encoding="utf-8")
+    assert "if MCP_UNSTD_FACTS_TOOLS:" in source
+    assert {"filings_facts", "filings_statements"}.isdisjoint(_tool_names(source))
 
 
 def _regenerate(full_surface: bool) -> set[str]:
