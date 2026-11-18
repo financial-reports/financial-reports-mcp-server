@@ -7006,7 +7006,17 @@ async def _unstd_facts_get(func_name: str, filing_id: Any, route: str, params: d
         data = _scrub_response(response.json())
         if isinstance(data, dict) and isinstance(data.get("results"), list):
             record_result_count(len(data["results"]))
-        return _json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        out = _json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        if len(out) > _MAX_RESULT_CHARS:
+            # The statements route is one unpaginated document; five statements
+            # of a large group can pass what a tool result may carry, and a
+            # client cut mid-JSON leaves the model half a table. Say how to narrow.
+            raise ToolInputError(
+                f"result is {len(out):,} characters, over the {_MAX_RESULT_CHARS:,} "
+                "one tool result can carry; ask for fewer statements (e.g. "
+                "statement=IS), or page filings_facts with statement= instead"
+            )
+        return out
     except UpstreamHTTPError:
         # See #104 — must stay an error, not become a successful string result.
         raise

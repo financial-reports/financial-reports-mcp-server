@@ -255,6 +255,24 @@ async def test_path_param_cannot_rewrite_the_request_path(
     assert not route.called
 
 
+@pytest.mark.asyncio
+async def test_oversized_statements_say_how_to_narrow_instead_of_returning_half(
+    unstd_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(unstd_module, monkeypatch, fake_access_token)
+    row = STATEMENTS_BODY["statements"][0]["rows"][1]
+    big = {**STATEMENTS_BODY, "statements": [
+        {**STATEMENTS_BODY["statements"][0], "rows": [row] * 2000}
+    ]}
+    assert len(_compact(big)) > unstd_module._MAX_RESULT_CHARS
+    respx_router.get(f"{TEST_API_BASE}/filings/42817733/statements/").mock(
+        return_value=httpx.Response(200, json=big)
+    )
+    out = await _tool(unstd_module, "filings_statements")(id=42817733)
+    assert out.startswith("Invalid argument: result is")
+    assert "statement=IS" in out
+
+
 # --- errors: same text-tool contract as the generated tools (#104, #132) -------
 
 
