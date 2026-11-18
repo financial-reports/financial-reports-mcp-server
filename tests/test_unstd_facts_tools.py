@@ -148,9 +148,13 @@ async def test_flag_on_tools_listed_read_only_with_their_params(unstd_module) ->
         assert "AS REPORTED" in description, name
         assert "No note numbers" in description, name
     # The API's three methods, not the two of the 2026-10 patch (#6240 added structured).
-    method_schema = json.dumps(tools["filings_statements"].inputSchema["properties"]["method"])
-    for value in ("xbrl", "structured", "llm"):
-        assert f'"{value}"' in method_schema
+    for name in UNSTD_TOOLS:
+        method_schema = json.dumps(tools[name].inputSchema["properties"]["method"])
+        for value in ("xbrl", "structured", "llm"):
+            assert f'"{value}"' in method_schema, name
+    # Only the statements route picks one method by default; facts mixes them.
+    facts_method = tools["filings_facts"].inputSchema["properties"]["method"]["description"]
+    assert "mixed" in facts_method and "filer's own" not in facts_method
 
 
 def test_flag_on_does_not_change_the_rest_of_the_surface(mcp_module, monkeypatch) -> None:
@@ -245,8 +249,9 @@ async def test_path_param_cannot_rewrite_the_request_path(
     route = respx_router.get(url__regex=rf"^{TEST_API_BASE}/.*").mock(
         return_value=httpx.Response(200, json={})
     )
-    with pytest.raises(unstd_module.ToolInputError):
-        await _tool(unstd_module, "filings_statements")(id="../admin")
+    for bad_id in ("../admin", 0, -1, True):
+        out = await _tool(unstd_module, "filings_statements")(id=bad_id)
+        assert "id must be a positive integer" in out, bad_id
     assert not route.called
 
 

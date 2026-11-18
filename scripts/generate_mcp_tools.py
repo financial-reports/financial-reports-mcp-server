@@ -6975,20 +6975,13 @@ _UnstdStatement = Annotated[
     Field(
         description="Comma list of BS (balance sheet), IS (income statement), CI "
         "(comprehensive income), CF (cash flow), EQ (changes in equity); "
-        "NOTE and OTHER also accepted."
+        "NOTE and OTHER also accepted. Default: statements BS-EQ, facts all."
     ),
 ]
-_UnstdMethod = Annotated[
-    Literal["xbrl", "structured", "llm"] | None,
-    Field(
-        description="xbrl or structured = the filer's own tagged figures; llm = "
-        "read from the report, not authoritative. Default: the filer's own when "
-        "the filing has them."
-    ),
-]
+_UNSTD_METHODS = Literal["xbrl", "structured", "llm"]
 
 
-async def _unstd_facts_get(func_name: str, url: str, params: dict[str, Any]) -> str:
+async def _unstd_facts_get(func_name: str, filing_id: Any, route: str, params: dict[str, Any]) -> str:
     """GET an as-reported facts endpoint, return its JSON compact (no indent).
 
     The Django body is already compact and omits nulls, so this is a
@@ -6997,6 +6990,9 @@ async def _unstd_facts_get(func_name: str, url: str, params: dict[str, Any]) -> 
     """
     try:
         _require_auth_context()
+        if isinstance(filing_id, bool) or not isinstance(filing_id, int) or filing_id <= 0:
+            raise ToolInputError("id must be a positive integer")
+        url = f"/filings/{filing_id}/{route}/"
         for _pg_key in ("page", "page_size"):
             _pg_val = params.get(_pg_key)
             if _pg_val is not None and int(_pg_val) < 1:
@@ -7035,7 +7031,13 @@ if MCP_UNSTD_FACTS_TOOLS:
     async def filings_statements(
         id: int,
         statement: _UnstdStatement = None,
-        method: _UnstdMethod = None,
+        method: Annotated[
+            _UNSTD_METHODS | None,
+            Field(
+                description="Default: the filer's own (xbrl, else structured) when the "
+                "filing has them, else llm (read from the report, not authoritative)."
+            ),
+        ] = None,
     ) -> str:
         """ONE filing's financial statements AS REPORTED: the company's own line
         items and labels, in printed order, nested as printed, with every period
@@ -7048,8 +7050,7 @@ if MCP_UNSTD_FACTS_TOOLS:
         use companies_financials_retrieve instead; use this tool when the question
         is what a PARTICULAR filing printed."""
         return await _unstd_facts_get(
-            "filings_statements",
-            f"/filings/{_validate_path_param('id', id)}/statements/",
+            "filings_statements", id, "statements",
             {"statement": statement, "method": method},
         )
 
@@ -7061,7 +7062,13 @@ if MCP_UNSTD_FACTS_TOOLS:
     async def filings_facts(
         id: int,
         statement: _UnstdStatement = None,
-        method: _UnstdMethod = None,
+        method: Annotated[
+            _UNSTD_METHODS | None,
+            Field(
+                description="Only facts of this method. Default: every method the "
+                "filing has, mixed; check each fact's `method`."
+            ),
+        ] = None,
         status: Annotated[
             Literal["accepted", "all"] | None,
             Field(description="Default accepted; all adds read-from-report facts still under review."),
@@ -7078,8 +7085,7 @@ if MCP_UNSTD_FACTS_TOOLS:
         No note numbers. Prefer filings_statements for the statement tables; use
         this for notes or to find one tagged figure."""
         return await _unstd_facts_get(
-            "filings_facts",
-            f"/filings/{_validate_path_param('id', id)}/facts/",
+            "filings_facts", id, "facts",
             {"statement": statement, "method": method, "status": status,
              "page": page, "page_size": page_size},
         )
