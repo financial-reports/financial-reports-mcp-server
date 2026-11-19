@@ -43,6 +43,10 @@ it.
    financials instead risks attributing a restated period to this filing.
 3. **Get the numbers from the structured path first.**
    `companies_financials_retrieve?id=<company id>` with the `line_items` you need.
+   ⚠ **Pin the period, or interim figures leak into a full-year brief.** The call
+   returns every period it holds, so pass `fiscal_period=FY` for a full-year
+   brief and match the returned `period_end_date` to the filing you selected in
+   step 2. For a recap, pass the period you are recapping.
    ⚠ **`line_items` takes exact lower-case snake_case codes and an unknown one is
    a 400 naming it.** The two most often guessed wrong are `net_income`, which is
    `net_income_loss`, and `operating_income`, which is `operating_income_loss`.

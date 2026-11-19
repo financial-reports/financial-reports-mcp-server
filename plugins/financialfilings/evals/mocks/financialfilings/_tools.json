@@ -447,6 +447,14 @@
    }
   },
   {
+   "name": "get_fr_filing_type_taxonomy",
+   "description": "The full 30-code filing-type taxonomy (codes + categories). Read before filtering filings by type \u2014 especially for ESG, governance, M&A, dividends, transcripts, or any type beyond 10-K / IR / ER / MDA / DIRS.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  },
+  {
    "name": "get_fr_industry_classification_isic",
    "description": "The ISIC industry hierarchy (sections/divisions/groups/classes) and how to screen peers. Read for any sector, industry, or peer-comparison query, then screen with companies_list(sector=...).",
    "inputSchema": {

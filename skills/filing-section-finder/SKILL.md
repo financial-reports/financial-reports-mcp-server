@@ -20,7 +20,13 @@ the company-brief skill or `companies_financials_retrieve` instead.
 1. **Resolve the company.** `companies_list?search=<name>` then take the `id`.
    If several match, ask rather than guess. Companies dual-list.
 2. **Find the filing.**
-   `filings_list?company=<id>&ordering=-release_datetime&page_size=5`.
+   `filings_list?company=<id>&types=<codes>&ordering=-release_datetime&page_size=5`.
+
+   ⚠ **Filter the types BEFORE the page limit.** `filings_list` returns every
+   type, so an unfiltered `page_size=5` can be five price-sensitive notices and
+   hide the report the user asked about. When they named a kind of report, pass
+   its code. When they did not, leave the filter off and take the newest filings
+   as they come.
 
    **`type` takes a FinancialFilings code, not a form name.** `20-F`, `10-Q` and
    `S-1` are source form names and are rejected with a 400. Call

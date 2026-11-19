@@ -12,15 +12,16 @@ by `input.search`.
 
 Match loosely and case-insensitively on `input.search`:
 
-- "nordwind" -> one result: id 4412, "Nordwind Energi AB", country_iso SE,
-  isin SE0000111222, ticker NWE, listing_status LISTED, sub_industry_code 2819,
-  currency SEK.
-- "helios" -> one result: id 5571, "Helios Turbinen GmbH", country_iso DE,
-  isin DE0007654321, ticker HTG, listing_status LISTED, sub_industry_code 2819,
-  currency EUR.
+- "nordwind" -> one result: id 4412, "Nordwind Energi AB", country_code SE,
+  isins ["SE0000111222"], sub_industry_code 2819, tagline and date_public set. Its
+  reporting currency is SEK, but note the SERVED `CompanyMinimal` shape has no
+  `currency`, `ticker` or `listing_status` field, so do not invent them.
+- "helios" -> one result: id 5571, "Helios Turbinen GmbH", country_code DE,
+  isins ["DE0007654321"], sub_industry_code 2819. Reports in EUR, which the agent
+  learns from the financials call rather than from this one.
 - "atlas" -> TWO results, deliberately: id 7120 "Atlas Rotor Industri A/S",
-  country_iso DK, isin DK0001122334; and id 7121 "Atlas Rotor Holding Oyj",
-  country_iso FI, isin FI0009988776. Both LISTED, sub_industry_code 2819. The
+  country_code DK, isins ["DK0001122334"]; and id 7121 "Atlas Rotor Holding Oyj",
+  country_code FI, isins ["FI0009988776"]. Both sub_industry_code 2819. The
   case checks that two plausible hits are surfaced rather than silently reduced
   to one.
 - "brightwater" -> `{"count": 0, "next": null, "previous": null, "results": []}`.

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import pathlib
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -46,6 +47,51 @@ _OIDC_DOCUMENT = {
     "scopes_supported": ["openid", "email", "profile"],
     "token_endpoint_auth_methods_supported": ["client_secret_basic"],
 }
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _generated_module_exists() -> None:
+    """Render `src/financial_reports_mcp.py` if it is not there.
+
+    ⛔ WHY THE WHOLE SUITE NEEDS THIS, not just one file. The runtime module is
+    BUILD-TIME GENERATED and gitignored (`.gitignore:208`), so a fresh checkout
+    does not have it. CI renders it in a dedicated step before pytest
+    (`ci.yml`, "Render generated module"), which is why the suite is green there
+    and why nothing ever noticed: every test that takes `mcp_module`, and every
+    test that reads the module text directly, depends on that pre-step.
+
+    Run one such file on its own after a clean clone and it fails with
+    `FileNotFoundError` or a pile of confusing assertion errors, naming the test
+    rather than the missing build step. Reproduced while dispositioning SPECHT on
+    #220: moving the module aside turned `test_skill_tool_params_exist.py` into
+    32 failures and 1 pass.
+
+    ⚠ Renders the DEFAULT surface only, and only when the file is absent. It must
+    not re-render on every run: `test_published_tool_counts.py` owns the one site
+    that renders deliberately, and a second renderer racing it is the defect that
+    turned this PR's first CI run red.
+    """
+    import subprocess
+    import sys
+
+    generated = pathlib.Path(__file__).resolve().parent.parent / "src" / "financial_reports_mcp.py"
+    if generated.exists():
+        return
+    generator = generated.parent.parent / "scripts" / "generate_mcp_tools.py"
+    env = dict(os.environ)
+    env["FR_PIN_SCHEMA"] = "1"  # the committed snapshot, never the live schema
+    env.pop("MCP_FULL_SURFACE", None)
+    proc = subprocess.run(
+        [sys.executable, str(generator)],
+        cwd=generated.parent.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, (
+        "the generated module is absent and could not be rendered:\n"
+        f"{proc.stderr[-2000:]}"
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)

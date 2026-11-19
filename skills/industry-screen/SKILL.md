@@ -52,7 +52,12 @@ which ones you included.
 
 Always state, above the list:
 
-- The ISIC class used, by code **and** name.
+- The ISIC class used, by code **and** name. ⚠ **The screen response does NOT
+  carry the class name**: `companies_list` rows have `sub_industry_code` and no
+  `sub_industry_name`. Get the name from `get_fr_industry_classification_isic`.
+  **If you cannot get it, give the code alone and say the name is unavailable.**
+  Never supply a name from memory: a plausible-sounding wrong class name makes a
+  reproducible screen look like a different one, which is worse than no name.
 - The country filter, or that there was none.
 - That the listing filter was applied.
 - The count, and whether it is the whole result or the first page.
