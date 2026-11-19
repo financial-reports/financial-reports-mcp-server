@@ -81,17 +81,30 @@ def _generated_module_exists() -> None:
     env = dict(os.environ)
     env["FR_PIN_SCHEMA"] = "1"  # the committed snapshot, never the live schema
     env.pop("MCP_FULL_SURFACE", None)
-    proc = subprocess.run(
-        [sys.executable, str(generator)],
-        cwd=generated.parent.parent,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
-    assert proc.returncode == 0, (
-        "the generated module is absent and could not be rendered:\n"
-        f"{proc.stderr[-2000:]}"
-    )
+    try:
+        subprocess.run(
+            [sys.executable, str(generator)],
+            cwd=generated.parent.parent,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return
+
+    # ⛔ FAIL SOFT, AND THIS COST A RED CI RUN TO LEARN. The first version
+    # asserted on the return code, which turned "cannot render here" into a
+    # setup ERROR for every test in the session -- including the whole
+    # `tests/e2e/` suite, which talks HTTP to a container and never imports this
+    # module at all. The e2e job installs only `requirements-test.txt`, so the
+    # generator's `jinja2` is absent and the render cannot succeed there by
+    # design.
+    # ⇒ A convenience fixture must not be able to fail a job that does not want
+    # what it provides. If the render does not work, leave it: the tests that
+    # genuinely need the module then fail with their own message, which is
+    # exactly the behaviour before this fixture existed, and nothing else is
+    # touched.
 
 
 @pytest.fixture(scope="session", autouse=True)
