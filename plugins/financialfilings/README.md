@@ -7,7 +7,17 @@ FinancialFilings covers official filings, as published: annual and interim repor
 ## What the plugin adds
 
 - **The FinancialFilings MCP server**: a remote server at `https://mcp.financialfilings.com/mcp`, which Claude calls to search companies, list and read filings, and fetch financials.
-- **The `financial-filings-research` skill**: instructions and a tool cheat-sheet that show Claude how to combine those tools for company lookup, filing summaries, multi-company comparisons, industry screening and filings monitoring.
+- **Five skills.** `financial-filings-research` is the base: instructions and a tool
+  cheat-sheet showing Claude how to combine the tools, plus the data-quality checks
+  the tool schemas do not express. Four job-shaped skills build on it:
+  `filing-section-finder` (find risk factors, a segment note, guidance or the
+  auditor's report inside one filing, without downloading it),
+  `company-brief` (a tear sheet or results recap for one company),
+  `peer-comparison` (several companies side by side, with currency and period end
+  as columns rather than assumptions), and
+  `industry-screen` (a list of companies by ISIC class and country).
+  Each names which of the others to use instead when the request is really a
+  different job, so they do not compete for the same question.
 
 ## Install
 

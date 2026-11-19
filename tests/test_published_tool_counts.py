@@ -76,6 +76,72 @@ def test_flag_gated_tools_are_emitted_but_not_counted() -> None:
     assert {"filings_facts", "filings_statements"}.isdisjoint(_tool_names(source))
 
 
+def _regenerate_source(full_surface: bool) -> str:
+    """Render one surface and return the module TEXT.
+
+    ⛔ THIS IS THE ONLY RENDER SITE IN THE SUITE, DELIBERATELY. #208 added a second
+    module-scoped fixture in another file that also rendered the full surface and
+    restored the default. Both passed locally under `-p no:randomly` and the new one
+    FAILED IN CI, reporting 66 tools where this file's own gate measured 64 and
+    passed in the same run. Two fixtures rewriting one tracked file is a race whose
+    outcome depends on collection order, so the second one was deleted and its
+    assertions moved here. ⇒ A measurement that disagrees with another measurement
+    of the same thing in the same run is an instrument fault, and the fix is to
+    stop having two instruments.
+    """
+    env = dict(os.environ)
+    env["FR_PIN_SCHEMA"] = "1"  # the committed snapshot, never the live schema
+    if full_surface:
+        env["MCP_FULL_SURFACE"] = "1"
+    else:
+        env.pop("MCP_FULL_SURFACE", None)
+    proc = subprocess.run(
+        [sys.executable, str(GENERATOR)],
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, f"generator failed:\n{proc.stderr[-2000:]}"
+    return GENERATED.read_text(encoding="utf-8")
+
+
+def _annotations(source: str) -> dict[str, int]:
+    """ToolAnnotations tallies over a rendered module.
+
+    Counts every `@mcp.tool`, including the x402 `_pay_*` wrappers, because the
+    emitted set is what it is: an exclusion here is a second definition of "the
+    surface" and the first thing to disagree with the counts above.
+    """
+    tree = ast.parse(source)
+    tally = {"read_only": 0, "destructive": 0, "probes": 0, "output_schema": 0}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        decorator = next(
+            (d for d in node.decorator_list if "mcp.tool" in ast.unparse(d)), None
+        )
+        if decorator is None:
+            continue
+        read_only = destructive = None
+        for keyword in getattr(decorator, "keywords", []):
+            if keyword.arg == "output_schema":
+                tally["output_schema"] += 1
+            if keyword.arg == "annotations" and isinstance(keyword.value, ast.Call):
+                for inner in keyword.value.keywords:
+                    if inner.arg == "readOnlyHint":
+                        read_only = ast.literal_eval(inner.value)
+                    elif inner.arg == "destructiveHint":
+                        destructive = ast.literal_eval(inner.value)
+        if read_only is True:
+            tally["read_only"] += 1
+        if destructive is True:
+            tally["destructive"] += 1
+        if read_only is False and destructive is False:
+            tally["probes"] += 1
+    return tally
+
+
 def _regenerate(full_surface: bool) -> set[str]:
     env = dict(os.environ)
     env["FR_PIN_SCHEMA"] = "1"  # the committed snapshot, never the live schema
@@ -101,9 +167,11 @@ def surfaces() -> dict[str, set[str]]:
     Module-scoped: two regenerations, not two per test.
     """
     default = _regenerate(full_surface=False)
-    full = _regenerate(full_surface=True)
+    full_source = _regenerate_source(full_surface=True)
+    full = _tool_names(full_source)
+    annotations = _annotations(full_source)
     _regenerate(full_surface=False)  # leave the tree as the rest of the suite expects
-    return {"default": default, "full": full}
+    return {"default": default, "full": full, "annotations": annotations}
 
 
 def _doc(relpath: str) -> str:
@@ -202,6 +270,22 @@ _COUNT_CLAIMS: list[tuple[str, str]] = [
     (r"the full \*\*(\d+)-tool\*\* surface", "full"),
     (r"emit the full (\d+)-tool surface", "full"),
     (r"composing the (\d+) FinancialFilings MCP tools", "full"),
+    # The plugin's shipped cheatsheet. ⛔ It was OUTSIDE this gate until #208,
+    # which is why it said "50 tools across 10 domains" where the full surface is
+    # 64: a published file carrying a count that nothing compared.
+    # ⚠ `SKILL.md` is deliberately NOT added here. Its "16 research tools" is the
+    # RESEARCH surface, already allowlisted below and pinned by
+    # test_skill_names_the_research_surface.py. Changing it to the default 19
+    # broke that test, which is the gate working: a number that differs from the
+    # surface count is not therefore stale, and the only way to know is to find
+    # out what it measures.
+    (r"All (\d+) on the default", "default"),
+    # ⚠ Anchored on the sentence, not on "N tools across M domains": the looser
+    # form also matched "16 tools across 5 domains" in the generator, which is the
+    # x402 PAY surface, and the gate then read 16 as a claim about the full 64.
+    # A pattern that happens to be right in one file and wrong in another is the
+    # incidental-match failure this suite exists to catch.
+    (r"(\d+) tools across \d+ domains\. This file is loaded on demand", "full"),
     # The overlap prose this PR added. Unchecked when first written: I shipped
     # three new ungated numbers inside a PR whose purpose is gating numbers
     # (SPECHT S3 on 9883152).
@@ -237,6 +321,15 @@ _DOCS_WITH_COUNTS: dict[str, tuple[str, ...]] = {
     "docs/WORKFLOWS.md": ("default",),
     "skills/GETTING-STARTED.md": ("default",),
     "scripts/generate_mcp_tools.py": ("full",),
+    # The cheatsheet ships twice, and BOTH copies are published, so both are
+    # gated. scripts/sync_standalone_skills.sh keeps them identical and
+    # tests/test_skills_in_sync.py fails if they drift, but listing only one here
+    # would leave the other free to carry a stale number.
+    "skills/financial-filings-research/references/tool-cheatsheet.md": ("default", "full"),
+    "plugins/financialfilings/skills/financial-filings-research/references/tool-cheatsheet.md": (
+        "default",
+        "full",
+    ),
 }
 
 
@@ -353,6 +446,14 @@ _NOT_A_SURFACE_COUNT = (
     # test_the_default_surface_decomposes_as_the_docs_describe_it
     "3 `get_fr_*` guide tools",
     "3 hand-written search tools",
+    # Annotation counts in the cheatsheet: properties of the full surface's
+    # ToolAnnotations, not sizes of a surface. Measured 2026-11-19 over the
+    # full render excluding the `_pay_*` x402 variants, and pinned by
+    # tests/test_cheatsheet_annotation_counts.py.
+    "52 tools have",
+    "10 tools have",
+    "2 tools are non-destructive probes",
+    "6 tools advertise",
 )
 
 #: Files whose tool-count claims this gate is responsible for.
@@ -363,6 +464,8 @@ _COUNT_BEARING_DOCS = (
     "docs/WORKFLOWS.md",
     "skills/GETTING-STARTED.md",
     "skills/README.md",
+    "skills/financial-filings-research/references/tool-cheatsheet.md",
+    "plugins/financialfilings/skills/financial-filings-research/references/tool-cheatsheet.md",
 )
 
 
@@ -553,3 +656,65 @@ def test_the_readme_domain_table_matches_the_generated_surface(
         f"default surface has {len(default)} tools. A domain is missing from "
         f"the table, or a tool belongs to none of {sorted(_DOMAIN_PREFIXES)}."
     )
+
+
+# --- the cheatsheet's ToolAnnotations counts (#208) ---------------------------
+#
+# The shipped cheatsheet publishes four counts that are PROPERTIES of the full
+# surface's annotations rather than sizes of a surface, so `_COUNT_CLAIMS` cannot
+# compare them and `_NOT_A_SURFACE_COUNT` allowlists them instead. Until #208
+# nothing checked them, and three of the five counts in that file were wrong when
+# measured: 50 tools where the full surface is 64, 35 read-only where it is 52, and
+# 5 destructive where it is 10. The probe count (2) and the `outputSchema` count (6)
+# were right.
+#
+# A shipped reference file had drifted by a factor of two on the number a reader
+# uses to decide whether a tool is safe to call without confirmation, which is the
+# one count in it with a safety meaning.
+#
+# ⚠ These live HERE rather than in their own file on purpose. See
+# `_regenerate_source`: a second fixture that re-rendered the module raced this
+# one and reported a different tool count in CI than this file measured in the
+# same run.
+
+_CHEATSHEETS = (
+    "skills/financial-filings-research/references/tool-cheatsheet.md",
+    "plugins/financialfilings/skills/financial-filings-research/references/tool-cheatsheet.md",
+)
+
+#: (pattern, the `annotations` key it must equal)
+_ANNOTATION_CLAIMS = (
+    (r"(\d+) tools have `readOnlyHint=true`", "read_only"),
+    (r"(\d+) tools have `destructiveHint=true`", "destructive"),
+    (r"(\d+) tools are non-destructive probes", "probes"),
+    (r"(\d+) tools advertise `outputSchema`", "output_schema"),
+)
+
+
+def test_the_annotation_tally_is_not_vacuous(surfaces) -> None:
+    """Positive control. Every assertion below compares a published number against
+    this tally, so a tally of zeros would fail them loudly rather than pass, but a
+    tally that counted the wrong thing could still agree with a wrong document."""
+    tally = surfaces["annotations"]
+    assert tally["read_only"] > 0, f"no read-only tools measured: {tally}"
+    assert tally["destructive"] > 0, "the full surface includes mutating tools"
+    assert tally["read_only"] > tally["destructive"], (
+        f"most tools should be read-only; got {tally}"
+    )
+
+
+@pytest.mark.parametrize("relpath", _CHEATSHEETS)
+def test_the_cheatsheet_annotation_counts_match_the_module(surfaces, relpath) -> None:
+    text = _doc(relpath)
+    tally = surfaces["annotations"]
+    for pattern, key in _ANNOTATION_CLAIMS:
+        match = re.search(pattern, text)
+        assert match, (
+            f"{relpath} no longer carries a claim matching {pattern!r}. A deleted "
+            "claim must not read as a passing one: restore it, or drop this entry "
+            "deliberately."
+        )
+        published = int(match.group(1))
+        assert published == tally[key], (
+            f"{relpath} says {published} for {key}, the module has {tally[key]}"
+        )

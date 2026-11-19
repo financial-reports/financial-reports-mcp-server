@@ -17,6 +17,27 @@ Use these tools when the user mentions:
 
 Not for market data (prices, volumes, options) — this server doesn't provide it.
 
+## Plugin skills: the job-shaped workflows
+
+If you use the FinancialFilings plugin for Claude, these sequences are packaged as
+skills that load when the request matches, so Claude takes the right path without
+being told. Each one carries the pitfalls for its job, which is the part the
+table below cannot.
+
+| Job | Skill | What it gets right that a bare tool call does not |
+|---|---|---|
+| A named part of one filing: risk factors, segment note, guidance, auditor's report | `filing-section-finder` | Searches **inside** the report instead of downloading it, filters to reports so newer notices cannot hide it, and quotes the passage rather than paraphrasing |
+| One company: tear sheet, profile, or a results recap | `company-brief` | Takes figures from the structured path, pins the fiscal period, picks the newest annual **or** interim by release date, and carries currency and period end on every number |
+| Several named companies side by side | `peer-comparison` | Routes plain names through `companies_list` rather than the batch resolver, keeps currencies and period ends as columns, and says which companies it could not resolve |
+| A list of companies in an industry | `industry-screen` | Applies `listing_status=LISTED` (US ISIC 2619: 392 rows unfiltered, 81 with it), names the class code it screened on, and reports the true count rather than one page |
+
+`financial-filings-research` is the base the four build on: company resolution,
+tool order, and the provenance, as-reported and currency checks.
+
+Measured with `claude plugin eval` against a no-plugin baseline: each skill scores
+at or near 1.00 on its case where the same model without it scores near 0. See
+`plugins/financialfilings/evals/README.md`.
+
 ## Tool decision table
 
 **Check what you actually have before following a sequence below.** The hosted server exposes a curated **19** tools by default — 13 schema-derived, the 3 `get_fr_*` guide tools, and the 3 hand-written search tools (`filings_search`, `filings_markdown_search`, `filings_markdown_search_batch`) — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not in your `tools/list` and calling them will fail**.
@@ -26,7 +47,7 @@ Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default sur
 | Goal | Tool sequence |
 |---|---|
 | Find a company | `companies_list` (name/country filter) → `companies_retrieve` for full detail |
-| Resolve many identifiers at once | `companies_resolve_create` (batch; prefer over a loop of `companies_list`) |
+| Resolve many identifiers at once | `companies_resolve_create` for ISINs, LEIs, CIKs or tickers (batch; prefer over a loop). ⚠ **Not for plain names:** a name alone never returns `matched`, only `ambiguous` with candidates, so loop `companies_list?search=` for a list of names |
 | Resolve an ISIN | `isins_retrieve` (ISIN → company); `isins_list` for a company's dual listings |
 | Which filings or companies mention X | `filings_search` (the term plus its translations as separate queries, up to 5, plus country/type/date filters) → `filings_markdown_search` on the hits. `filings_list` matches metadata and titles, never filing text |
 | Which companies mention X (a list of companies, not filings) | `filings_search` with `group_by="company"`: one row per company with its matching-filing count, first and last release date and best-matching filing, counted over the top matches by relevance (the result says when there are more: narrow the dates, countries or types to count them all). Then `filings_search` with `companies=<id>`, or `companies=<id,id,…>` for a basket, to read those companies' hits |
