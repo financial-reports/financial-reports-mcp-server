@@ -3,7 +3,7 @@ type: fixed
 expect:
   id: number
 ---
-{"id": {{input.id}}, "company": 4412, "filing_type": "AR", "language": "en",
+{"id": {{input.id}}, "company": 4412, "filing_type": "10-K-ESEF", "language": "en",
  "filing_date": "2026-03-12", "title": "Annual Report 2025",
  "added_to_platform": "2026-03-12T07:14:02Z", "updated_date": "2026-03-12T07:14:02Z",
  "dissemination_datetime": "2026-03-12T07:00:00Z", "release_datetime": "2026-03-12T07:00:00Z",

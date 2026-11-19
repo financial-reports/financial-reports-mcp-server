@@ -15,8 +15,8 @@ expect:
       "currency_mismatch": false, "accounting_standard": "IFRS",
       "accounting_standard_basis": "stated", "consolidation_basis": "consolidated",
       "is_comparative": false,
-      "source_filing": {"id": 998101, "filing_type": "AR", "release_datetime": "2026-03-12T07:00:00Z"},
-      "sources": [{"filing_id": 998101, "filing_type": "AR", "release_datetime": "2026-03-12T07:00:00Z", "is_selected": true}],
+      "source_filing": {"id": 998101, "filing_type": "10-K-ESEF", "release_datetime": "2026-03-12T07:00:00Z"},
+      "sources": [{"filing_id": 998101, "filing_type": "10-K-ESEF", "release_datetime": "2026-03-12T07:00:00Z", "is_selected": true}],
       "line_items": [
         {"code": "revenue", "name": "Revenue", "statement_type": "IS", "depth": 0,
          "value": 51900000000, "raw_value": 51900, "scale": "MILLIONS", "currency": "SEK",
@@ -34,8 +34,8 @@ expect:
       "currency_mismatch": false, "accounting_standard": "IFRS",
       "accounting_standard_basis": "stated", "consolidation_basis": "consolidated",
       "is_comparative": false,
-      "source_filing": {"id": 981233, "filing_type": "AR", "release_datetime": "2025-03-14T07:00:00Z"},
-      "sources": [{"filing_id": 981233, "filing_type": "AR", "release_datetime": "2025-03-14T07:00:00Z", "is_selected": true}],
+      "source_filing": {"id": 981233, "filing_type": "10-K-ESEF", "release_datetime": "2025-03-14T07:00:00Z"},
+      "sources": [{"filing_id": 981233, "filing_type": "10-K-ESEF", "release_datetime": "2025-03-14T07:00:00Z", "is_selected": true}],
       "line_items": [
         {"code": "revenue", "name": "Revenue", "statement_type": "IS", "depth": 0,
          "value": 47330000000, "raw_value": 47330, "scale": "MILLIONS", "currency": "SEK",

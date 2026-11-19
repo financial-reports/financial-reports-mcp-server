@@ -25,8 +25,8 @@ the company-brief skill or `companies_financials_retrieve` instead.
    ⚠ **Filter the types BEFORE the page limit, including when the user named no
    report.** `filings_list` returns every type, so an unfiltered `page_size=5`
    can be five price-sensitive notices and hide the report entirely. **The
-   sections this skill finds live in REPORTS, not in notices** — there is no risk
-   factors section in a two-paragraph announcement — so filter to the annual and
+   sections this skill finds live in REPORTS, not in notices**: there is no risk
+   factors section in a two-paragraph announcement, so filter to the annual and
    interim codes by default. "Find X's risk factors" names no type and still
    wants a report.
 
@@ -102,6 +102,14 @@ retry the ones marked not searched rather than treating them as empty.
 
 Do not paraphrase a risk factor or an audit opinion. Quote it. These are
 documents whose wording is the substance.
+
+⛔ **Do not guess at what the unshown matches say.** When the search reports more
+matches than it returned, say how many there are and offer to read them, by
+offset or with a narrower phrase. Do not fill the gap with categories the section
+"probably" covers, such as market, regulatory, currency or cyber risk. Those are the risks most
+filings have, which is exactly why naming them sounds right and attributes to
+this company something nobody has read. Same rule as anywhere else in these
+skills: a fact the tools have not supplied is not yours to supply.
 
 ## Pitfalls
 

@@ -73,9 +73,15 @@ rather than `0`, and **the headers carry the unit**.
 
 ⚠ **The unit is not decoration.** `51,900` beside a currency of `SEK` reads as
 five hundred thousand kronor, not fifty-two billion, and a model copying this
-table as a template inherits whichever reading the header gives it. Put the
-scale in the header, and take it from each line item's own `scale` rather than
-assuming millions: a response can mix scales across companies.
+table as a template inherits whichever reading the header gives it.
+
+⛔ **And a single header only works once every value is in that unit.** `scale`
+is per line item and companies differ, so copying one company's `raw_value` in
+thousands next to another's in millions under one `(m)` header misstates one of
+them by a factor of a thousand. **Convert each value with its own `scale` before
+putting it in the column**, or give each row its own unit. The already-normalised
+`value` field is in base units, so do not apply `scale` to that one as well:
+pick one of the two and say which.
 
 ## Rules
 
@@ -96,6 +102,13 @@ means something else is worse than a gap.
 
 **Say how many you compared.** "3 of the 5 requested" with the two named is a
 usable answer. A table of three with no note is not.
+
+## Do not fill gaps with what is typical
+
+A missing line item is n/a, and a company that did not resolve is unresolved.
+**Do not estimate either from what companies like it usually report**, and do not
+describe a company you could not resolve. A plausible figure in a comparison
+table is read as a measured one.
 
 ## Scale and provenance
 

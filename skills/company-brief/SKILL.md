@@ -32,7 +32,7 @@ it.
 
    For a full-year brief, filter to the annual report type. **For a results
    recap, take the most recently released annual OR interim report, whichever is
-   newer** — not the newest interim. Just after an annual release those differ,
+   newer**, not the newest interim. Just after an annual release those differ,
    and taking the newest interim would recap Q3 when the full year has been
    published. Do not assume the first row is annual.
 
@@ -103,6 +103,14 @@ easiest way to be wrong by three orders of magnitude.
 **State the vintage up front.** A brief built on a filing from eighteen months
 ago is a different artifact from one built on last week's, and the user cannot
 tell from the numbers.
+
+## Do not supply what the tools did not
+
+Every figure, segment and claim in the brief comes from a call you made. **If a
+section of the brief has nothing behind it, leave it out or say it is not
+available** rather than writing what a company in this industry typically
+discloses. A brief that sounds complete and is partly inferred is worse than a
+short one, because nothing in it marks which half is which.
 
 ## Pitfalls
 

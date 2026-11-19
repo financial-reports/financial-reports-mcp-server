@@ -52,18 +52,32 @@ which ones you included.
 
 Always state, above the list:
 
-- The ISIC class used, by code **and** name. ⚠ **The screen response does NOT
-  carry the class name**: `companies_list` rows have `sub_industry_code` and no
-  `sub_industry_name`. Get the name from `get_fr_industry_classification_isic`.
-  **If you cannot get it, give the code alone and say the name is unavailable.**
-  Never supply a name from memory: a plausible-sounding wrong class name makes a
-  reproducible screen look like a different one, which is worse than no name.
+- The ISIC class used, by code **and** name. ⚠ **Neither the screen response nor
+  the ISIC guide gives you the name.** `companies_list` rows carry
+  `sub_industry_code` and no name, and `get_fr_industry_classification_isic`
+  states plainly that the hierarchy endpoints are not exposed as tools, so there
+  is no code-lookup call: it has the 22 SECTION names and the screening recipe,
+  not the 463 class names.
+  ⇒ **The name comes from `companies_retrieve` on a company in the class**, whose
+  `sub_industry` carries both code and name. You have already resolved a peer to
+  get the code, so retrieve that peer. **If you cannot, give the code alone and
+  say the name is unavailable**, and never supply one from memory, because a
+  plausible-sounding wrong class name makes a reproducible screen look like a
+  different one, which is worse than no name.
 - The country filter, or that there was none.
 - That the listing filter was applied.
 - The count, and whether it is the whole result or the first page.
 
 A screen without its criteria is not reproducible, and the user cannot tell a
 small industry from a narrow filter.
+
+## Do not characterise rows you have not seen
+
+When the count says 81 and you hold one page, describe the page and state the
+count. **Do not guess what the other rows are**, such as "many are probably unrelated",
+"most are small caps", "the rest are likely holding companies". A guess about
+unseen rows reads as a finding about the industry and is not one. If the user
+needs to know, page further or narrow the filter and look.
 
 ## Pagination
 
