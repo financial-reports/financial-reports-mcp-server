@@ -18,6 +18,7 @@ How to answer:
   `count` = that number, `next` and `previous` null.
 - `sub_industry` other than `2819`: `{"count": 0, "next": null, "previous": null, "results": []}`.
 - `countries`: keep only rows whose `country_code` is in the list; `count` = rows kept.
+- `listing_status` other than `LISTED`: `{"count": 0, "next": null, "previous": null, "results": []}`.
 - Otherwise the page size is `page_size` (default 3). Return page `page` (default 1)
   of the matching rows, with `count` = the number of matching rows,
   `next` = `"https://api.example/companies/?page=<page+1>"` when a later page has

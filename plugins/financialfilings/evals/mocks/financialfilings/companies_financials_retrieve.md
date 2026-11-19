@@ -1,9 +1,24 @@
 ---
-type: fixed
+type: agent
 expect:
   id: number
 ---
-{"company_id": {{input.id}}, "template": "industrial", "currency": {"code": "SEK", "name": "Swedish krona", "symbol": "kr"},
+You are the `companies_financials_retrieve` MCP tool for this run. Answer each call
+with one JSON object only.
+
+⚠ WHY AN AGENT MOCK. The first version was fixed and echoed whatever `id` it was
+given as `company_id` over Nordwind's figures, so a brief built from the wrong
+company id could pass with Nordwind's numbers.
+
+For `id: 4412` with `fiscal_period` absent or `FY`, answer with the block below,
+keeping only the line items the caller named in `line_items` when it passed any,
+and setting `filters` to the arguments actually given. For `id: 4412` with any
+other `fiscal_period`, answer with the same top-level shape, `period_count` 0 and
+`periods` [], because only full-year statements are held.
+
+For `id: 4412`:
+```json
+{"company_id": 4412, "template": "industrial", "currency": {"code": "SEK", "name": "Swedish krona", "symbol": "kr"},
  "sources_masked": false, "period_count": 2,
  "filters": {"statement_type": null, "fiscal_year": null, "fiscal_period": null,
              "line_items": null, "as_of": null,
@@ -49,3 +64,6 @@ expect:
       ]}]}
  ],
  "notice": null, "history_window": {"limited": false}}
+```
+
+For any other `id`, answer exactly: `{"detail": "No Company matches the given query."}`
