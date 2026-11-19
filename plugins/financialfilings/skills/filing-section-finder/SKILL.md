@@ -20,9 +20,19 @@ the company-brief skill or `companies_financials_retrieve` instead.
 1. **Resolve the company.** `companies_list?search=<name>` then take the `id`.
    If several match, ask rather than guess. Companies dual-list.
 2. **Find the filing.**
-   `filings_list?company=<id>&ordering=-release_datetime&page_size=5`, filtered
-   by `type` when the user named one (10-K, 20-F, annual report). Confirm
-   `release_datetime` and `period_ending_date` before reading.
+   `filings_list?company=<id>&ordering=-release_datetime&page_size=5`.
+
+   **`type` takes a FinancialFilings code, not a form name.** `20-F`, `10-Q` and
+   `S-1` are source form names and are rejected with a 400. Call
+   `get_fr_filing_type_taxonomy` to translate what the user said, then filter on
+   the code it gives you, and confirm `source_filing_type` on the row you pick,
+   because one code covers several national annual-report forms.
+
+   ⚠ **The list row does NOT carry `period_ending_date`.** The default summary has
+   `release_datetime`, `filing_type`, `processing_status` and `source_filing_type`,
+   and nothing else about the period. To state the period end, call
+   `filings_retrieve` on the filing you chose, which is one call and worth it
+   because the period end is the figure a reader uses to judge the vintage.
 3. **Search inside it.** `filings_markdown_search?filing_id=<id>&query=<phrase>`.
    This returns matching passages with a character `offset` and the exact total
    number of matches in the document.

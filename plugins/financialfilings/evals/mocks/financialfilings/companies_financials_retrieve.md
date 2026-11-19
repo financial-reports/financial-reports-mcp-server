@@ -3,19 +3,49 @@ type: fixed
 expect:
   id: number
 ---
-{"company": {{input.id}}, "currency": "SEK", "results": [
-  {"fiscal_year": 2025, "fiscal_period": "FY", "period_end_date": "2025-12-31",
-   "statement_type": "IS", "trust_tier": "XBRL_AUDITED",
-   "line_items": [
-     {"name": "Revenue", "raw_value": 51900, "scale": "MILLIONS", "value": 51900000000},
-     {"name": "Operating profit", "raw_value": 4110, "scale": "MILLIONS", "value": 4110000000},
-     {"name": "Net income", "raw_value": 3002, "scale": "MILLIONS", "value": 3002000000}
-   ]},
-  {"fiscal_year": 2024, "fiscal_period": "FY", "period_end_date": "2024-12-31",
-   "statement_type": "IS", "trust_tier": "XBRL_AUDITED",
-   "line_items": [
-     {"name": "Revenue", "raw_value": 47330, "scale": "MILLIONS", "value": 47330000000},
-     {"name": "Operating profit", "raw_value": 3480, "scale": "MILLIONS", "value": 3480000000},
-     {"name": "Net income", "raw_value": 2455, "scale": "MILLIONS", "value": 2455000000}
-   ]}
-]}
+{"company_id": {{input.id}}, "template": "industrial", "currency": "SEK",
+ "sources_masked": false, "period_count": 2,
+ "filters": {"statement_type": null, "fiscal_year": null, "fiscal_period": null,
+             "line_items": null, "as_of": null, "min_trust_tier": null,
+             "as_known_at": null, "include": null},
+ "periods": [
+  {"fiscal_year": 2025, "fiscal_period": "FY", "period_start_date": "2025-01-01",
+   "period_end_date": "2025-12-31", "statements": [
+     {"statement_type": "IS", "statement_type_display": "Income Statement", "currency": "SEK",
+      "currency_mismatch": false, "accounting_standard": "IFRS",
+      "accounting_standard_basis": "stated", "consolidation_basis": "consolidated",
+      "is_comparative": false,
+      "source_filing": {"id": 998101, "filing_type": "AR", "release_datetime": "2026-03-12T07:00:00Z"},
+      "sources": [{"filing_id": 998101, "filing_type": "AR", "release_datetime": "2026-03-12T07:00:00Z", "is_selected": true}],
+      "line_items": [
+        {"code": "revenue", "name": "Revenue", "statement_type": "IS", "depth": 0,
+         "value": 51900000000, "raw_value": 51900, "scale": "MILLIONS", "currency": "SEK",
+         "trust_tier": "XBRL_AUDITED", "confirmed": true},
+        {"code": "operating_profit", "name": "Operating profit", "statement_type": "IS", "depth": 0,
+         "value": 4110000000, "raw_value": 4110, "scale": "MILLIONS", "currency": "SEK",
+         "trust_tier": "XBRL_AUDITED", "confirmed": true},
+        {"code": "net_income", "name": "Net income", "statement_type": "IS", "depth": 0,
+         "value": 3002000000, "raw_value": 3002, "scale": "MILLIONS", "currency": "SEK",
+         "trust_tier": "XBRL_AUDITED", "confirmed": true}
+      ]}]},
+  {"fiscal_year": 2024, "fiscal_period": "FY", "period_start_date": "2024-01-01",
+   "period_end_date": "2024-12-31", "statements": [
+     {"statement_type": "IS", "statement_type_display": "Income Statement", "currency": "SEK",
+      "currency_mismatch": false, "accounting_standard": "IFRS",
+      "accounting_standard_basis": "stated", "consolidation_basis": "consolidated",
+      "is_comparative": false,
+      "source_filing": {"id": 981233, "filing_type": "AR", "release_datetime": "2025-03-14T07:00:00Z"},
+      "sources": [{"filing_id": 981233, "filing_type": "AR", "release_datetime": "2025-03-14T07:00:00Z", "is_selected": true}],
+      "line_items": [
+        {"code": "revenue", "name": "Revenue", "statement_type": "IS", "depth": 0,
+         "value": 47330000000, "raw_value": 47330, "scale": "MILLIONS", "currency": "SEK",
+         "trust_tier": "XBRL_AUDITED", "confirmed": true},
+        {"code": "operating_profit", "name": "Operating profit", "statement_type": "IS", "depth": 0,
+         "value": 3480000000, "raw_value": 3480, "scale": "MILLIONS", "currency": "SEK",
+         "trust_tier": "XBRL_AUDITED", "confirmed": true},
+        {"code": "net_income", "name": "Net income", "statement_type": "IS", "depth": 0,
+         "value": 2455000000, "raw_value": 2455, "scale": "MILLIONS", "currency": "SEK",
+         "trust_tier": "XBRL_AUDITED", "confirmed": true}
+      ]}]}
+ ],
+ "notice": null, "history_window": {"limited": false}}

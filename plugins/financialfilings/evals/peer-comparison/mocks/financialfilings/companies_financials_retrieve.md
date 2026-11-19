@@ -4,34 +4,27 @@ expect:
   id: number
 ---
 You are the FinancialFilings financials endpoint for this run. Answer each call with
-a JSON object only, no prose.
+a JSON object only, no prose, in the SERVED response shape: top-level `company_id`,
+`currency`, `sources_masked`, `period_count` and `periods[]`, each period carrying
+`statements[]`, each statement carrying `currency` and `line_items[]` with `code`,
+`name`, `value`, `raw_value`, `scale` and `currency`.
 
-⚠ WHY THIS IS AN AGENT MOCK AND NOT A FIXED ONE. The suite's fixed mock returns the
-same SEK payload whatever `id` it is given. In a peer comparison that is actively
-misleading: a German, EUR-reporting company came back with the Swedish company's
-figures to the digit, and the model under test correctly refused to tabulate them,
-re-ran the call to check, and reported a suspected source error. That was the right
-behaviour and the case's rubric marked it wrong, so the fixture was the defect. A
-comparison case needs the companies to differ.
+⚠ WHY THIS IS AN AGENT MOCK. A fixed mock returns one body whatever `id` it is
+given, which a comparison case cannot survive: the first version handed a German,
+EUR-reporting company the Swedish company's figures to the digit, the model under
+test correctly refused to tabulate them, and the rubric marked it wrong. The
+companies have to differ.
 
-Respond per `id`:
+For `id: 4412` (Nordwind Energi AB, Sweden, SEK, December year end) return
+`period_end_date` 2025-12-31 with Revenue raw_value 51900 scale MILLIONS and
+Operating profit raw_value 4110 scale MILLIONS.
 
-- `id: 4412` (Nordwind Energi AB, Sweden, reports in SEK):
-  {"company": 4412, "currency": "SEK", "results": [
-    {"fiscal_year": 2025, "fiscal_period": "FY", "period_end_date": "2025-12-31",
-     "statement_type": "IS", "trust_tier": "XBRL_AUDITED", "line_items": [
-       {"name": "Revenue", "raw_value": 51900, "scale": "MILLIONS", "value": 51900000000},
-       {"name": "Operating profit", "raw_value": 4110, "scale": "MILLIONS", "value": 4110000000}]}]}
+For `id: 5571` (Helios Turbinen GmbH, Germany, EUR, AUGUST year end) return
+`period_end_date` 2025-08-31 with Revenue raw_value 2980 scale MILLIONS and NO
+operating-profit line item at all. Both of those are deliberate: the differing
+period end is a real comparison hazard, and the absent line item checks that it
+is shown as n/a rather than as zero and that no margin is computed for it.
 
-- `id: 5571` (Helios Turbinen GmbH, Germany, reports in EUR, and its financial year
-  ends 31 August, which is the point of the case):
-  {"company": 5571, "currency": "EUR", "results": [
-    {"fiscal_year": 2025, "fiscal_period": "FY", "period_end_date": "2025-08-31",
-     "statement_type": "IS", "trust_tier": "XBRL_AUDITED", "line_items": [
-       {"name": "Revenue", "raw_value": 2980, "scale": "MILLIONS", "value": 2980000000}]}]}
-
-Note Helios reports NO operating profit line. That is deliberate: the case checks
-that a missing line item is shown as n/a rather than as zero, and that no margin is
-computed for it from a different profit measure.
-
-For any other `id`, return {"company": <id>, "currency": null, "results": []}.
+Set `sources_masked` false and give each statement a `sources` array with one
+`filing_id`. For any other `id`, return `period_count` 0 and an empty `periods`
+array.

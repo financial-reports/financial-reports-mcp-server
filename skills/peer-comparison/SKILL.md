@@ -21,10 +21,18 @@ convention, and a table that hides those differences is confidently wrong.
 1. **Resolve every company in one call.**
    `companies_resolve_create` takes a batch of names, tickers or ISINs and beats
    a loop over `companies_list`. Use it whenever there is more than one.
-2. **Check what came back.** Resolution is the step that most often misses, and
-   every later step inherits the miss. If a name did not resolve, or resolved to
-   something the user did not mean, say so before building the table. Do not
-   silently drop a company from a comparison; its absence changes the answer.
+2. **Check the status on every row, because there are four and they are not
+   interchangeable.** `matched` and `matched_via_alias` are usable.
+   **`ambiguous` means the name hit more than one listed entity and the response
+   carries `candidates` instead of a company** — a bare name with no ticker or
+   ISIN reaches this often, so it is the normal case rather than the edge one.
+   **`not_covered` means we hold nothing for that name.**
+
+   For `ambiguous`, show the candidates and ask which one is meant. Do not pick
+   the first, and do not quietly leave the company out: resolution is the step
+   that most often misses, every later step inherits the miss, and a silently
+   two-company answer to a three-company question changes the result. For
+   `not_covered`, say so plainly.
 3. **Pull the same line items for every company.**
    `companies_financials_retrieve` per company, with identical `line_items` and
    `fiscal_period`. Same arguments, every company, or the table is not a

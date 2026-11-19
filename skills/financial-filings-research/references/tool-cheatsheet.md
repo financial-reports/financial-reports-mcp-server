@@ -117,7 +117,7 @@ Pitfall: use this INSTEAD of paging a long filing, but only once you HAVE the fi
 ### `filings_markdown_search_batch`
 One query across SEVERAL filings you already hold, in a single call.
 
-Key params: `filing_ids` (max 20 per call), `query`, `max_hits_per_filing`.
+Key params: `filing_ids` (max 50 per call), `query`, `max_hits_per_filing` (1-10).
 
 Returns: per-filing hits with character offsets, and outcomes reported SEPARATELY, matched, no match, searched only in part, not searched.
 

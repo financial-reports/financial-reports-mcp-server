@@ -1,6 +1,6 @@
 ---
 name: company-brief
-description: Use when the user wants one company summarised from its own filings: a tear sheet, company brief, profile or overview, "summarise the latest annual report", "how did they do last year", "what are their numbers", or a results recap of the most recent interim or full-year report against the prior period and the prior year. Builds the brief from the newest filing plus standardised financials, with currency, period end and source filing stated on every figure.
+description: Use when the user wants one company summarised from its own filings: a tear sheet, company brief, profile or overview, "summarise the latest annual report", "how did they do last year", "what are their numbers", or a results recap of the most recent interim or full-year report against the prior period and the prior year. Builds the brief from the newest filing plus standardised financials, with currency and period end on every figure, and the source filing named whenever provenance is exposed.
 ---
 
 # Company brief
@@ -53,7 +53,7 @@ line item, fall back to the document. Unavailable there is not absent.
 | Block | Content |
 |---|---|
 | Identity | Legal name, country, ISIN, listing status, sub-industry |
-| Source | The filing used: type, `release_datetime`, `period_ending_date` |
+| Source | The filing used: type, `release_datetime`, `period_ending_date`. ⚠ For figures from the structured path, read `sources[].filing_id` on the statement. When the response carries `sources_masked: true` the provenance is withheld, so say the source is not exposed rather than naming a filing you inferred |
 | Headline numbers | Revenue, operating profit, net income, total assets, equity, net debt where available |
 | Period comparison | Current period, prior period, same period last year |
 | Narrative | Two or three sentences of segment or strategy commentary, quoted or closely paraphrased, with the passage offset |
