@@ -1,0 +1,458 @@
+{
+ "tools": [
+  {
+   "name": "companies_financials_retrieve",
+   "description": "**Cost:** 40 credits per request. **Experimental:** the response may change without an API version bump. **Per-share values are not split-adjusted unless you ask.** EPS, book value per share and share counts, in `periods` and in `standalone_quarters`, are on the share basis of the filing they come from, so a series that spans a stock split is not comparable as served. Pass `include=split_adjusted` for each figure on today's share basis. On `/companies/{id}/dividends/` the `split_adjusted` block is always included, next to the as-declared `amount`; here it is opt-in. Returns a company's standardized income statement, balance sheet and cash flow statement: `periods`, each holding its `statements`, each holding `line_items`. Use `depth` and `parent_code` on each line item to rebuild the statement hierarchy. **One statement per period.** When several filings report the same fiscal year, period and statement type, one is selected. A filing with the company's own financials beats one without (such as an employee benefit plan's report), the company's reporting currency beats another currency, and a complete statement beats a fragment. Only then does the latest filing win. A selected statement in a currency other than the company's carries `currency_mismatch: true`. **Currency is never converted.** `currency` is the currency the company presented in. A company that switches currency does not restate earlier years, so compare `currency.code` across periods before aggregating. A l... **When to use this tool:** Use to get standardized financial line items (income statement, balance sheet, cash flow) for a company. Data is deduplicated across filings \u2014 the most recently published filing wins. SOURCING: attribute every figure to its fiscal period + period_end_date and reporting currency. GROUNDEDNESS (critical): report ONLY values present in the `periods` this call returns. If `period_count` is 0 or `periods` is empty, FinancialFilings has no *structured* financials for this company yet (common for US issuers \u2014 structured data is currently ESEF/EU-derived and being expanded). Do NOT stop and do NOT estimate \u2014 FALL BACK to the filing: call `filings_list` for this `id` filtered with `type` (or `types`) to an annual report (e.g. 10-K, 20-F, or the local annual type) with `ordering='-release_datetime'` and `page_size=10`, take the NEWEST row (do not gate on `processing_status` \u2014 it can be null, and null means unknown), retrieve it with `filings_markdown_retrieve`, and read the figures directly from the filing body \u2014 citing the filing type, date, and fiscal period. Never estimate, recall a figure from training knowledge, or attach a citation to a number you did not read from a tool result this session. PROVENANCE: treat a figure as as-reported ONLY when `raw_value` AND `scale` are BOTH non-null. If either is missing there is no as-reported pair, so you cannot assert the figure was read off the page \u2014 do not present it as sourced from the filing. An arithmetic tie between totals does NOT establish provenance: a computed figure is chosen to make the totals tie. To verify a figure, take `source_filing.id` (or the `sources` entry with `is_selected: true`, field `filing_id`) \u2014 it is already in this response, so no `filings_list` call is needed \u2014 and read it with `filings_markdown_retrieve` (no `processing_status` check first: the field is not on this response; a not-found error means no Markdown is available for that filing \u2014 do not promise it will appear). LINE ITEM CODES: `line_items` takes exact lower-case snake_case codes, comma-separated (not `;`); an unknown code is a 400 naming it. The codes most often guessed wrong: net_income -> net_income_loss, operating_income -> operating_income_loss, total_debt -> total_debt_bs, free_cash_flow -> levered_free_cash_flow_cf, capital_expenditure -> capital_expenditure_cf, operating_cash_flow -> cash_from_operations, eps -> basic_eps / diluted_eps, cash -> cash_and_equivalents. Not sure of a code? Omit `line_items` to get every line item. **When NOT to use this tool:** Don't use for filing documents or markdown content \u2014 use `filings_list` + `filings_markdown_retrieve`. Don't use without resolving the company ID first via `companies_list`. **Examples:** - Munich Re 2024 income statement -> id=<id>, fiscal_year=2024, statement_type='IS' (Use depth + parent_code to render Capital IQ-style hierarchy) - Compare EBITDA across 3 companies -> id=<id>, statement_type='IS', line_items='ebitda' (Call in parallel for each company. Always show currency.)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer"
+     },
+     "as_known_at": {
+      "type": "string"
+     },
+     "as_of": {
+      "type": "string"
+     },
+     "fiscal_period": {
+      "type": "string",
+      "enum": [
+       "9M",
+       "FY",
+       "H1",
+       "H2",
+       "Q1",
+       "Q2",
+       "Q3",
+       "Q4"
+      ]
+     },
+     "fiscal_year": {
+      "type": "integer"
+     },
+     "fiscal_year_from": {
+      "type": "integer"
+     },
+     "fiscal_year_to": {
+      "type": "integer"
+     },
+     "include": {
+      "type": "string"
+     },
+     "include_predecessors": {
+      "type": "boolean"
+     },
+     "line_items": {
+      "type": "string"
+     },
+     "min_trust_tier": {
+      "type": "string",
+      "enum": [
+       "accepted",
+       "review",
+       "verified",
+       "xbrl"
+      ]
+     },
+     "statement_type": {
+      "type": "string",
+      "enum": [
+       "BS",
+       "CFS",
+       "IS"
+      ]
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  {
+   "name": "companies_list",
+   "description": "**Cost:** 1 credit per request. Retrieve a paginated list of companies. **When to use this tool:** Use as the **first step** to resolve a company name, ticker, or partial match to a FinancialFilings internal ID. Required before calling any per-company tool (financials, filings). CONFIRM the match \u2014 state the resolved company's full name and country before reporting data (\"Apple\" can surface \"Apple Hospitality REIT\"). PEER / SCREENING LISTS: include ONLY companies whose requested data you actually retrieved this session; if a candidate's data comes back empty, mark it \"no data available\" or drop it \u2014 never invent a figure to complete the list. A short honest list beats a long fabricated one. **When NOT to use this tool:** Don't use if you already have a company ID from a previous call. Don't use for ISIN lookups \u2014 use `isins_retrieve` instead. **Examples:** - Find Apple -> search=\"Apple\" (Inspect results \u2014 'Apple Inc.' vs 'Apple Hospitality REIT') - German automotive companies -> countries=\"DE\", sector=\"C\" (ISIC Section C = Manufacturing)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "cik": {
+      "type": "string"
+     },
+     "countries": {
+      "type": "string"
+     },
+     "date_public_after": {
+      "type": "string"
+     },
+     "date_public_before": {
+      "type": "string"
+     },
+     "date_public_cursor": {
+      "type": "string"
+     },
+     "industry": {
+      "type": "string"
+     },
+     "industry_group": {
+      "type": "string"
+     },
+     "isin": {
+      "type": "string"
+     },
+     "lei": {
+      "type": "string"
+     },
+     "listing_status": {
+      "type": "string",
+      "enum": [
+       "DELISTED",
+       "LISTED",
+       "SUSPENDED",
+       "UNKNOWN"
+      ]
+     },
+     "oics_class": {
+      "type": "string"
+     },
+     "oics_entity_type": {
+      "type": "string"
+     },
+     "oics_group": {
+      "type": "string"
+     },
+     "oics_industry": {
+      "type": "string"
+     },
+     "oics_sector": {
+      "type": "string"
+     },
+     "on_watchlist": {
+      "type": "boolean"
+     },
+     "ordering": {
+      "type": "string"
+     },
+     "page": {
+      "type": "integer"
+     },
+     "page_size": {
+      "type": "integer"
+     },
+     "search": {
+      "type": "string"
+     },
+     "sector": {
+      "type": "string"
+     },
+     "sub_industry": {
+      "type": "string"
+     },
+     "ticker": {
+      "type": "string"
+     },
+     "view": {
+      "type": "string",
+      "enum": [
+       "full",
+       "summary"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "name": "companies_resolve_create",
+   "description": "**Cost:** 1 credit per request. Match a list of your identifiers to our companies in one request. Each row can carry any mix of `isin`, `lei`, `cik`, `ticker` and `name`, plus an optional `ref` that is echoed back so you can join results to your rows. Results come back in input order. **Resolution order:** ISIN, LEI, CIK, ticker, venue ticker, name. The first hit wins, but every identifier you send is checked: if two point to different companies, the row is `ambiguous` with `identifier_conflict` and both in `candidates`. **A name alone never returns `matched`.** A name-only row is at best `ambiguous`, with candidates to choose from. **Tickers are checked against your `name`.** Tickers are reused across exchanges, so your name can pick the company that holds the ticker on another venue. A row matched only through a venue ticker is `ambiguous` + `name_disagrees` when the name disagrees, and `matched` + `security_listing_unverified` when you sent no name. If other companies hold the same ticker elsewhere, the row carries `multiple_tickers` and lists them in `candidates`. Add a country code (`WDI.DE`) to pin the exchange. **Billing:** one request is one call, whatever the row count. Up to 500 rows per request. Up to 50 rows that need a name lookup get one, within 25 seconds; rows resolved by an identifier don't count. Past either limit, a name-only row returns `not_covered` with `name_tier_skipped`, so split large name-heavy batches. **When to use this tool:** Use when the user hands you a **list** of identifiers \u2014 a spreadsheet column, a portfolio, a peer set \u2014 and you need FinancialFilings IDs for all of them. One request covers up to 500 rows and costs one call against quota regardless of row count, so it is far cheaper than a `companies_list` search per name. Pass an opaque `ref` per row to join the results back to the user's own rows. Act only on rows whose `status` is `matched`; for `ambiguous`, ask the user to choose from `candidates` rather than picking one yourself. **When NOT to use this tool:** Don't use for a single company \u2014 `companies_list` (name/ticker) or `isins_retrieve` (ISIN) is one hop and returns richer match context. Don't send more than 50 name-only rows in one request: rows past that cap return `not_covered` with `name_tier_skipped`, so split name-heavy batches. **Examples:** - Here are 40 tickers from my portfolio \u2014 pull their latest filings -> rows=[{\"ref\": \"row-1\", \"ticker\": \"GOOG\", \"name\": \"Alphabet Inc.\"}, ...] (Resolve every ID in one call, then fan out to filings_list per matched row) - Do you cover these ISINs? -> rows=[{\"isin\": \"US5949181045\"}, {\"isin\": \"US0378331005\"}] (not_covered means no coverage \u2014 say so; never substitute a near match)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "rows": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "rows"
+    ]
+   }
+  },
+  {
+   "name": "companies_retrieve",
+   "description": "**Cost:** 1 credit per request. Retrieve detailed information for a single company by its internal ID. **When to use this tool:** Use to get full company metadata (LEI, description, address and city, social links, stock exchanges, indices) after resolving the ID via `companies_list`. **When NOT to use this tool:** Don't use for financial data \u2014 use `companies_financials_retrieve`. Don't use just to confirm a company exists \u2014 `companies_list` already returns enough for identification. **Examples:** - What's the LEI for ASML? -> id=<company_id from companies_list> (Returns lei field)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  {
+   "name": "filings_list",
+   "description": "**Cost:** 1 credit per request. List filings. All the filters below can be combined. **When to use this tool:** List filings by metadata: company, filing type, category, country, dates. Returns metadata only; it does not read filing text, so to find filings by what they say, use `filings_search`. VIEW: both views carry `processing_status`. `view='full'` adds more metadata fields and is larger, so pass it only when you need those fields. Never gate filing selection on `processing_status`: a null value means unknown, not \"no markdown\". LINKS for a human: `viewer_url`, except when `processing_status` is PENDING/QUEUED/PROCESSING/FAILED/SKIPPED and `file_extension` is not PDF/HTML/HTM/XHTML \u2014 that page is empty, so give the raw file link (`document_url` on default rows, `document` on view=full rows); if it is null, say no file link is available yet. A null status is not a reason to switch. EMPTY IS NOT PROOF OF ABSENCE: an empty `results` carrying a `history_window` object means the plan's cutoff hides anything older, so report the cutoff as a limit \u2014 never a bare \"there are no filings\", and never that matches exist either; the response proves neither. Same for any other disclosure object beside an empty `results`. **When NOT to use this tool:** Don't use to get filing content \u2014 use `filings_markdown_retrieve` after getting the filing ID. Don't use for financial KPIs \u2014 use `companies_financials_retrieve`. Don't use `search` to find filings that DISCUSS a topic: it matches titles and company names only. Use `filings_search`, which searches the filings' text. **Examples:** - Apple's most recent 10-K -> company=<id>, type='10-K', ordering='-release_datetime', page_size=1 (`type` takes ONE filing-type code and is jurisdiction-specific; `types` takes a comma-separated list. For cross-jurisdiction queries filter by `category` / `categories` (numeric FilingCategory ids) instead.) - All insider transactions at Tesla in the last 30 days -> company=<id>, type='DIRS', release_datetime_from='<today-minus-30d>T00:00:00Z' (release_datetime_from is a date-TIME (YYYY-MM-DDTHH:MM:SSZ). Compute the cutoff from the current date given in this tool's description \u2014 never hardcode one.)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "added_to_platform_from": {
+      "type": "string"
+     },
+     "added_to_platform_to": {
+      "type": "string"
+     },
+     "categories": {
+      "type": "string"
+     },
+     "category": {
+      "type": "integer"
+     },
+     "company": {
+      "type": "integer"
+     },
+     "company_isin": {
+      "type": "string"
+     },
+     "countries": {
+      "type": "string"
+     },
+     "extensions": {
+      "type": "string"
+     },
+     "file_size_max": {
+      "type": "integer"
+     },
+     "file_size_min": {
+      "type": "integer"
+     },
+     "fiscal_period": {
+      "type": "string",
+      "enum": [
+       "9M",
+       "FY",
+       "H1",
+       "H2",
+       "Q1",
+       "Q2",
+       "Q3",
+       "Q4"
+      ]
+     },
+     "fiscal_year": {
+      "type": "integer"
+     },
+     "include_companions": {
+      "type": "boolean"
+     },
+     "include_predecessors": {
+      "type": "boolean"
+     },
+     "ingestion_mode": {
+      "type": "string",
+      "enum": [
+       "BACKFILLED",
+       "REALTIME"
+      ]
+     },
+     "language": {
+      "type": "string"
+     },
+     "languages": {
+      "type": "string"
+     },
+     "lei": {
+      "type": "string"
+     },
+     "listing_status": {
+      "type": "string",
+      "enum": [
+       "DELISTED",
+       "LISTED",
+       "SUSPENDED",
+       "UNKNOWN"
+      ]
+     },
+     "max_confidence": {
+      "type": "number"
+     },
+     "min_confidence": {
+      "type": "number"
+     },
+     "on_watchlist": {
+      "type": "boolean"
+     },
+     "ordering": {
+      "type": "string"
+     },
+     "page": {
+      "type": "integer"
+     },
+     "page_size": {
+      "type": "integer"
+     },
+     "period_ending_date": {
+      "type": "string"
+     },
+     "period_ending_date_from": {
+      "type": "string"
+     },
+     "period_ending_date_to": {
+      "type": "string"
+     },
+     "primary_annual_report": {
+      "type": "boolean"
+     },
+     "processing_status": {
+      "type": "string",
+      "enum": [
+       "COMPLETED",
+       "FAILED",
+       "PENDING",
+       "PROCESSING",
+       "QUEUED",
+       "SKIPPED"
+      ]
+     },
+     "processing_statuses": {
+      "type": "string"
+     },
+     "reasoning_contains": {
+      "type": "string"
+     },
+     "release_datetime_from": {
+      "type": "string"
+     },
+     "release_datetime_to": {
+      "type": "string"
+     },
+     "search": {
+      "type": "string"
+     },
+     "source": {
+      "type": "number"
+     },
+     "source_filing_type": {
+      "type": "string"
+     },
+     "sources": {
+      "type": "string"
+     },
+     "type": {
+      "type": "string"
+     },
+     "types": {
+      "type": "string"
+     },
+     "updated_date_from": {
+      "type": "string"
+     },
+     "updated_date_to": {
+      "type": "string"
+     },
+     "view": {
+      "type": "string",
+      "enum": [
+       "full",
+       "summary"
+      ]
+     },
+     "cursor": {
+      "type": "string"
+     }
+    }
+   }
+  },
+  {
+   "name": "filings_markdown_retrieve",
+   "description": "**Cost:** 6 credits per request (12 for premium filing types). Retrieve the raw processed content of a single filing in Markdown format. **Large filings.** An annual report can run to several hundred thousand tokens. Every response carries `X-Total-Chars`, the full document's length in characters. Pass `offset` and/or `limit` (characters) to read one window instead of the whole document; while characters remain after the window, the response also carries `X-Next-Offset`. To find the part you need first, use `GET /filings/{id}/markdown/search/?q=`. Each call, whole or windowed, is billed as one Markdown request. Through the MCP server, which pages large filings in chunks, a filing's Markdown is billed once per day. **When to use this tool:** Use to get the full text of a filing as Markdown. Supports pagination via offset/limit for long documents. Start with offset=0 and repeat with increasing offsets until the truncation marker is gone, you have found what you were asked for, or you have made 10 calls \u2014 whichever comes first. Stop at the cap and say the document was truncated rather than paginating a long filing indefinitely against the request budget. **When NOT to use this tool:** To find filings by what they say, use `filings_search`; by metadata, use `filings_list`. Not every filing has Markdown content. If a `filings_list` row shows a `processing_status` other than `\"COMPLETED\"`, that filing has no Markdown available (it may still be processing, or may never get any) \u2014 if the user asked for THAT filing (e.g. the latest), say so rather than silently answering from an older one. If the field is null or absent, that means unknown \u2014 call this tool anyway; a not-found error means no Markdown is available for that filing (do not promise it will appear), while any other error is about access or availability. **Examples:** - Show me Apple's 10-K risk factors -> filing_id=<id>, offset=0, limit=50000 (Summarize specific sections \u2014 don't dump the whole document) Returns the full processed Markdown content of a filing in pageable chunks. For long filings, call this tool repeatedly with increasing `offset` values until the response no longer contains the truncation marker. Use a limit of 50000 chars (default) for most LLM context windows; the per-call cap is 150000 chars for the whole result (Claude.ai's documented tool-result ceiling), so a full-size slice is trimmed by the length of the header.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "filing_id": {
+      "type": "integer"
+     },
+     "offset": {
+      "type": "integer"
+     },
+     "limit": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "filing_id"
+    ]
+   }
+  },
+  {
+   "name": "filings_markdown_search",
+   "description": "Search ONE filing's processed Markdown for `query` and return ONLY the matching passages with their character offsets (e.g. query='going concern'). Use it INSTEAD of paging a long filing. Best for what only the document has: disclosures, risk and policy language, commitments, auditor and going-concern wording, and the sentence around a number. Before you have a filing, find the ones that say something with filings_search. FOR A COMPANY-AND-PERIOD LINE ITEM \u2014 revenue, assets, cash flow, EPS and the rest \u2014 CALL companies_financials_retrieve FIRST: it returns those as structured values with their period and currency, which grepping a document cannot give you. STAY HERE INSTEAD when the question is what a PARTICULAR filing reported. That tool picks ONE statement per fiscal year, period and statement type across every filing that reports them, so a later restatement can come back in place of the filing you named \u2014 a wrong citation rather than a missing one. AND COME BACK HERE whenever that call does not answer: no coverage, an empty line item, or a refusal for your plan. A value that is absent or unavailable there is not an absent fact, and the figure is usually in the document. Case-insensitive substring match, and a phrase of two or more words ALSO matches where the conversion split it across lines, table cells or pages, or ran its words together -- so quote the phrase as it reads in the filing, not as the page laid it out. Exact hits come first in document order, then those split ones; `total_hits` counts both. Each hit shows ~440 chars of context and an offset you can pass to filings_markdown_retrieve to read more around it. `query` is at most 200 characters -- search a distinctive phrase, not a whole passage.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "filing_id": {
+      "type": "integer"
+     },
+     "query": {
+      "type": "string"
+     },
+     "max_hits": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "filing_id",
+     "query"
+    ]
+   }
+  },
+  {
+   "name": "filings_markdown_search_batch",
+   "description": "Search ONE query across SEVERAL filings in a single call \u2014 use this instead of calling filings_markdown_search once per filing when you are checking the same term across a set you already hold (e.g. the same disclosure across a company's filings). To find WHICH filings or companies mention it, call filings_search first: it searches the indexed text of all filings in one call (heed its warning if it stopped early), and this tool only the ones you list. SAME RULE AS THE SINGLE-FILING TOOL: for a company-and-period line item, call companies_financials_retrieve first \u2014 per company, not as a sweep here, which costs a read per filing. Stay here when the question is what a PARTICULAR filing reported: that tool may answer with a later restatement of the period instead. And come back here whenever it does not answer \u2014 no coverage, an empty line item, or a refusal for your plan; unavailable there is not absent. Case-insensitive, and SAME MATCHER AS filings_markdown_search: a phrase of two or more words also matches where the conversion split it across lines, table cells or pages, or ran its words together, and a number also matches its thousands-separator spelling. So a miss here means what a miss there means \u2014 you do not need to re-run it through the single-filing tool to trust it. Each filing comes back with ONE outcome, and they are NOT interchangeable: matched; NO MATCH, which means the whole document was searched and the term is not in it, the only outcome that is evidence of absence; UNAVAILABLE, meaning we could not search that filing at all; NOT SEARCHED, meaning it was dropped from this request \u2014 retry those; and, only for a numeric query, SEARCHED FOR ONLY SOME SPELLINGS, where one spelling of the number was searched and another was not, so the filing is unresolved rather than clear. Treat the last three as UNKNOWN, never as 'no match'. Hits carry character offsets you can pass to filings_markdown_retrieve, and the match count is the exact total in the document even when only the first few are shown. Max 50 filings per call. This searches only the filings you name \u2014 it does NOT search the whole corpus, so a 'no match' result says nothing about filings outside your list.",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "filing_ids": {
+      "type": "array",
+      "items": {
+       "type": "integer"
+      }
+     },
+     "query": {
+      "type": "string"
+     },
+     "max_hits_per_filing": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "filing_ids",
+     "query"
+    ]
+   }
+  },
+  {
+   "name": "filings_retrieve",
+   "description": "**Cost:** 1 credit per request. Retrieve detailed information for a single filing by its ID. **When to use this tool:** Use to get full metadata for a single filing \u2014 source URL, PDF link, viewer URL, classification confidence, fiscal period. Call after `filings_list` when you need details beyond the list view. SHAREABLE LINKS: when a human needs to open the filing, hand them a PUBLIC link \u2014 `viewer_url` (the interactive web page) or `document` (the raw PDF/ZIP). NEVER give a user an `/api/...` URL \u2014 including the paginated `next`/`previous` links \u2014 those require credentials and 403 for an unauthenticated person. Filing CONTENT for you (the model) comes from `filings_markdown_retrieve(filing_id)`, not from a URL. **When NOT to use this tool:** Don't use for the actual filing content \u2014 use `filings_markdown_retrieve`. To find filings by what they say, use `filings_search`; by metadata, use `filings_list`. **Examples:** - Show me the source PDF for this filing -> id=<filing_id> (Returns document (raw PDF/ZIP URL) and proxy_url (rendered)) - Send me a link to read this filing -> id=<filing_id> (Share viewer_url (public web page) \u2014 never the /api/ markdown URL)",
+   "inputSchema": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer"
+     }
+    },
+    "required": [
+     "id"
+    ]
+   }
+  },
+  {
+   "name": "get_fr_industry_classification_isic",
+   "description": "The ISIC industry hierarchy (sections/divisions/groups/classes) and how to screen peers. Read for any sector, industry, or peer-comparison query, then screen with companies_list(sector=...).",
+   "inputSchema": {
+    "type": "object",
+    "properties": {}
+   }
+  }
+ ]
+}

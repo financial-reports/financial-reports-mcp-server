@@ -1,5 +1,6 @@
 {
   "name": "financialfilings",
+  "version": "1.1.0",
   "displayName": "FinancialFilings",
   "description": "FinancialFilings MCP server and research skill: find listed companies worldwide, read their annual reports, interim reports and other filings as Markdown, and pull standardised financials and insider transactions. Covers official filings, as published. Remote server, OAuth sign-in with a free FinancialFilings account.",
   "author": {

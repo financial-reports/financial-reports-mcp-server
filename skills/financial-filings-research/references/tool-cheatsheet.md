@@ -1,8 +1,8 @@
-# FinancialFilings MCP — Tool Cheatsheet
+# FinancialFilings MCP: Tool Cheatsheet
 
-50 tools across 10 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
+64 tools across 10 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
 
-Note on surface size: only a curated subset is exposed by default (`companies_*`, `filings_*`, `isins_*`, plus the guide tools and in-filing search). The rest — ISIC, reference data, watchlists, webhooks — require `MCP_FULL_SURFACE=1` on the server. If a tool below isn't in your `tools/list`, that's why.
+Note on surface size: only a curated subset is exposed by default (`companies_*`, `filings_*`, `isins_*`, plus the guide tools and in-filing search). The rest: ISIC, reference data, watchlists, webhooks, require `MCP_FULL_SURFACE=1` on the server. If a tool below isn't in your `tools/list`, that's why.
 
 ## Companies (6)
 
@@ -25,7 +25,7 @@ Key params: `id`.
 Returns (Company): the CompanyMinimal fields plus `description`, `homepage_link`, `ir_link`, `address`/`city`/`zip_code`, `country_code`, `ticker`, `sector`/`industry_group`/`industry`/`sub_industry`, `isins`/`primary_isin`, `lei`, `listing_status`/`delisting_date`, `legal_status`/`legal_form`/`jurisdiction`, `is_merged`/`merged_into`. There is no `website`, `headquarters`, or parent/subsidiary field.
 
 ### `companies_financials_retrieve`
-Normalized financial line items. **outputSchema-advertised** — Claude can render structured cards.
+Normalized financial line items. **outputSchema-advertised**: Claude can render structured cards.
 
 Key params: `id` (company, path), `fiscal_period` (`FY`/`H1`/`Q1`...), `fiscal_year`, `fiscal_year_from`, `fiscal_year_to`, `statement_type` (`BS`/`IS`/`CFS`), `line_items` (comma-separated KPI codes), `as_of`.
 
@@ -43,13 +43,13 @@ Key params: `id`.
 Returns (NextAnnualReport): `start_date`, `end_date`, `confidence`, `is_overdue`. There is no predicted_date or basis field.
 
 ### `companies_resolve_create`
-Resolve many identifiers to company IDs in **one** call. Prefer this over a loop of `companies_list` calls whenever the user hands you a list — a portfolio, a screen, a spreadsheet column.
+Resolve many identifiers to company IDs in **one** call. Prefer this over a loop of `companies_list` calls whenever the user hands you a list, a portfolio, a screen, a spreadsheet column.
 
-Key params: `rows` (required) — the batch of identifiers to resolve.
+Key params: `rows` (required), the batch of identifiers to resolve.
 
 Returns: `{summary, results}`.
 
-Pitfall: it is a POST only because a large batch does not fit in a query string — it creates nothing. Treat it as a read.
+Pitfall: it is a POST only because a large batch does not fit in a query string, it creates nothing. Treat it as a read.
 
 ### `companies_merges_retrieve`
 Company merge records: which shell entity was folded into which canonical company. Use it when an ID or name you were given returns nothing, or two names look like the same issuer.
@@ -58,7 +58,7 @@ Key params: none.
 
 Returns: `id`, `shell_id`, `canonical_id`, `shell_name`, `canonical_name`, `pattern`, `confidence`, `merged_at`, `reversed_at`.
 
-Pitfall: `reversed_at` being set means the merge was undone — do not follow `canonical_id` in that case.
+Pitfall: `reversed_at` being set means the merge was undone. Do not follow `canonical_id` in that case.
 
 ## Filings (7)
 
@@ -69,17 +69,17 @@ Key params: `company`, `type` (one filing-type code) / `types` (comma-separated)
 
 Returns (FilingSummary): `{id, title, release_datetime, document_url, proxy_url, viewer_url, company, filing_type, processing_status, file_extension, file_size}`. `processing_status` is also on `view='full'` rows and on `filings_retrieve`; it can be null, which means unknown.
 
-Pitfall: the param is `type`, not `filing_type`, and the code is jurisdiction-specific (e.g. "10-K" for US issuers vs. a local annual type). Use `filing_categories_list` to find a numeric category id, then pass `category`/`categories` for cross-jurisdiction queries — categories normalise across markets.
+Pitfall: the param is `type`, not `filing_type`, and the code is jurisdiction-specific (e.g. "10-K" for US issuers vs. a local annual type). Use `filing_categories_list` to find a numeric category id, then pass `category`/`categories` for cross-jurisdiction queries, categories normalise across markets.
 
 ### `filings_retrieve`
 Single filing detail. **outputSchema-advertised**.
 
 Key params: `id`.
 
-Returns (Filing): `id`, `company`, `filing_type`, `language`, `filing_date`, `title`, `added_to_platform`, `updated_date`, `dissemination_datetime`, `release_datetime`, `source`, `document`, `proxy_url`, `viewer_url`, `file_extension`, `file_size`, `markdown_url`, `filing_type_confidence`, `filing_type_reasoning`, `fiscal_year`, `fiscal_period`, `period_ending_date`. Also carries `processing_status` (can be null — unknown). There is no `summary`, `regulator`, `pdf_url` or `markdown_available`.
+Returns (Filing): `id`, `company`, `filing_type`, `language`, `filing_date`, `title`, `added_to_platform`, `updated_date`, `dissemination_datetime`, `release_datetime`, `source`, `document`, `proxy_url`, `viewer_url`, `file_extension`, `file_size`, `markdown_url`, `filing_type_confidence`, `filing_type_reasoning`, `fiscal_year`, `fiscal_period`, `period_ending_date`. Also carries `processing_status` (can be null, unknown). There is no `summary`, `regulator`, `pdf_url` or `markdown_available`.
 
 ### `filings_history_retrieve`
-Audit trail — every revision of a filing (originals, amendments, restatements).
+Audit trail, every revision of a filing (originals, amendments, restatements).
 
 Key params: `id`.
 
@@ -93,13 +93,13 @@ Key params: `filing_id`, `offset` (default 0), `limit` (default 50,000 character
 Pitfall: a long filing (300-page 10-K, ESEF annual report) does not fit in one call. When the response contains the truncation marker, call again with the `offset` it gives you. Stop as soon as you have the section you need (or use `filings_markdown_search` to jump to it) rather than paging the whole document. For the raw file, use `document` from `filings_retrieve` (there is no pdf_url field).
 
 ### `filings_search`
-Full-text search across the text of EVERY filing — the corpus-wide "which filings / which companies mention X" tool. Nothing else here answers that question.
+Full-text search across the text of EVERY filing, the corpus-wide "which filings / which companies mention X" tool. Nothing else here answers that question.
 
 Key params: `queries` (1-5 phrases, OR-ed, each at most 200 chars; a single `query` string is also accepted), `company` / `companies` (up to 50 internal ids), `include_predecessors`, `countries`, `languages`, `types` (comma-separated filing-type CODES), `release_datetime_from` / `_to`, `added_to_platform_from` / `_to`, `ordering`, `max_results` (1-10,000, default 1,000), `group_by`, `page`, `page_size`.
 
-Returns: matching filings with snippets showing where the text matched (only the first 10 results of a page carry snippets). `group_by="company"` returns one row per company instead — country, ISIN, matching-filing count, first and last release date, best filing — counted over the first `max_results` matches only, with no ordering and no snippets.
+Returns: matching filings with snippets showing where the text matched (only the first 10 results of a page carry snippets). `group_by="company"` returns one row per company instead: country, ISIN, matching-filing count, first and last release date, best filing, counted over the first `max_results` matches only, with no ordering and no snippets.
 
-Pitfall: `types` takes FinancialFilings codes, NOT SEC form names — `S-1`, `13F-HR` and `424B5` are not codes and are rejected. Call `get_fr_filing_type_taxonomy` to translate. Filings are in many languages, so pass the term AND its translations as separate entries; an English query and its native-language phrasing find different filings. Fiscal year and period filters are NOT available here — use a release-date range. An empty result means no match among filings WITH extracted text, within the first 20 MB of each — unless the result says the search stopped early, in which case matches may exist.
+Pitfall: `types` takes FinancialFilings codes, NOT the form names used by other filing systems: `S-1`, `13F-HR` and `424B5` are not codes and are rejected. Call `get_fr_filing_type_taxonomy` to translate. Filings are in many languages, so pass the term AND its translations as separate entries; an English query and its native-language phrasing find different filings. Fiscal year and period filters are NOT available here. Use a release-date range. An empty result means no match among filings WITH extracted text, within the first 20 MB of each, unless the result says the search stopped early, in which case matches may exist.
 
 Cost: one Markdown request per page that returns at least one result (6 credits, 12 if any filing on the page is a premium type). A search with no results bills nothing; every page bills separately.
 
@@ -110,36 +110,36 @@ Key params: `filing_id`, `query` (a SUBSTRING, at most 200 characters), `max_hit
 
 Returns: hits with ~440 characters of context each and a character `offset`. Within reach, that offset reads further around the hit via `filings_markdown_retrieve`.
 
-Pitfall: the offset is NOT always reachable. The server searches the whole document; `filings_markdown_retrieve` still stops at 10,000,000 bytes, so a hit past that names a passage this tool found and that one cannot fetch (1,586 filings in prod exceed the cap). The result SAYS which case you are in — read its NOTE rather than guessing, and when it says a hit is out of reach, use the ~440 characters of context here, which is the whole passage available. Tracked as #175; it disappears once retrieve windows on the API's own offset/limit.
+Pitfall: the offset is NOT always reachable. The server searches the whole document; `filings_markdown_retrieve` still stops at 10,000,000 bytes, so a hit past that names a passage this tool found and that one cannot fetch (1,586 filings in prod exceed the cap). The result SAYS which case you are in. Read its NOTE rather than guessing, and when it says a hit is out of reach, use the ~440 characters of context here, which is the whole passage available. Tracked as #175; it disappears once retrieve windows on the API's own offset/limit.
 
-Pitfall: use this INSTEAD of paging a long filing, but only once you HAVE the filing — to find which filings say something, use `filings_search`. `query` is a substring, not a phrase matcher: search a distinctive phrase, not a whole passage.
+Pitfall: use this INSTEAD of paging a long filing, but only once you HAVE the filing, to find which filings say something, use `filings_search`. `query` is a substring, not a phrase matcher: search a distinctive phrase, not a whole passage.
 
 ### `filings_markdown_search_batch`
 One query across SEVERAL filings you already hold, in a single call.
 
 Key params: `filing_ids` (max 20 per call), `query`, `max_hits_per_filing`.
 
-Returns: per-filing hits with character offsets, and outcomes reported SEPARATELY — matched, no match, searched only in part, not searched.
+Returns: per-filing hits with character offsets, and outcomes reported SEPARATELY, matched, no match, searched only in part, not searched.
 
-Pitfall: it searches ONLY the filings you name, so a "no match" says nothing about filings outside your list — that question is `filings_search`'s. A filing can be BOTH matched and only partly searched: hits found before the byte cap are real, the tail past it is unknown. Do not read a partial search as an absence.
+Pitfall: it searches ONLY the filings you name, so a "no match" says nothing about filings outside your list, that question is `filings_search`'s. A filing can be BOTH matched and only partly searched: hits found before the byte cap are real, the tail past it is unknown. Do not read a partial search as an absence.
 
 ## Guide tools (3)
 
-These take NO parameters. They exist because a tool-only MCP client cannot read MCP resources, so the same guidance is served both ways. Read the relevant one BEFORE filtering or screening — the codes are not guessable.
+These take NO parameters. They exist because a tool-only MCP client cannot read MCP resources, so the same guidance is served both ways. Read the relevant one BEFORE filtering or screening, the codes are not guessable.
 
 ### `get_fr_filing_type_taxonomy`
 The full 30-code filing-type taxonomy (codes, names, categories), plus the form-name translation table and the `DEF 14A` name collision.
 
 Key params: none.
 
-Pitfall: these are cross-jurisdiction codes, NOT form names. `S-1`, `13F-HR` and `424B5` are not codes; `10-K` is one (it also covers 20-F); and the code spelled `DEF 14A` does NOT hold DEF 14A proxy statements — those are `PSI`. Read this before passing `type`/`types` to `filings_list` or `types` to `filings_search`.
+Pitfall: these are cross-jurisdiction codes, NOT form names. `S-1`, `13F-HR` and `424B5` are not codes; `10-K` is one (it also covers 20-F); and the code spelled `DEF 14A` does NOT hold DEF 14A proxy statements, those are `PSI`. Read this before passing `type`/`types` to `filings_list` or `types` to `filings_search`.
 
 ### `get_fr_industry_classification_isic`
 The ISIC hierarchy (section / division / group / class) and the peer-screening recipe.
 
 Key params: none.
 
-Pitfall: there is no `isic_class` field — the 4-digit class is `sub_industry` / `sub_industry_code`.
+Pitfall: there is no `isic_class` field, the 4-digit class is `sub_industry` / `sub_industry_code`.
 
 ### `get_fr_markdown_fetch_strategy`
 When and how to fall back to `filings_markdown_retrieve`, including pagination and the `processing_status` caveat (a hint, not a gate).
@@ -177,7 +177,7 @@ ISIN → company lookup.
 
 Key params: `code` (12-char ISIN, path).
 
-Not a parameter: isin — the path parameter is `code`.
+Not a parameter: isin, the path parameter is `code`.
 
 Returns (ISIN): `code`, `is_primary`, `company`, `figi`, `composite_figi`, `share_class_figi`, `security_type`, `security_type2`, `market_sector`, `exch_code`, `figi_last_updated`.
 
@@ -185,7 +185,7 @@ Pitfall: not every ISIN is in our index. If `isins_retrieve` 404s, fall back to 
 
 ## Security Listings (2)
 
-Where a company's shares actually trade. Use these when the user asks about a **ticker on a specific exchange** — ISINs identify the security, listings identify the venue.
+Where a company's shares actually trade. Use these when the user asks about a **ticker on a specific exchange**: ISINs identify the security, listings identify the venue.
 
 ### `security_listings_list`
 Exchange + ticker per company, with FIGI identifiers.
@@ -201,7 +201,7 @@ One listing by id.
 
 Key params: `id`.
 
-Returns: the same `SecurityListing` item as `security_listings_list` — `id`, `company`, `mic`, `ticker`, `exch_code`, `exchange_name`, `security_type`, `market_sector`, `figi`, `composite_figi`, `share_class_figi`. So if you already have the row from a list call, you do not need this.
+Returns: the same `SecurityListing` item as `security_listings_list`: `id`, `company`, `mic`, `ticker`, `exch_code`, `exchange_name`, `security_type`, `market_sector`, `figi`, `composite_figi`, `share_class_figi`. So if you already have the row from a list call, you do not need this.
 
 ## Reference Data (8)
 
@@ -215,7 +215,7 @@ Lookups for filtering and labeling. All have `_list` and `_retrieve` variants.
 | `languages_list` / `languages_retrieve` | ISO-639 language codes for filings |
 | `sources_list` / `sources_retrieve` | Filing sources, labelled generically unless your account has them unlocked. Treat the response as authoritative |
 
-Use these for **labeling**, not lookup. Don't call `countries_list` to find country IDs — `companies_list?countries=US` accepts ISO codes directly (note the plural; there is no `country` param).
+Use these for **labeling**, not lookup. Don't call `countries_list` to find country IDs: `companies_list?countries=US` accepts ISO codes directly (note the plural; there is no `country` param).
 
 ## Line Item Definitions (2)
 
@@ -233,10 +233,10 @@ Per-user, requires authenticated session.
 
 | Tool | Hint |
 |---|---|
-| `watchlist_retrieve` | `readOnlyHint=true` — current contents |
-| `watchlist_companies_create` | `destructiveHint=true` — add one company |
-| `watchlist_companies_bulk_add_create` | `destructiveHint=true` — add many at once (preferred for >3 companies) |
-| `watchlist_companies_bulk_remove_create` | `destructiveHint=true` — remove many |
+| `watchlist_retrieve` | `readOnlyHint=true`, current contents |
+| `watchlist_companies_create` | `destructiveHint=true`, add one company |
+| `watchlist_companies_bulk_add_create` | `destructiveHint=true`, add many at once (preferred for >3 companies) |
+| `watchlist_companies_bulk_remove_create` | `destructiveHint=true`, remove many |
 
 Pitfall: bulk operations take a list of company IDs, not names. Resolve first.
 
@@ -247,25 +247,27 @@ For programmatic alerts. Per-user, requires authenticated session.
 | Tool | Hint |
 |---|---|
 | `webhooks_list` / `webhooks_retrieve` | `readOnlyHint=true` |
-| `webhooks_deliveries_retrieve` / `webhooks_delivery_detail_retrieve` | `readOnlyHint=true` — inspect past deliveries |
-| `webhooks_create` | `destructiveHint=true` — register a new endpoint |
-| `webhooks_regenerate_secret_create` | `destructiveHint=true` — rotate signing secret |
-| `webhooks_test_create` | open-world probe (non-destructive) — "send me a test event" |
-| `webhooks_deliveries_replay_create` | open-world probe — re-fire a past delivery |
+| `webhooks_deliveries_retrieve` / `webhooks_delivery_detail_retrieve` | `readOnlyHint=true`, inspect past deliveries |
+| `webhooks_create` | `destructiveHint=true`, register a new endpoint |
+| `webhooks_regenerate_secret_create` | `destructiveHint=true`, rotate signing secret |
+| `webhooks_test_create` | open-world probe (non-destructive), "send me a test event" |
+| `webhooks_deliveries_replay_create` | open-world probe, re-fire a past delivery |
 
 ### Webhook setup pattern
 
 1. `webhooks_create` with `url` (required), the triggers you want (`trigger_on_filing_received` for a filing's arrival, `trigger_on_filing_processed` once its content is ready, `trigger_on_filing_updated`), and the scope: `subscribed_filing_types` (filing-type codes) and/or `track_all_companies`. Optional: `include_markdown`, `include_isins`, `deliver_late_filings`. Capture the returned `secret_key`.
 2. Immediately `webhooks_test_create` to verify the user's endpoint accepts and signs requests.
-3. Tell the user the secret value once — we don't store it cleartext server-side.
+3. Tell the user the secret value once, we don't store it cleartext server-side.
 
 Pitfall: there are no free-form event names: a webhook fires on the three `trigger_on_*` booleans only. Pick received vs processed deliberately: received fires on arrival, processed waits until the filing's content is ready. Don't invent fields; `webhooks_list` shows the shape of existing webhooks.
 
 ## Tool annotation summary
 
-- 35 tools have `readOnlyHint=true` (safe to call without confirmation).
-- 5 tools have `destructiveHint=true` (mutations: watchlist add/remove, webhook create, secret rotation).
-- 2 tools are non-destructive probes (`webhooks_test_create`, `webhooks_deliveries_replay_create`) — they hit the user's external endpoint but don't mutate FinancialFilings state.
+- 52 tools have `readOnlyHint=true` (safe to call without confirmation). All 19 on the default
+  surface are read-only; every mutating tool is behind `MCP_FULL_SURFACE=1`.
+- 10 tools have `destructiveHint=true` (mutations: watchlist add/remove, webhook create and
+  update, secret rotation, agent account onboarding). None is on the default surface.
+- 2 tools are non-destructive probes (`webhooks_test_create`, `webhooks_deliveries_replay_create`), they hit the user's external endpoint but don't mutate FinancialFilings state.
 - 6 tools advertise `outputSchema` for structured rendering: `companies_list`, `companies_retrieve`, `companies_financials_retrieve`, `filings_list`, `filings_retrieve`, `isins_list`.
 
 ## Authentication

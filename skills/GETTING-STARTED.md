@@ -3,8 +3,7 @@
 A ten-minute path from nothing to your first answer, using the FinancialFilings
 MCP connector plus the `financial-filings-research` skill.
 
-The connector gives Claude the data. The skill gives it the analyst workflows —
-which tool to reach for, how to compare companies safely, and what to check
+The connector gives Claude the data. The skill gives it the analyst workflows, which tool to reach for, how to compare companies safely, and what to check
 before reporting a figure.
 
 ---
@@ -13,8 +12,8 @@ before reporting a figure.
 
 `https://mcp.financialfilings.com/mcp`
 
-- **Claude.ai / Claude Desktop** — Settings → Connectors → Add custom connector
-- **Claude Code** — add it to `.mcp.json`:
+- **Claude.ai / Claude Desktop**: Settings → Connectors → Add custom connector
+- **Claude Code**, add it to `.mcp.json`:
   ```json
   { "mcpServers": { "fr": { "type": "http", "url": "https://mcp.financialfilings.com/mcp" } } }
   ```
@@ -32,9 +31,20 @@ git clone https://github.com/financial-reports/financial-reports-mcp-server
 cp -R financial-reports-mcp-server/skills/financial-filings-research ~/.claude/skills/
 ```
 
+That is the base skill, and it is the one to install first. Four job-shaped skills
+build on it, and you can add whichever jobs you actually do:
+
+```bash
+cd financial-reports-mcp-server/skills
+cp -R filing-section-finder company-brief peer-comparison industry-screen ~/.claude/skills/
+```
+
+They cost little when idle: until one triggers, Claude sees only its name and
+description. `skills/README.md` says what each one is for.
+
 Use `~/.claude/skills/` for every project, or `<project>/.claude/skills/` for one.
 
-**Claude.ai / Claude Desktop** — Settings → Capabilities → Skills → Upload skill,
+**Claude.ai / Claude Desktop**: Settings → Capabilities → Skills → Upload skill,
 and select the zipped folder.
 
 Confirm it registered: ask Claude `what skills do you have?`
@@ -49,8 +59,8 @@ In Claude Code, type the slash command:
 
 Claude confirms the skill is loaded, then you ask your question normally.
 
-You can also just name it — *"Using the financial-filings-research skill,
-compare …"* — or, to apply it to every question in a project, add one line to
+You can also just name it, *"Using the financial-filings-research skill,
+compare …"*, or, to apply it to every question in a project, add one line to
 that project's `CLAUDE.md`:
 
 ```text
@@ -73,8 +83,7 @@ Real prompts and real (abridged) answers.
 | Release date | 2025-10-31 |
 | Filing ID | 9293573 |
 
-Claude resolves the company, filters filings by type, and sorts newest-first —
-three tool calls, no guesswork about parameter names.
+Claude resolves the company, filters filings by type, and sorts newest-first, three tool calls, no guesswork about parameter names.
 
 ### Pull financial line items
 
@@ -85,8 +94,7 @@ three tool calls, no guesswork about parameter names.
 | Revenue | $416,161M | USD | FY2025 | 2025-09-27 |
 | Net income | $112,010M | USD | FY2025 | 2025-09-27 |
 
-Note the answer states the fiscal period and currency rather than a bare number
-— the skill requires it, because "FY2025" means different things at different
+Note the answer states the fiscal period and currency rather than a bare number, the skill requires it, because "FY2025" means different things at different
 companies (see the next example).
 
 ### Compare companies
@@ -122,16 +130,16 @@ attached.
 ## What the skill adds beyond the raw tools
 
 - **Right tool, right parameters.** Several parameter names are not what you would
-  guess — the bundled `references/tool-cheatsheet.md` has the real ones.
+  guess, the bundled `references/tool-cheatsheet.md` has the real ones.
 - **Comparisons that hold up.** Currency and fiscal period travel with every
   figure, so a table is actually comparable.
 - **Search inside filings** instead of pulling a 500,000-character document.
-- **Checks before reporting a number** — whether a figure is as-reported or
+- **Checks before reporting a number**, whether a figure is as-reported or
   derived, whether its source filing can be cited, and whether a period looks
   like it came from a different reporting entity.
 
 ## Where to go next
 
-- `skills/financial-filings-research/SKILL.md` — the full workflows
-- `skills/financial-filings-research/references/tool-cheatsheet.md` — every tool, its real parameters and response shape
-- `docs/WORKFLOWS.md` — the same guidance in plain Markdown, for tools that do not read the `SKILL.md` format (Codex, Cursor, Gemini CLI, …)
+- `skills/financial-filings-research/SKILL.md`, the full workflows
+- `skills/financial-filings-research/references/tool-cheatsheet.md`, every tool, its real parameters and response shape
+- `docs/WORKFLOWS.md`, the same guidance in plain Markdown, for tools that do not read the `SKILL.md` format (Codex, Cursor, Gemini CLI, …)

@@ -1,6 +1,6 @@
 ---
 name: financial-filings-research
-description: Use for questions about a public company's regulatory filings or financials — revenue, EBITDA, net income, debt, cash flow, 10-K/20-F/annual reports, insider transactions, peer or industry screening, or resolving a company by name, ticker, ISIN or LEI via the FinancialFilings MCP connector. Carries the workflows plus the data-quality checks that the tool schemas do not express: masked provenance, as-reported vs computed figures, and the currency and magnitude checks that catch a wrong source document.
+description: Use for questions about a public company's official filings, as published, or its financials: revenue, EBITDA, net income, debt, cash flow, 10-K/20-F/annual reports, insider transactions, peer or industry screening, or resolving a company by name, ticker, ISIN or LEI via the FinancialFilings MCP connector. Carries the workflows plus the data-quality checks that the tool schemas do not express: masked provenance, as-reported versus computed figures, and the currency and magnitude checks that catch a wrong source document.
 ---
 
 # Financial Filings Research
@@ -15,12 +15,12 @@ The connector is the data layer. This skill is the workflow layer.
 A named public company, a filing (10-K, 20-F, annual/quarterly report, insider
 transaction, ESG), a financial line item, or industry/peer screening.
 
-Not for market data — prices, quotes, volumes are a different domain.
+Not for market data. Prices, quotes and volumes are a different domain.
 
 ## Tools
 
 The connector exposes **16 research tools**. Administrative, reference and
-webhook-management endpoints are not part of the research surface — if you need
+webhook-management endpoints are not part of the research surface. If you need
 one, say so rather than substituting a tool that answers a different question.
 Full parameters in `references/tool-cheatsheet.md`.
 
@@ -45,7 +45,7 @@ ISIC note: there is no `isic_class` parameter. Filter with
 ### 1. Resolve a company
 
 ISIN → `isins_retrieve`. Name or ticker → `companies_list?search=`. If several
-match, ask the user rather than picking — companies dual-list under different
+match, ask the user rather than picking, because companies dual-list under different
 ISINs. Then `companies_retrieve` for full metadata.
 
 Don't paginate past page 2 hunting for a match; refine the search instead.
@@ -64,7 +64,7 @@ Resolve each company, then call `companies_financials_retrieve` for each with th
 same `fiscal_period` and `line_items`.
 
 Render a table with company, currency and `period_end_date` as columns. **Period
-end is not optional** — "FY2025" covers different twelve-month windows at
+end is not optional**. "FY2025" covers different twelve-month windows at
 different companies, and a table that hides that is wrong. Mark missing data
 "n/a", never zero. Never collapse currencies without conversion the user can audit.
 
@@ -74,13 +74,13 @@ different companies, and a table that hides that is wrong. Mark missing data
 2. `companies_list?sub_industry=<code>&countries=<ISO2>&listing_status=LISTED`
 
 **`listing_status=LISTED` is required, not optional.** Without it the result is
-dominated by long-dead registrations — US ISIC 2619 returns 392 companies
+dominated by long-dead registrations. US ISIC 2619 returns 392 companies
 unfiltered and 81 with the filter, and the unfiltered list sorts alphabetically
 into companies delisted in the 1990s.
 
 3. `companies_financials_retrieve` per result to filter by metric.
 4. When pulling filing content, skip rows whose `processing_status` is
-   present and not `COMPLETED`. A null value means unknown — don't gate on
+   present and not `COMPLETED`. A null value means unknown, so don't gate on
    it.
 
 ISIC is not GICS or NAICS. If the user asks in GICS terms, say the mapping is
@@ -104,7 +104,7 @@ a figure.
 
 `companies_financials_retrieve` returns `sources_masked: true` on many accounts,
 and `source_filing` is then null. When that happens you cannot identify the
-document behind a figure — say so rather than implying the number is traceable.
+document behind a figure, say so rather than implying the number is traceable.
 
 ### "As-reported" requires both `raw_value` and `scale`
 
@@ -121,7 +121,7 @@ Two quick checks against the data you already have:
   other periods, it is likely a different reporting entity (a subsidiary rather
   than the listed parent). Do not compute growth across such a break.
 - **Magnitude.** If one year is far out of line with **both** neighbouring
-  years, confirm it before using it — that pattern usually means a different
+  years, confirm it before using it, because that pattern usually means a different
   document, not a real collapse.
 
 These are validation signals rather than proof. When one trips, confirm the
@@ -133,7 +133,7 @@ a currency change is what warrants a second look.
 
 Both `filings_list` views and `filings_retrieve` carry `processing_status`,
 but a row can still return null. Null means unknown: don't gate filing
-selection on it — proceed, and treat it only as an explanation if a markdown
+selection on it. Proceed, and treat it only as an explanation if a markdown
 fetch then comes back empty.
 
 ### An unknown filing-type code is a 400
@@ -147,7 +147,7 @@ belongs on `source_filing_type`, not `type`.
 ## Output
 
 - Tables for comparisons; units in headers, not cells.
-- Cite the source filing per claim — `filing_type`, `release_datetime`, and the
+- Cite the source filing per claim: `filing_type`, `release_datetime`, and the
   URL from `filings_retrieve`. **Exception:** when `sources_masked` is true there
   is no filing to cite. Say the source is not exposed; never synthesise a
   citation.
@@ -159,7 +159,7 @@ belongs on `source_filing_type`, not `type`.
 - **ISIN is not a ticker.** Apple: ticker AAPL, ISIN US0378331005.
 - **Dual listings.** Several ISINs per company; `companies_retrieve` gives the canonical entity.
 - **Periods.** `fiscal_period` is `FY`, `H1`, `H2`, `Q1`–`Q4`, `9M`, plus
-  `fiscal_year` / `_from` / `_to`. There is no period-type parameter — annual is
+  `fiscal_year` / `_from` / `_to`. There is no period-type parameter; annual is
   `FY`. If asked for Q3, pass `Q3`.
 - **Pagination.** List endpoints cap at 100/page. State the `count` and how many you took.
 - **Markdown size.** `filings_markdown_retrieve` returns pages (`limit` default
@@ -168,14 +168,14 @@ belongs on `source_filing_type`, not `type`.
   `filings_retrieve` returns the original document URL.
 - **`search=` never matches filing TEXT.** `filings_list?search=` matches
   filing titles and company names. `companies_list?search=` matches company
-  name, former names, ticker, and LEI/ISIN from the start — so `AAPL` or an
+  name, former names, ticker, and LEI/ISIN from the start, so `AAPL` or an
   ISIN prefix is a valid lookup there. Neither searches inside a filing: for
   "which filings mention X", use `filings_search`. Whitespace-separated terms
   are AND-ed, NOT matched as a phrase, so `annual report` also matches
   "Annual Interim Report"; boolean operators are not parsed, so `A AND B`
   requires a literal `AND` too and finds nothing.
 - **Account status.** If a tool returns a gate response pointing at the
-  FinancialFilings site, the account needs attention — surface the link and stop.
+  FinancialFilings site, the account needs attention. Surface the link and stop.
   Don't retry-loop.
 
 ## Out of scope

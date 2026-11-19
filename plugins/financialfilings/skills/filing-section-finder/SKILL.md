@@ -1,0 +1,93 @@
+---
+name: filing-section-finder
+description: Use when the user wants a specific named part of one company's filing rather than a summary of the whole thing: risk factors, the segment note, guidance or outlook, the auditor's report or opinion, related-party transactions, subsequent events, going concern, revenue recognition policy, remuneration, dividend policy, or "where does the filing say", "find the section on", "what does the 20-F say about", "quote the passage". Searches inside the document and returns the passage with its character offset and a source link, instead of downloading the whole report.
+---
+
+# Find a section in a filing
+
+The highest-volume job on this connector, and the one most often done the
+expensive way. The wrong way is to fetch the whole document and read it; the
+right way is to search inside it and fetch only the part you need.
+
+## When to use this rather than the base skill
+
+Use this when the user names a **part** of a filing. If they want the whole
+document summarised, or a figure that lives in the financial statements, that is
+the company-brief skill or `companies_financials_retrieve` instead.
+
+## The sequence
+
+1. **Resolve the company.** `companies_list?search=<name>` then take the `id`.
+   If several match, ask rather than guess. Companies dual-list.
+2. **Find the filing.**
+   `filings_list?company=<id>&ordering=-release_datetime&page_size=5`, filtered
+   by `type` when the user named one (10-K, 20-F, annual report). Confirm
+   `release_datetime` and `period_ending_date` before reading.
+3. **Search inside it.** `filings_markdown_search?filing_id=<id>&query=<phrase>`.
+   This returns matching passages with a character `offset` and the exact total
+   number of matches in the document.
+4. **Widen only if needed.** `filings_markdown_retrieve` with the `offset` from
+   step 3 reads the surrounding window. Use it to quote in context, not to read
+   the report.
+
+Across several filings of the same company, use
+`filings_markdown_search_batch` with up to 50 filing ids in one call. It is the
+same matcher and it bills only filings that actually match.
+
+## Choosing the search phrase
+
+**Quote the phrase as the filing reads, not as the page is laid out.** A phrase
+of two or more words also matches where the document conversion split it across
+lines, table cells or pages, or ran its words together, so you do not need to
+guess the typography.
+
+Section headings are the strongest queries, because filings are formulaic:
+
+| User asks for | Try these phrases, in order |
+|---|---|
+| Risk factors | `Risk Factors`, `Principal Risks`, `Risk Management` |
+| Segment note | `Segment Information`, `Operating Segments`, `Segment Reporting` |
+| Guidance / outlook | `Outlook`, `Guidance`, `Expectations for`, `Financial Targets` |
+| Auditor's report | `Independent Auditor`, `Basis for Opinion`, `Key Audit Matters` |
+| Related parties | `Related Party`, `Related Parties` |
+| Subsequent events | `Subsequent Events`, `Events After the Reporting Period` |
+| Going concern | `Going Concern` |
+| Remuneration | `Remuneration Report`, `Directors' Remuneration`, `Compensation` |
+| Dividend policy | `Dividend Policy`, `Proposed Dividend`, `Distribution` |
+
+If the first phrase returns nothing, try the next synonym before concluding the
+section is absent. Different jurisdictions title the same section differently.
+
+## Reading the result honestly
+
+**A no-match result is a real absence, and the other outcomes are not.** The
+search reads the whole document, so "no match" means the phrase is not in it.
+But a filing can also come back unavailable (we could not read it) or not
+searched (it was dropped from the request). Those two mean unknown. Never report
+them as "the filing does not discuss this".
+
+With the batch tool, each filing carries its own outcome. Report per filing, and
+retry the ones marked not searched rather than treating them as empty.
+
+## What to return
+
+- The passage, quoted, long enough to stand on its own.
+- `release_datetime` and `period_ending_date`, so the vintage is explicit.
+- The character offset, so the user or a later call can go back to it.
+- The filing's source link when one is available.
+- How many matches exist in total, when more than one. The count is exact, so
+  say "7 matches, here are the first 3", never "several".
+
+Do not paraphrase a risk factor or an audit opinion. Quote it. These are
+documents whose wording is the substance.
+
+## Pitfalls
+
+- **Do not fetch the document first.** A large annual report is megabytes, and
+  the search endpoint returns the same passage for a fraction of the cost.
+- **Do not search the corpus when the user named one company.** `filings_search`
+  searches every filing; it answers "which filings mention X", not "where in
+  this filing".
+- **Section numbers are not note numbers.** There are no stable note numbers
+  across filers, so cite the heading text, not "Note 14".
+- **A nil return from one phrasing is not an absence.** See the synonym table.

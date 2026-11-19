@@ -179,6 +179,22 @@ _COUNT_CLAIMS: list[tuple[str, str]] = [
     (r"the full \*\*(\d+)-tool\*\* surface", "full"),
     (r"emit the full (\d+)-tool surface", "full"),
     (r"composing the (\d+) FinancialFilings MCP tools", "full"),
+    # The plugin's shipped cheatsheet. ⛔ It was OUTSIDE this gate until #208,
+    # which is why it said "50 tools across 10 domains" where the full surface is
+    # 64: a published file carrying a count that nothing compared.
+    # ⚠ `SKILL.md` is deliberately NOT added here. Its "16 research tools" is the
+    # RESEARCH surface, already allowlisted below and pinned by
+    # test_skill_names_the_research_surface.py. Changing it to the default 19
+    # broke that test, which is the gate working: a number that differs from the
+    # surface count is not therefore stale, and the only way to know is to find
+    # out what it measures.
+    (r"All (\d+) on the default", "default"),
+    # ⚠ Anchored on the sentence, not on "N tools across M domains": the looser
+    # form also matched "16 tools across 5 domains" in the generator, which is the
+    # x402 PAY surface, and the gate then read 16 as a claim about the full 64.
+    # A pattern that happens to be right in one file and wrong in another is the
+    # incidental-match failure this suite exists to catch.
+    (r"(\d+) tools across \d+ domains\. This file is loaded on demand", "full"),
     # The overlap prose this PR added. Unchecked when first written: I shipped
     # three new ungated numbers inside a PR whose purpose is gating numbers
     # (SPECHT S3 on 9883152).
@@ -214,6 +230,15 @@ _DOCS_WITH_COUNTS: dict[str, tuple[str, ...]] = {
     "docs/WORKFLOWS.md": ("default",),
     "skills/GETTING-STARTED.md": ("default",),
     "scripts/generate_mcp_tools.py": ("full",),
+    # The cheatsheet ships twice, and BOTH copies are published, so both are
+    # gated. scripts/sync_standalone_skills.sh keeps them identical and
+    # tests/test_skills_in_sync.py fails if they drift, but listing only one here
+    # would leave the other free to carry a stale number.
+    "skills/financial-filings-research/references/tool-cheatsheet.md": ("default", "full"),
+    "plugins/financialfilings/skills/financial-filings-research/references/tool-cheatsheet.md": (
+        "default",
+        "full",
+    ),
 }
 
 
@@ -330,6 +355,14 @@ _NOT_A_SURFACE_COUNT = (
     # test_the_default_surface_decomposes_as_the_docs_describe_it
     "3 `get_fr_*` guide tools",
     "3 hand-written search tools",
+    # Annotation counts in the cheatsheet: properties of the full surface's
+    # ToolAnnotations, not sizes of a surface. Measured 2026-11-19 over the
+    # full render excluding the `_pay_*` x402 variants, and pinned by
+    # tests/test_cheatsheet_annotation_counts.py.
+    "52 tools have",
+    "10 tools have",
+    "2 tools are non-destructive probes",
+    "6 tools advertise",
 )
 
 #: Files whose tool-count claims this gate is responsible for.
@@ -340,6 +373,8 @@ _COUNT_BEARING_DOCS = (
     "docs/WORKFLOWS.md",
     "skills/GETTING-STARTED.md",
     "skills/README.md",
+    "skills/financial-filings-research/references/tool-cheatsheet.md",
+    "plugins/financialfilings/skills/financial-filings-research/references/tool-cheatsheet.md",
 )
 
 
