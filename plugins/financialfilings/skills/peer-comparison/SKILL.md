@@ -35,6 +35,13 @@ convention, and a table that hides those differences is confidently wrong.
 2. **Check what you got, per company.** With identifiers, read the `status` on
    each row: `matched` and `matched_via_alias` are usable, `ambiguous` carries
    `candidates` instead of a company, and `not_covered` means we hold nothing.
+
+   ⚠ **A `matched` row is not always safe, so read its `warnings` too.** Tickers
+   are reused across exchanges, and a ticker match can come back `matched` with
+   `security_listing_unverified` or `multiple_tickers` and other companies in
+   `candidates`. Treat either warning as unresolved: confirm the company by name
+   or exchange before pulling its financials, because the wrong company's figures
+   in a peer table look exactly like the right one's.
    With names, a single clear hit is usable; several plausible hits mean you ask.
 
    Ask only when the ambiguity is real. **Do not stall a three-company comparison
