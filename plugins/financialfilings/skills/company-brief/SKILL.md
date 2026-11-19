@@ -28,7 +28,10 @@ it.
    together:
    `filings_list?company=<id>&types=<annual>,<interim>&ordering=-release_datetime&page_size=5`.
    Get the codes from `get_fr_filing_type_taxonomy`; they are FinancialFilings
-   codes, not form names.
+   codes, not form names. Where that guide tool is absent (the full surface,
+   `MCP_FULL_SURFACE=1`, drops all three `get_fr_*` guides), use
+   `filing_types_list?search=<report kind>` instead: it serves the same `code`
+   values, with each type's `name` and `category`.
 
    For a full-year brief, filter to the annual report type. **For a results
    recap, take the most recently released annual OR interim report, whichever is

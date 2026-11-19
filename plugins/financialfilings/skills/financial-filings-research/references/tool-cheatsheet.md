@@ -211,11 +211,18 @@ Lookups for filtering and labeling. All have `_list` and `_retrieve` variants.
 |---|---|
 | `countries_list` / `countries_retrieve` | ISO-3166 country metadata |
 | `filing_categories_list` / `filing_categories_retrieve` | Cross-jurisdiction categories (annual_report, insider_transaction, etc.) |
-| `filing_types_list` / `filing_types_retrieve` | Jurisdiction-specific types (10-K, DEF 14A, AR-Form, etc.) |
+| `filing_types_list` / `filing_types_retrieve` | The live list of filing-type codes, the same codes `get_fr_filing_type_taxonomy` describes |
 | `languages_list` / `languages_retrieve` | ISO-639 language codes for filings |
 | `sources_list` / `sources_retrieve` | Filing sources, labelled generically unless your account has them unlocked. Treat the response as authoritative |
 
 Use these for **labeling**, not lookup. Don't call `countries_list` to find country IDs: `companies_list?countries=US` accepts ISO codes directly (note the plural; there is no `country` param).
+
+### `filing_types_list`
+The live filing-type list: each row's `code`, `name`, `description` and `category`.
+
+Key params: `search`, `category`.
+
+Use it in place of `get_fr_filing_type_taxonomy` where that guide is absent (the full surface, `MCP_FULL_SURFACE=1`), or to confirm a code added since the guide was written. A code missing from this list matches nothing, silently.
 
 ## Line Item Definitions (2)
 

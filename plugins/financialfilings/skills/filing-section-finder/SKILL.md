@@ -44,7 +44,10 @@ the company-brief skill or `companies_financials_retrieve` instead.
    `S-1` are source form names and are rejected with a 400. Call
    `get_fr_filing_type_taxonomy` to translate what the user said, then filter on
    the code it gives you, and confirm `source_filing_type` on the row you pick,
-   because one code covers several national annual-report forms.
+   because one code covers several national annual-report forms. Where that
+   guide tool is absent (the full surface, `MCP_FULL_SURFACE=1`, drops all three
+   `get_fr_*` guides), use `filing_types_list?search=<report kind>`, which serves
+   the same codes.
 
    ⚠ **The list row does NOT carry `period_ending_date`.** The default summary has
    `release_datetime`, `filing_type`, `processing_status` and `source_filing_type`,
@@ -85,6 +88,15 @@ Section headings are the strongest queries, because filings are formulaic:
 
 If the first phrase returns nothing, try the next synonym before concluding the
 section is absent. Different jurisdictions title the same section differently.
+
+⚠ **An interim report is not where most of these sections live.** Risk factors,
+the auditor's report, remuneration and the full segment note are annual-report
+sections; an interim often says only that risks are "unchanged since the annual
+report". So when the newest filing is an interim and every synonym misses in
+it, search the latest ANNUAL report before concluding the section is absent
+(`filings_markdown_search_batch` searches both in one call). If the passage
+comes from the annual, say so and give that filing's period end, because it is
+older than the filing the user may think they are reading.
 
 ## Reading the result honestly
 

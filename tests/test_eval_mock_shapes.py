@@ -1,4 +1,4 @@
-"""Every fixed JSON eval mock may only carry fields the served API returns.
+"""Every JSON eval mock body may only carry fields and values the served API returns.
 
 ⛔ WHY. Across six SPECHT rounds on #220 the single most repeated defect was a
 mock carrying fields the real API does not serve, or missing ones it does:
@@ -11,8 +11,10 @@ will not exist in production. Each was found by a reviewer reading the snapshot
 by hand, one round at a time.
 
 This test does that check mechanically, against `scripts/openapi.snapshot.json`,
-which is what the shipping server is generated from. It checks KEYS, not values:
-an invented field is the failure, and a value is the fixture's to choose.
+which is what the shipping server is generated from. It checks KEYS first (an
+invented field is the commonest failure), then VALUES where the schema constrains
+them: enum membership, object-vs-scalar, and decimal-as-string. Fixed bodies and
+the fenced ```json blocks of agent mocks are both checked.
 """
 from __future__ import annotations
 
@@ -52,24 +54,37 @@ def _response_schema(op: dict) -> dict | None:
     return _deref(sch) if sch else None
 
 
-def _body(md: pathlib.Path):
+_FENCE = re.compile(r"```json\n(.*?)\n```", re.S)
+
+
+def _bodies(md: pathlib.Path) -> list:
+    """The JSON a mock can return: a fixed body, or each fenced block of an agent mock.
+
+    An agent mock is prose instructions, so it is not checkable as a whole -- but
+    when it carries its per-input responses as fenced ```json blocks, each block
+    is exactly what the tool will return and is checked like a fixed body. The
+    first version skipped agent mocks entirely, so converting a fixed mock to an
+    agent mock (to make it vary by input) silently took it out of this gate.
+    """
     text = md.read_text(encoding="utf-8")
     parts = text.split("---", 2)
-    if len(parts) < 3 or "type: fixed" not in parts[1]:
-        return None
+    if len(parts) < 3:
+        return []
     body = re.sub(r"<!--.*?-->", "", parts[2], flags=re.S).strip()
-    if not body.startswith("{"):
-        return None  # markdown guide bodies, not JSON
+    if "type: agent" in parts[1]:
+        return [json.loads(block) for block in _FENCE.findall(body)]
+    if "type: fixed" not in parts[1] or not body.startswith("{"):
+        return []  # markdown guide bodies, not JSON
     # templated substitutions are not JSON; any number stands in for them
     body = re.sub(r"\{\{input\.[a-z_]+\}\}", "1", body)
-    return json.loads(body)
+    return [json.loads(body)]
 
 
 def _mocks():
     found = []
     for md in sorted(EVALS.rglob("mocks/financialfilings/*.md")):
-        body = _body(md)
-        if body is None:
+        bodies = _bodies(md)
+        if not bodies:
             continue
         hit = _operation(md.stem)
         if hit is None:
@@ -77,7 +92,7 @@ def _mocks():
         schema = _response_schema(hit[2])
         if not schema or "properties" not in schema:
             continue  # no published response shape to check against
-        found.append((md, body, schema))
+        found += [(md, body, schema) for body in bodies]
     return found
 
 
@@ -87,7 +102,8 @@ MOCKS = _mocks()
 def test_the_checker_finds_the_mocks_it_must_guard() -> None:
     """Positive control, first: a checker that finds nothing passes everything."""
     stems = {md.stem for md, _b, _s in MOCKS}
-    assert {"companies_list", "companies_retrieve", "filings_list"} <= stems, (
+    # filings_retrieve is an AGENT mock: listing it proves the fenced-block path runs.
+    assert {"companies_list", "companies_retrieve", "filings_list", "filings_retrieve"} <= stems, (
         f"expected the core mocks to be checkable, found {sorted(stems)}"
     )
 

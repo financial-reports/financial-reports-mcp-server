@@ -34,7 +34,7 @@ Full parameters in `references/tool-cheatsheet.md`.
 | Search inside a filing | `filings_markdown_search`; `filings_markdown_search_batch` for one query across several filings |
 | Financials | `companies_financials_retrieve` |
 | Next report due | `companies_next_annual_report_retrieve` |
-| Filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` |
+| Filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` (default surface only; on `MCP_FULL_SURFACE=1` use `filing_types_list` and the `isic_*` tools) |
 | Industry screening | resolve a known peer → read its `sub_industry_code` → `companies_list?sub_industry=…` |
 
 ISIC note: there is no `isic_class` parameter. Filter with
