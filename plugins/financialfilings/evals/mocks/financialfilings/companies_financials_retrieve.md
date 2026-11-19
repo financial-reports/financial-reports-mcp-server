@@ -21,10 +21,10 @@ expect:
         {"code": "revenue", "name": "Revenue", "statement_type": "IS", "depth": 0,
          "value": 51900000000, "raw_value": 51900, "scale": "MILLIONS", "currency": "SEK",
          "trust_tier": "XBRL_AUDITED", "confirmed": true},
-        {"code": "operating_profit", "name": "Operating profit", "statement_type": "IS", "depth": 0,
+        {"code": "operating_income_loss", "name": "Operating profit", "statement_type": "IS", "depth": 0,
          "value": 4110000000, "raw_value": 4110, "scale": "MILLIONS", "currency": "SEK",
          "trust_tier": "XBRL_AUDITED", "confirmed": true},
-        {"code": "net_income", "name": "Net income", "statement_type": "IS", "depth": 0,
+        {"code": "net_income_loss", "name": "Net income", "statement_type": "IS", "depth": 0,
          "value": 3002000000, "raw_value": 3002, "scale": "MILLIONS", "currency": "SEK",
          "trust_tier": "XBRL_AUDITED", "confirmed": true}
       ]}]},
@@ -40,10 +40,10 @@ expect:
         {"code": "revenue", "name": "Revenue", "statement_type": "IS", "depth": 0,
          "value": 47330000000, "raw_value": 47330, "scale": "MILLIONS", "currency": "SEK",
          "trust_tier": "XBRL_AUDITED", "confirmed": true},
-        {"code": "operating_profit", "name": "Operating profit", "statement_type": "IS", "depth": 0,
+        {"code": "operating_income_loss", "name": "Operating profit", "statement_type": "IS", "depth": 0,
          "value": 3480000000, "raw_value": 3480, "scale": "MILLIONS", "currency": "SEK",
          "trust_tier": "XBRL_AUDITED", "confirmed": true},
-        {"code": "net_income", "name": "Net income", "statement_type": "IS", "depth": 0,
+        {"code": "net_income_loss", "name": "Net income", "statement_type": "IS", "depth": 0,
          "value": 2455000000, "raw_value": 2455, "scale": "MILLIONS", "currency": "SEK",
          "trust_tier": "XBRL_AUDITED", "confirmed": true}
       ]}]}

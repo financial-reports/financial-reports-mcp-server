@@ -21,7 +21,14 @@ it.
 1. **Resolve.** `companies_list?search=<name>` then `companies_retrieve` for
    metadata (country, ISIN, sub-industry, listing status).
 2. **Find the newest relevant filing, by RELEASE DATE across both kinds.**
-   `filings_list?company=<id>&ordering=-release_datetime&page_size=5`.
+
+   ⚠ **Filter the types BEFORE the page limit.** `filings_list` returns every
+   filing type, so an unfiltered `page_size=5` can be five price-sensitive
+   notices and hide the report you want. Pass the annual and interim codes
+   together:
+   `filings_list?company=<id>&types=<annual>,<interim>&ordering=-release_datetime&page_size=5`.
+   Get the codes from `get_fr_filing_type_taxonomy`; they are FinancialFilings
+   codes, not form names.
 
    For a full-year brief, filter to the annual report type. **For a results
    recap, take the most recently released annual OR interim report, whichever is
@@ -36,6 +43,11 @@ it.
    financials instead risks attributing a restated period to this filing.
 3. **Get the numbers from the structured path first.**
    `companies_financials_retrieve?id=<company id>` with the `line_items` you need.
+   ⚠ **`line_items` takes exact lower-case snake_case codes and an unknown one is
+   a 400 naming it.** The two most often guessed wrong are `net_income`, which is
+   `net_income_loss`, and `operating_income`, which is `operating_income_loss`.
+   **If you are unsure of a code, omit `line_items` entirely** and take every line
+   item rather than guessing.
    This is cheaper and more consistent than reading them out of the document.
 4. **Read the document only for what the numbers cannot say:** strategy, segment
    commentary, guidance, the auditor's view. Use `filings_markdown_search` for

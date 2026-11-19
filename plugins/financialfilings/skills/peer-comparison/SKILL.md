@@ -47,6 +47,11 @@ convention, and a table that hides those differences is confidently wrong.
    `companies_financials_retrieve` per company, with identical `line_items` and
    `fiscal_period`. Same arguments, every company, or the table is not a
    comparison.
+
+   ⚠ **`line_items` takes exact snake_case codes; an unknown one is a 400.**
+   `net_income_loss` and `operating_income_loss`, not `net_income` and
+   `operating_profit`. Omit `line_items` if unsure, and never let one company's
+   call differ from another's.
 4. **Render the table with the caveats as columns**, not as a footnote.
 
 ## The table
@@ -100,8 +105,12 @@ trusting a cross-company number:
 
 ## Pitfalls
 
-- **Do not loop `companies_list` for a batch.** `companies_resolve_create` is
-  one call and resolves the ambiguity better.
+- **Match the resolver to the input.** `companies_resolve_create` is one call and
+  is the right tool for a list of ISINs, LEIs, CIKs or tickers. It is the WRONG
+  tool for a list of plain names, which it can only ever return as `ambiguous`:
+  loop `companies_list?search=` for those. ⚠ This pitfall used to say flatly not
+  to loop `companies_list`, which contradicted step 1 and would have left an
+  ordinary name-only comparison unresolved.
 - **Do not compare across fiscal periods.** Same `fiscal_period` argument for
   everyone, or the table is not a comparison.
 - **Do not fetch filings for figures the structured path has.** Reading five
