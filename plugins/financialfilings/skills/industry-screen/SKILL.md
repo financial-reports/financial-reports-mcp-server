@@ -28,6 +28,12 @@ excluding companies that no longer trade.
    different industry and the result will look complete.
 2. **Screen.**
    `companies_list?sub_industry=<4-digit code>&countries=<ISO2>&listing_status=LISTED`
+
+   `countries` takes ISO alpha-2 codes, **comma-separated** for several. A region
+   is not a code: for "Europe" or "the Nordics", pass every member country's code
+   in one call (`countries=SE,NO,DK,FI,IS`), and say which countries you included,
+   because "Europe" has more than one reasonable reading. One code drops the
+   other countries' peers; no filter lets non-European companies in.
 3. **Filter on financials** only for the shortlist, with
    `companies_financials_retrieve` per company. Screen first, then measure, not
    the other way round.
