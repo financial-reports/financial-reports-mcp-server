@@ -15,5 +15,5 @@ expect:
  "sector": {"code": "C", "name": "Manufacturing"},
  "industry_group": {"code": "28", "name": "Manufacture of machinery and equipment n.e.c."},
  "industry": {"code": "281", "name": "Manufacture of general-purpose machinery"},
- "sub_industry": {"code": "2819", "name": "Manufacture of other special-purpose machinery", "industry": "281"},
+ "sub_industry": {"code": "2819", "name": "Manufacture of other general-purpose machinery", "industry": "281"},
  "is_merged": false, "merged_into": null}

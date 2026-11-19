@@ -92,11 +92,15 @@ section is absent. Different jurisdictions title the same section differently.
 ⚠ **An interim report is not where most of these sections live.** Risk factors,
 the auditor's report, remuneration and the full segment note are annual-report
 sections; an interim often says only that risks are "unchanged since the annual
-report". So when the newest filing is an interim and every synonym misses in
-it, search the latest ANNUAL report before concluding the section is absent
-(`filings_markdown_search_batch` searches both in one call). If the passage
-comes from the annual, say so and give that filing's period end, because it is
-older than the filing the user may think they are reading.
+report". So when the newest filing is an interim, search the latest ANNUAL
+report too (`filings_markdown_search_batch` searches both in one call) if
+every synonym misses in the interim, **or if its only hits point back to the
+annual report** ("unchanged since", "as described in the Annual Report"). A
+cross-reference is a hit and not an answer. If the interim carries a
+substantive passage of its own, quote it, and mention that the annual holds
+the full section. If the passage comes from the annual, say so and give that
+filing's period end, because it is older than the filing the user may think
+they are reading.
 
 ## Reading the result honestly
 

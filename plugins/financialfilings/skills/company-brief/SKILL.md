@@ -59,8 +59,11 @@ it.
 4. **Read the document only for what the numbers cannot say:** strategy, segment
    commentary, guidance, the auditor's view. Use `filings_markdown_search` for
    the specific passage rather than retrieving the whole report.
-5. **For a recap, pull the comparatives** in the same call shape: the prior
-   period and the same period a year earlier, so the three sit in one table.
+5. **For a recap, pull the comparatives**: the same period a year earlier and
+   the prior period, so the three sit in one table. The call pinned in step 3
+   already returns the same period for earlier years. **The prior period is a
+   different `fiscal_period`** (Q2 for a Q3 recap; H1 for an H2 recap), and
+   `fiscal_period` takes one value, so it needs a second call with that value.
 
 ## The structured path answers a different question from the document
 

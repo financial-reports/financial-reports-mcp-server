@@ -108,15 +108,26 @@ def test_the_checker_finds_the_mocks_it_must_guard() -> None:
     )
 
 
-def _invented(body: dict, schema: dict) -> list[str]:
-    bad = sorted(k for k in body if k not in schema["properties"])
-    results = schema["properties"].get("results")
-    if isinstance(body.get("results"), list) and results:
-        item = _deref(results.get("items", {}))
-        if "properties" in item:
-            for i, row in enumerate(body["results"]):
-                if isinstance(row, dict):
-                    bad += [f"results[{i}].{k}" for k in row if k not in item["properties"]]
+def _invented(body, schema: dict, path: str = "") -> list[str]:
+    """Keys the served schema does not have, at EVERY depth.
+
+    The first version checked the top level and `results[]` rows only, so a
+    resolver mock whose nested `candidates[]` carried `country_iso` and a singular
+    `isin` (served: `country_code`, `isins`) passed. Recursing is the fix, not a
+    longer list of places to look.
+    """
+    schema = _deref(schema)
+    bad: list[str] = []
+    if isinstance(body, dict) and "properties" in schema:
+        for key, sub in body.items():
+            where = f"{path}.{key}" if path else key
+            if key not in schema["properties"]:
+                bad.append(where)
+            else:
+                bad += _invented(sub, schema["properties"][key], where)
+    elif isinstance(body, list) and schema.get("items"):
+        for i, sub in enumerate(body):
+            bad += _invented(sub, schema["items"], f"{path}[{i}]")
     return bad
 
 
@@ -134,6 +145,13 @@ def test_the_shape_check_can_fail() -> None:
     """Mutation control: an invented key must be reported."""
     md, body, schema = next(m for m in MOCKS if m[0].stem == "companies_retrieve")
     assert _invented({**body, "employees": 1}, schema) == ["employees"]
+
+
+def test_the_shape_check_recurses_into_nested_rows() -> None:
+    """Mutation control for depth: an invented key inside `candidates[]` must be reported."""
+    md, body, schema = next(m for m in MOCKS if m[0].stem == "companies_resolve_create")
+    row = {**body["results"][0], "candidates": [{**body["results"][0]["candidates"][0], "isin": "X"}]}
+    assert _invented({**body, "results": [row]}, schema) == ["results[0].candidates[0].isin"]
 
 
 # --- types and enums, recursively (#220 round 8) -------------------------------
