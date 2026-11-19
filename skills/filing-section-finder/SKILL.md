@@ -30,7 +30,13 @@ the company-brief skill or `companies_financials_retrieve` instead.
    interim codes by default. "Find X's risk factors" names no type and still
    wants a report.
 
-   The exception is a user who asks about an announcement or a press release.
+   ⚠ **The auditor's report is the exception that cuts the other way.** It is often
+   filed as its own document under the `AR` code, which is AUDIT REPORT in this
+   taxonomy, not annual report. For an auditor's report or audit opinion, include
+   `AR` alongside the annual codes, and check the row you pick is the report
+   itself before quoting it.
+
+   The other exception is a user who asks about an announcement or a press release.
    Then pass those codes instead, or drop the filter, because a report filter
    would hide exactly what they asked for.
 

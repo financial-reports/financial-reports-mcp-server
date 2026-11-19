@@ -17,10 +17,15 @@ excluding companies that no longer trade.
 
 ## The sequence
 
-1. **Get the 4-digit ISIC class.** There is no `isic_class` parameter. The
-   reliable route is to resolve a company you know is in the industry and read
-   its `sub_industry_code`. `get_fr_industry_classification_isic` gives the
-   taxonomy when you need to pick a class by name.
+1. **Get the 4-digit ISIC class.** There is no `isic_class` parameter, and on the
+   hosted surface there is no class lookup either:
+   `get_fr_industry_classification_isic` carries the 22 section names and the
+   screening recipe, not the 463 class names. **The route is to resolve a company
+   you know is in the industry and read its `sub_industry_code`.**
+   If the user names an industry but no company in it, ask for one. Only where the
+   full surface is enabled is `isic_classes_list` available to search classes by
+   name. ⇒ Do not pick a class code from memory: a plausible wrong code screens a
+   different industry and the result will look complete.
 2. **Screen.**
    `companies_list?sub_industry=<4-digit code>&countries=<ISO2>&listing_status=LISTED`
 3. **Filter on financials** only for the shortlist, with

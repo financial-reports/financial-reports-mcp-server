@@ -6,7 +6,7 @@ expect:
 {"id": {{input.id}}, "name": "Nordwind Energi AB",
  "tagline": "Direct-drive wind turbine nacelles and gearboxes",
  "description": "Designs and manufactures direct-drive wind turbine nacelles and gearboxes for onshore and near-shore installations, and services an installed base of about 4,100 units across the Nordics and northern Germany.",
- "country_code": "SE", "jurisdiction": "SE", "legal_form": "AB",
+ "country_code": "SE",
  "isins": ["SE0000111222"], "primary_isin": "SE0000111222", "isin_count": 1,
  "lei": "5299001A2B3C4D5E6F70", "ticker": "NWE",
  "listing_status": "LISTED", "is_listed": true, "date_public": "2007-06-14",

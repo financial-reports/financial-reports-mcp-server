@@ -118,3 +118,77 @@ def test_the_shape_check_can_fail() -> None:
     """Mutation control: an invented key must be reported."""
     md, body, schema = next(m for m in MOCKS if m[0].stem == "companies_retrieve")
     assert _invented({**body, "employees": 1}, schema) == ["employees"]
+
+
+# --- types and enums, recursively (#220 round 8) -------------------------------
+#
+# Key-checking alone passed a financials mock that had every right KEY and the
+# wrong VALUES: `currency` as the string "SEK" where the API serves an object
+# `{code, name, symbol}`, `value` as a number where it serves an exact decimal
+# STRING, `scale` as "MILLIONS" where the enum is lower-case, and a `trust_tier`
+# of "XBRL_AUDITED", which is not a tier at all. An agent can pass an eval by
+# interpreting a shape it will never receive in production, so the values are
+# checked too: enum membership, object-vs-scalar, and decimal-as-string.
+
+
+def _types(schema: dict) -> set:
+    t = schema.get("type")
+    return set(t) if isinstance(t, list) else ({t} if t else set())
+
+
+def _value_errors(value, schema: dict, path: str) -> list[str]:
+    schema = _deref(schema)
+    errs: list[str] = []
+    types = _types(schema)
+    if value is None:
+        # A null is valid wherever the served type admits it, whether or not the
+        # enum lists None. The first version checked the enum BEFORE this and
+        # flagged a legitimately nullable `filters.min_trust_tier` -- a false
+        # positive in the checker, caught on its first run against real mocks.
+        if types and "null" not in types and None not in schema.get("enum", [None]):
+            errs.append(f"{path} is null, served type is {sorted(types)}")
+        return errs
+    if "enum" in schema and value not in schema["enum"]:
+        errs.append(f"{path}={value!r} not in {schema['enum']}")
+    if isinstance(value, dict):
+        if types and "object" not in types:
+            errs.append(f"{path} is an object, served type is {sorted(types)}")
+        for key, sub in value.items():
+            prop = schema.get("properties", {}).get(key)
+            if prop is not None:
+                errs += _value_errors(sub, prop, f"{path}.{key}")
+        return errs
+    if isinstance(value, list):
+        if types and "array" not in types:
+            errs.append(f"{path} is an array, served type is {sorted(types)}")
+        items = schema.get("items")
+        if items:
+            for i, sub in enumerate(value):
+                errs += _value_errors(sub, items, f"{path}[{i}]")
+        return errs
+    if "object" in types and "string" not in types:
+        errs.append(f"{path}={value!r} is a scalar, served type is an object")
+    if schema.get("format") == "decimal" and not isinstance(value, str):
+        errs.append(f"{path}={value!r} must be an exact decimal STRING, not a number")
+    return errs
+
+
+@pytest.mark.parametrize("md,body,schema", MOCKS, ids=lambda v: getattr(v, "name", ""))
+def test_no_mock_value_has_a_type_or_enum_the_api_does_not_serve(md, body, schema) -> None:
+    errs = _value_errors(body, schema, "$")
+    assert not errs, f"{md.relative_to(ROOT)}: " + "; ".join(errs[:8])
+
+
+def test_the_value_check_can_fail() -> None:
+    """Mutation controls, one per rule: each must be reported."""
+    md, body, schema = next(m for m in MOCKS if m[0].stem == "companies_financials_retrieve")
+    assert _value_errors({**body, "currency": "SEK"}, schema, "$"), "string currency passed"
+    bad_period = dict(body)
+    period = dict(body["periods"][0])
+    stmt = dict(period["statements"][0])
+    item = dict(stmt["line_items"][0])
+    for mutation in ({"scale": "MILLIONS"}, {"trust_tier": "XBRL_AUDITED"}, {"value": 51900}):
+        stmt["line_items"] = [{**item, **mutation}]
+        period["statements"] = [stmt]
+        bad_period["periods"] = [period]
+        assert _value_errors(bad_period, schema, "$"), f"{mutation} passed"
