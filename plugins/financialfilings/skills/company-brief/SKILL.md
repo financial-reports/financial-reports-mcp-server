@@ -79,7 +79,7 @@ line item, fall back to the document. Unavailable there is not absent.
 | Block | Content |
 |---|---|
 | Identity | Legal name, country, ISIN, listing status, sub-industry |
-| Source | The filing used: type, `release_datetime`, `period_ending_date`. ⚠ For figures from the structured path, read `sources[].filing_id` on the statement. When the response carries `sources_masked: true` the provenance is withheld, so say the source is not exposed rather than naming a filing you inferred |
+| Source | The filing used: type, `release_datetime`, `period_ending_date`. ⚠ For figures from the structured path, cite `source_filing.id`, or the `sources` entry whose `is_selected` is `true`. `sources[]` can list several filings for one period when more than one reported it, so an arbitrary `filing_id` from that array can attribute a restated figure to the wrong report. When the response carries `sources_masked: true` the provenance is withheld, so say the source is not exposed rather than naming a filing you inferred |
 | Headline numbers | Revenue, operating profit, net income, total assets, equity, net debt where available |
 | Period comparison | Current period, prior period, same period last year |
 | Narrative | Two or three sentences of segment or strategy commentary, quoted or closely paraphrased, with the passage offset |

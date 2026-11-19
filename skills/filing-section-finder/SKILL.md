@@ -22,11 +22,17 @@ the company-brief skill or `companies_financials_retrieve` instead.
 2. **Find the filing.**
    `filings_list?company=<id>&types=<codes>&ordering=-release_datetime&page_size=5`.
 
-   ⚠ **Filter the types BEFORE the page limit.** `filings_list` returns every
-   type, so an unfiltered `page_size=5` can be five price-sensitive notices and
-   hide the report the user asked about. When they named a kind of report, pass
-   its code. When they did not, leave the filter off and take the newest filings
-   as they come.
+   ⚠ **Filter the types BEFORE the page limit, including when the user named no
+   report.** `filings_list` returns every type, so an unfiltered `page_size=5`
+   can be five price-sensitive notices and hide the report entirely. **The
+   sections this skill finds live in REPORTS, not in notices** — there is no risk
+   factors section in a two-paragraph announcement — so filter to the annual and
+   interim codes by default. "Find X's risk factors" names no type and still
+   wants a report.
+
+   The exception is a user who asks about an announcement or a press release.
+   Then pass those codes instead, or drop the filter, because a report filter
+   would hide exactly what they asked for.
 
    **`type` takes a FinancialFilings code, not a form name.** `20-F`, `10-Q` and
    `S-1` are source form names and are rejected with a 400. Call

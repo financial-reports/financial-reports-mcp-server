@@ -60,16 +60,22 @@ Required columns: company, currency, `period_end_date`, then one column per
 metric. Period end and currency are not optional and not a footnote.
 
 ```
-| Company   | Currency | Period end  | Revenue | Operating profit | Net income |
-|-----------|----------|-------------|---------|------------------|------------|
-| Company A | EUR      | 2025-12-31  | 4,210   | 512              | 388        |
-| Company B | SEK      | 2025-08-31  | 51,900  | 4,110            | 3,002      |
-| Company C | EUR      | 2025-12-31  | 2,980   | n/a              | 221        |
+| Company   | Currency | Period end  | Revenue (m) | Operating profit (m) | Net income (m) |
+|-----------|----------|-------------|-------------|----------------------|----------------|
+| Company A | EUR      | 2025-12-31  | 4,210       | 512                  | 388            |
+| Company B | SEK      | 2025-08-31  | 51,900      | 4,110                | 3,002          |
+| Company C | EUR      | 2025-12-31  | 2,980       | n/a                  | 221            |
 ```
 
-Three things that table does right: the currencies are not mixed into one
-number, the differing period ends are visible, and the missing operating profit
-is `n/a` rather than `0`.
+Four things that table does right: the currencies are not mixed into one number,
+the differing period ends are visible, the missing operating profit is `n/a`
+rather than `0`, and **the headers carry the unit**.
+
+⚠ **The unit is not decoration.** `51,900` beside a currency of `SEK` reads as
+five hundred thousand kronor, not fifty-two billion, and a model copying this
+table as a template inherits whichever reading the header gives it. Put the
+scale in the header, and take it from each line item's own `scale` rather than
+assuming millions: a response can mix scales across companies.
 
 ## Rules
 
