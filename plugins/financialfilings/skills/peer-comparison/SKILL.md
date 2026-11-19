@@ -18,21 +18,31 @@ convention, and a table that hides those differences is confidently wrong.
 
 ## The sequence
 
-1. **Resolve every company in one call.**
-   `companies_resolve_create` takes a batch of names, tickers or ISINs and beats
-   a loop over `companies_list`. Use it whenever there is more than one.
-2. **Check the status on every row, because there are four and they are not
-   interchangeable.** `matched` and `matched_via_alias` are usable.
-   **`ambiguous` means the name hit more than one listed entity and the response
-   carries `candidates` instead of a company** — a bare name with no ticker or
-   ISIN reaches this often, so it is the normal case rather than the edge one.
-   **`not_covered` means we hold nothing for that name.**
+1. **Resolve, and the route depends on what the user gave you.**
 
-   For `ambiguous`, show the candidates and ask which one is meant. Do not pick
-   the first, and do not quietly leave the company out: resolution is the step
-   that most often misses, every later step inherits the miss, and a silently
-   two-company answer to a three-company question changes the result. For
-   `not_covered`, say so plainly.
+   ⛔ **`companies_resolve_create` is for IDENTIFIERS, not names.** Its own
+   description is explicit: *a name alone never returns `matched`; a name-only row
+   is at best `ambiguous`, with candidates to choose from.* So batching a list of
+   plain names through it guarantees every row comes back `ambiguous`, and a
+   workflow that stops to ask on `ambiguous` would stall on the ordinary request
+   this skill exists for.
+
+   - **ISINs, LEIs, CIKs or tickers:** `companies_resolve_create`, one call for
+     the whole list. This is what it is good at, and it beats a loop.
+   - **Plain names, which is the common case:** `companies_list?search=<name>`
+     per company. One call each, and the hits come back ranked.
+
+2. **Check what you got, per company.** With identifiers, read the `status` on
+   each row: `matched` and `matched_via_alias` are usable, `ambiguous` carries
+   `candidates` instead of a company, and `not_covered` means we hold nothing.
+   With names, a single clear hit is usable; several plausible hits mean you ask.
+
+   Ask only when the ambiguity is real. **Do not stall a three-company comparison
+   to confirm three names that each have one obvious hit**, and do not quietly
+   drop a company either: resolution is the step that most often misses, every
+   later step inherits the miss, and a silently two-company answer to a
+   three-company question changes the result. Say which companies you could not
+   pin down, and compare the ones you could.
 3. **Pull the same line items for every company.**
    `companies_financials_retrieve` per company, with identical `line_items` and
    `fiscal_period`. Same arguments, every company, or the table is not a

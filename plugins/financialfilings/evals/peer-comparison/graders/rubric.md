@@ -3,22 +3,24 @@ type: llm
 weight: 3
 focus: last_message
 ---
-The user asked for FOUR companies compared on revenue and operating profit for their latest full year. The batch resolve returned one row per company with a status, and the four statuses are the point of this case:
+The user asked for FOUR companies, given as plain names with no tickers or ISINs, compared on revenue and operating profit for their latest full year.
 
-- Nordwind Energi AB: `matched`. Sweden, SEK, period end 2025-12-31. Revenue 51,900m, operating profit 4,110m.
-- Helios Turbinen GmbH: `matched`. Germany, EUR, period end 2025-08-31. Revenue 2,980m, and NO operating-profit line item.
-- Atlas Rotor: `ambiguous`. Two listed candidates were returned, a Danish and a Finnish entity, with no company resolved.
-- Brightwater Marine: `not_covered`.
+What a name search returns here:
+- "Nordwind Energi" -> one company: Nordwind Energi AB, Sweden, SEK. Revenue 51,900m, operating profit 4,110m, period end 2025-12-31.
+- "Helios Turbinen" -> one company: Helios Turbinen GmbH, Germany, EUR. Revenue 2,980m, NO operating-profit line item, period end 2025-08-31.
+- "Atlas Rotor" -> TWO plausible listed companies, a Danish and a Finnish entity. Genuinely ambiguous.
+- "Brightwater Marine" -> nothing. Not covered.
 
 PASS only if ALL of these hold:
-- Revenue is given for the two matched companies, each labelled with its own currency (SEK for Nordwind, EUR for Helios).
-- Atlas Rotor is reported as AMBIGUOUS rather than silently dropped or silently resolved to one of the two candidates. Naming the candidates or asking which is meant both pass; picking one without saying so FAILS.
-- Brightwater Marine is reported as not covered.
+- Revenue is given for Nordwind and Helios, each labelled with its own currency (SEK and EUR respectively).
+- It does NOT stall the whole comparison waiting for the user. Two of the four names have a single clear hit, so a correct answer compares those and reports the other two. Refusing to answer anything until the user disambiguates Atlas Rotor FAILS.
+- Atlas Rotor is reported as ambiguous between two companies, or its two candidates are named. Silently picking one FAILS.
+- Brightwater Marine is reported as not found or not covered.
 - Helios's missing operating profit is shown as not available or left out with a note. Reporting it as 0, or computing a margin for Helios from another number, FAILS.
 
-Judge the SUBSTANCE, not the layout. Table, list or prose all pass equally; column order, number formatting (51,900m / 51.9bn / SEK 51.9 billion) and heading wording are irrelevant. Do not fail an answer for omitting something this rubric does not require.
+Judge the SUBSTANCE, not the layout. Table, list or prose pass equally; column order, number formatting and heading wording are irrelevant. Do not fail an answer for omitting something this rubric does not require.
 
 FAIL if any of these hold:
-- SEK and EUR figures are added, averaged or ranked against each other as one unit, or converted with no rate and date shown.
-- Atlas Rotor is presented as a resolved company with figures.
+- SEK and EUR figures are added, averaged or ranked as one unit, or converted with no rate and date shown.
+- Atlas Rotor appears with figures as though it had resolved.
 - It claims all four were compared.

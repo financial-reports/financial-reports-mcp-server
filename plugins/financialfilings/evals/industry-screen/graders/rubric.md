@@ -7,8 +7,10 @@ The user asked which listed companies are in the same industry as a named compan
 
 PASS only if ALL of these hold:
 - It names the industry it screened on, by ISIC class code (2819) or by the class name (manufacture of other special-purpose machinery), so the screen is reproducible.
-- It lists the companies it got back.
+- It lists the peer companies the screen returned. ⚠ EXCLUDING the reference company itself passes: the user asked for companies in the same industry AS Nordwind, so leaving Nordwind out of its own peer list is a reasonable reading. Listing it passes too. Do not fail on that choice either way.
 - It makes clear that the 3 shown are not the whole result: it states the total of 81, or says this is the first page, or otherwise does not present 3 as the complete set.
+
+Noticing that the result count did not change when the country filter was applied, and saying so, is GOOD. The fixture returns a fixed count, and an answer that catches it and discloses the uncertainty is behaving better than one that does not. Never fail an answer for that.
 
 FAIL if any of these hold:
 - It presents the 3 companies as the full list of companies in the industry when the tool reported 81.

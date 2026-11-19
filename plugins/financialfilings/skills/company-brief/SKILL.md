@@ -20,10 +20,20 @@ it.
 
 1. **Resolve.** `companies_list?search=<name>` then `companies_retrieve` for
    metadata (country, ISIN, sub-industry, listing status).
-2. **Find the newest relevant filing.**
+2. **Find the newest relevant filing, by RELEASE DATE across both kinds.**
    `filings_list?company=<id>&ordering=-release_datetime&page_size=5`.
-   For a full-year brief filter to the annual report type; for a results recap
-   take the newest interim report. Do not assume the first row is annual.
+
+   For a full-year brief, filter to the annual report type. **For a results
+   recap, take the most recently released annual OR interim report, whichever is
+   newer** — not the newest interim. Just after an annual release those differ,
+   and taking the newest interim would recap Q3 when the full year has been
+   published. Do not assume the first row is annual.
+
+   ⚠ **Then call `filings_retrieve` on the one you picked.** The list row does NOT
+   carry `period_ending_date`: the default summary has `release_datetime`,
+   `filing_type` and `source_filing_type` and nothing else about the period. The
+   Source block below asks for the period end, and taking it from the structured
+   financials instead risks attributing a restated period to this filing.
 3. **Get the numbers from the structured path first.**
    `companies_financials_retrieve?id=<company id>` with the `line_items` you need.
    This is cheaper and more consistent than reading them out of the document.
