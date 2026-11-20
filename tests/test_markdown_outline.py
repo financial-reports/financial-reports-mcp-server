@@ -258,6 +258,7 @@ async def test_a_json_404_is_the_endpoints_own_answer(mcp_module, respx_router) 
     httpx.Response(403, json={"detail": "Your current plan does not permit access."}),
     httpx.Response(200, text="<html>a proxy page</html>"),
     httpx.Response(200, json={}),
+    httpx.Response(200, json={"entries": []}),
     httpx.ConnectError("refused"),
 ])
 async def test_failures_reach_the_client_as_isError(mcp_module, respx_router, response) -> None:

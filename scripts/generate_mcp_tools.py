@@ -7224,7 +7224,7 @@ async def filings_markdown_outline(
         except ValueError:
             payload = None
         entries = payload.get("entries") if isinstance(payload, dict) else None
-        if not isinstance(entries, list):
+        if not isinstance(entries, list) or type(payload.get("total_chars")) is not int:
             # A 200 that is not an outline (an intermediary's page, a changed
             # API): an error, never an empty outline.
             raise UpstreamHTTPError(
