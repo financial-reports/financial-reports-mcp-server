@@ -122,7 +122,7 @@ async def test_single_near_matches_respect_max_hits(
     assert "near offset 9100" not in out
 
 
-@pytest.mark.parametrize("variant", ["absent", "empty", "not_a_list", "junk_items"])
+@pytest.mark.parametrize("variant", ["absent", "empty", "not_a_list", "a_number", "junk_items"])
 @pytest.mark.asyncio
 async def test_single_miss_without_near_matches_is_byte_identical_to_before(
     mcp_module, monkeypatch, fake_access_token, respx_router, variant
@@ -130,7 +130,8 @@ async def test_single_miss_without_near_matches_is_byte_identical_to_before(
     """An API that predates the field (absent), nothing close ([]) or a malformed
     field: the miss text the tool always returned, character for character."""
     _auth_as(mcp_module, monkeypatch, fake_access_token)
-    near = {"absent": None, "empty": [], "not_a_list": {"offset": 1}, "junk_items": ["x", 3]}[variant]
+    near = {"absent": None, "empty": [], "not_a_list": {"offset": 1}, "a_number": 5,
+            "junk_items": ["x", 3]}[variant]
     _mock_single(respx_router, near=near, omit_near=variant == "absent")
     out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="zzz")
     assert out == (
@@ -333,3 +334,19 @@ async def test_malformed_near_match_fields_neither_raise_nor_flood(
     assert "S" * 1_000 in out and "S" * 1_001 not in out
     assert "w19" in out and "w20" not in out
     assert len(out) < 5_000
+
+
+def test_near_section_degrades_to_a_short_notice_then_to_nothing(mcp_module):
+    """When not even one filing's passages fit, the notice names the count
+    without the ids, and when that does not fit either, nothing is added."""
+    fids = list(range(1_000_000, 1_000_050))
+    near_by_fid = {f: [_near(1, "P" * 300, ["q"])] for f in fids}
+    section = mcp_module._near_section
+    full = section(fids, near_by_fid, 3, room=1_000_000, show=True)
+    assert any("=== filing 1000049" in line for line in full)  # positive control
+    short = section(fids, near_by_fid, 3, room=150, show=True)
+    assert len(short) == 1 and "50 no-match filing(s) omitted" in short[0]
+    assert "1000000" not in short[0] and sum(len(x) + 1 for x in short) <= 150
+    assert section(fids, near_by_fid, 3, room=20, show=True) == []
+    with_ids = section(fids, near_by_fid, 3, room=1_000, show=False)
+    assert len(with_ids) == 1 and "1000049" in with_ids[0]
