@@ -262,3 +262,74 @@ async def test_batch_no_near_matches_once_hit_detail_was_omitted(
     assert "hit detail for" in out  # positive control: the hit budget was spent
     assert "NEAR-5" not in out
     assert "closest passages for 1 no-match filing(s) omitted" in out and out.rstrip().endswith("5")
+
+
+@pytest.mark.asyncio
+async def test_batch_near_matches_respect_max_hits_per_filing(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    four = [_near(o, f"N{o}", ["q"]) for o in (1, 2, 3, 4)]
+    _mock_batch(respx_router, [_row(1, "q", "no_match", near=four)])
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=[1], query="q", max_hits_per_filing=2)
+    assert "near offset 1 " in out and "near offset 2 " in out
+    assert "near offset 3 " not in out
+
+
+@pytest.mark.parametrize("ceiling", [1500, 2200, 3000, 4000, 6000, 9000])
+@pytest.mark.parametrize("hits_cut", [False, True])
+@pytest.mark.asyncio
+async def test_batch_result_never_exceeds_the_ceiling(
+    mcp_module, monkeypatch, fake_access_token, respx_router, ceiling, hits_cut
+):
+    """With 50 filings the notices carry up to 50 ids each, which no fixed
+    reserve covers: the bound must hold at every ceiling, with the hit detail
+    cut (two notices) or not."""
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    monkeypatch.setattr(mcp_module, "_BATCH_MAX_RESULT_CHARS", ceiling)
+    big = "x" * 600
+    hit_ids = list(range(1_000_000, 1_000_025)) if hits_cut else [1_000_000]
+    rows = [_row(f, "q", "hit", hits=[(10, "HIT " + big)]) for f in hit_ids]
+    near_ids = list(range(2_000_000, 2_000_050 - len(hit_ids)))
+    rows += [_row(f, "q", "no_match", near=[_near(5, "NEAR " + big, ["q"])]) for f in near_ids]
+    _mock_batch(respx_router, rows)
+    out = await _tool(mcp_module, "filings_markdown_search_batch")(
+        filing_ids=hit_ids + near_ids, query="q")
+    assert "with hits" in out  # positive control: the outcome headline is there
+    assert len(out) <= ceiling, (len(out), ceiling)
+    if hits_cut:
+        assert "hit detail for" in out  # positive control: the hit detail WAS cut
+        assert "NEAR " not in out, "near-match text shown although hit detail was cut"
+
+
+@pytest.mark.asyncio
+async def test_single_numeric_query_takes_near_matches_from_the_typed_spelling(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+
+    def answer(request):
+        q = request.url.params["q"]
+        near = [_near(1, "TYPED-SPELLING", ["19409"])] if q == "19409" else [_near(2, "COMMA-SPELLING", ["19,409"])]
+        return httpx.Response(200, text=json.dumps({
+            "filing_id": 1, "query": q, "total_chars": 10, "total_hits": 0, "hits": [], "near_matches": near}))
+    route = respx_router.get(f"{TEST_API_BASE}/filings/1/markdown/search/").mock(side_effect=answer)
+    out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="19409")
+    assert route.call_count == 2  # positive control: both spellings were tried
+    assert "TYPED-SPELLING" in out and "COMMA-SPELLING" not in out
+
+
+@pytest.mark.asyncio
+async def test_malformed_near_match_fields_neither_raise_nor_flood(
+    mcp_module, monkeypatch, fake_access_token, respx_router
+):
+    _auth_as(mcp_module, monkeypatch, fake_access_token)
+    odd = [{"offset": 1, "snippet": "S" * 50_000, "matched_words": 5, "missing_words": "abc"},
+           {"offset": 2, "snippet": None, "matched_words": [f"w{i}" for i in range(500)]}]
+    _mock_single(respx_router, near=odd)
+    out = await _tool(mcp_module, "filings_markdown_search")(filing_id=1, query="x y")
+    assert "near offset 1 (has: -)" in out  # a non-list word field shows nothing
+    assert "S" * 1_000 in out and "S" * 1_001 not in out
+    assert "w19" in out and "w20" not in out
+    assert len(out) < 5_000

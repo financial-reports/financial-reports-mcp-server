@@ -5742,17 +5742,81 @@ def _near_matches(payload_or_row) -> list:
     return [n for n in near if isinstance(n, dict)]
 
 
+# The API sends at most 3 near matches of ~740 characters; these bound what a
+# malformed or future response could make either tool emit.
+_NEAR_SNIPPET_CHARS = 1_000
+_NEAR_WORDS_SHOWN = 20
+
+
+def _near_words(value) -> str:
+    """A near match's word list for display; anything but a list shows nothing."""
+    if not isinstance(value, list):
+        return ""
+    return ", ".join(str(w) for w in value[:_NEAR_WORDS_SHOWN])
+
+
 def _near_match_lines(near: list, limit: int) -> list:
     """One labelled block per near match, at most `limit` of them."""
     lines = []
     for n in near[:limit]:
-        has = ", ".join(str(w) for w in (n.get("matched_words") or []))
-        lacks = ", ".join(str(w) for w in (n.get("missing_words") or []))
+        has = _near_words(n.get("matched_words"))
+        lacks = _near_words(n.get("missing_words"))
         label = f"--- approximate, near offset {n.get('offset')} (has: {has or '-'}"
         if lacks:
             label += f"; missing: {lacks}"
-        lines.append(f"{label}) ---\\n...{n.get('snippet') or ''}...")
+        snippet = str(n.get("snippet") or "")[:_NEAR_SNIPPET_CHARS]
+        lines.append(f"{label}) ---\\n...{snippet}...")
     return lines
+
+
+def _near_section(fids: list, near_by_fid: dict, cap: int, room: int, show: bool) -> list:
+    """The batch's near-match lines for the no-match filings `fids`, in at most
+    `room` characters (each line costs its length plus a newline).
+
+    Whole filings are dropped from the end until the section, plus a notice
+    naming what was dropped, fits; failing that the notice loses its ids, and
+    failing that the section is empty. So it can never push the result past the
+    ceiling, and never drops anything but near-match text."""
+    header = (
+        "\\nNo-match filings, closest passages -- APPROXIMATE, NOT matches: the "
+        "query is not in these documents as written, but each passage holds "
+        "some of its words (listed):"
+    )
+    blocks = []
+    if show:
+        for fid in fids:
+            block = [f"\\n=== filing {fid} — no match ==="]
+            block.extend(_near_match_lines(near_by_fid[fid], cap))
+            blocks.append((fid, block))
+
+    def cost(lines):
+        return sum(len(line) + 1 for line in lines)
+
+    def notice(left_out, with_ids=True):
+        text = (
+            f"\\nNOTE: closest passages for {len(left_out)} no-match filing(s) "
+            "omitted to stay under the result ceiling"
+        )
+        if with_ids:
+            text += "; filings_markdown_search on one of them lists them: " + ", ".join(
+                str(f) for f in left_out
+            )
+        return text
+
+    while True:
+        kept = {fid for fid, _block in blocks}
+        left_out = [f for f in fids if f not in kept]
+        section = [header] + [line for _fid, block in blocks for line in block] if blocks else []
+        if left_out:
+            section = section + [notice(left_out)]
+        if cost(section) <= room:
+            return section
+        if blocks:
+            blocks.pop()
+            continue
+        for fallback in ([notice(left_out, with_ids=False)], []):
+            if cost(fallback) <= room:
+                return fallback
 
 
 @mcp.tool(
@@ -5845,6 +5909,7 @@ async def filings_markdown_search(
         # because the day-dedup keys on (user, filing) and not on the endpoint
         # (web #5691; filing-markdown-search is LEVEL_2, same as the download).
         payload = None
+        typed_payload = None  # the first candidate's: the spelling the caller typed
         # Each CANDIDATE crosses the wire, not `raw` — so the length bound has to
         # be applied here too. SPECHT S2 (2/3 phrasings) on the commit that added
         # the input guard, and it was a defect that guard INTRODUCED: a 151-digit
@@ -5866,6 +5931,8 @@ async def filings_markdown_search(
                     response, response.text[:_MAX_ERROR_BODY]
                 )
             payload = response.json()
+            if typed_payload is None:
+                typed_payload = payload
             if payload.get("hits"):
                 break
         # ⛔ `snippet`, NOT `context`. The endpoint has returned
@@ -5887,7 +5954,9 @@ async def filings_markdown_search(
                 f"No match for {_echo_query(query)} in filing {filing_id} "
                 f"({total_chars} chars searched, all of it)."
             )
-            near = _near_matches(payload)
+            # From the spelling the caller TYPED, as the batch does: for "19409"
+            # the passages closest to "19409", not to the comma form tried after.
+            near = _near_matches(typed_payload) or _near_matches(payload)
             if near:
                 return "\\n".join([f"{miss} {_NEAR_MATCH_HEADER}", *_near_match_lines(near, cap)])
             return (
@@ -6281,36 +6350,18 @@ async def filings_markdown_search_batch(
         # above. A filing listed here is still a definite "no match"; these
         # passages only say where the closest wording is.
         near_fids = [f for f in no_match if f in near_by_fid]
-        near_omitted = []
-        if near_fids and not omitted:
-            header = (
-                "\\nNo-match filings, closest passages -- APPROXIMATE, NOT matches: the "
-                "query is not in these documents as written, but each passage holds "
-                "some of its words (listed):"
-            )
-            budget -= len(header) + 1
-            shown_near = []
-            for i, fid in enumerate(near_fids):
-                block = [f"\\n=== filing {fid} — no match ==="]
-                block.extend(_near_match_lines(near_by_fid[fid], cap))
-                cost = sum(len(b) + 1 for b in block)
-                if cost > budget - _BATCH_OMITTED_NOTICE_CHARS:
-                    near_omitted = near_fids[i:]
-                    break
-                shown_near.extend(block)
-                budget -= cost
-            if shown_near:
-                parts.append(header)
-                parts.extend(shown_near)
-        elif near_fids:
-            near_omitted = near_fids
-        if near_omitted:
-            parts.append(
-                f"\\nNOTE: closest passages for {len(near_omitted)} no-match filing(s) "
-                "omitted to stay under the result ceiling; filings_markdown_search on "
-                "one of them lists them: "
-                + ", ".join(str(f) for f in near_omitted)
-            )
+        if near_fids:
+            parts.extend(_near_section(
+                near_fids, near_by_fid, cap,
+                # Fit against what is ALREADY in `parts`, outcome blocks, hit
+                # detail and its own omission notice included, rather than
+                # against the running budget: that one reserves room for the
+                # hit notice only, so a second notice could overrun it.
+                room=_BATCH_MAX_RESULT_CHARS - sum(len(p) + 1 for p in parts),
+                # Once hit detail had to be cut, no near-match text is shown,
+                # only the notice: a hit outranks an approximate passage.
+                show=not omitted,
+            ))
         return "\\n".join(parts)
     except UpstreamHTTPError:
         # A whole-batch failure must stay an ERROR. Two things reach here: the
