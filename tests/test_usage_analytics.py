@@ -771,6 +771,8 @@ _RECEIVER_ALLOWED_ARG_KEYS = frozenset({
     "queries", "filing_ids_count", "max_hits_per_filing",
     # web#10413: the batch tool's id list, stored as ids only on both ends.
     "filing_ids",
+    # web#10737: the outline tool's level cap (users/mcp_analytics.py there).
+    "max_level",
 })
 
 

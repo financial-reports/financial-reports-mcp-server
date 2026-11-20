@@ -19,7 +19,7 @@ Not for market data. Prices, quotes and volumes are a different domain.
 
 ## Tools
 
-The connector exposes **16 research tools**. Administrative, reference and
+The connector exposes **17 research tools**. Administrative, reference and
 webhook-management endpoints are not part of the research surface. If you need
 one, say so rather than substituting a tool that answers a different question.
 Full parameters in `references/tool-cheatsheet.md`.
@@ -32,6 +32,7 @@ Full parameters in `references/tool-cheatsheet.md`.
 | Get filings | `filings_list` → `filings_retrieve` → `filings_markdown_retrieve` |
 | Which filings mention X | `filings_search` (full-text across the corpus) |
 | Search inside a filing | `filings_markdown_search`; `filings_markdown_search_batch` for one query across several filings |
+| Read one section of a long filing | `filings_markdown_outline` (headings with offsets) → `filings_markdown_retrieve` at that offset |
 | Financials | `companies_financials_retrieve` |
 | Next report due | `companies_next_annual_report_retrieve` |
 | Filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` (default surface only; on `MCP_FULL_SURFACE=1` use `filing_types_list` and the `isic_*` tools) |
