@@ -7324,7 +7324,9 @@ async def filings_markdown_outline(
         head += (
             "\\nEach line: offset +length Llevel [pPDF-page] title. Read a section with "
             f"filings_markdown_retrieve(filing_id={filing_id}, offset=<offset>, "
-            "limit=<length>); the window starts at the heading.\\n"
+            "limit=<length>); the window starts at the heading. A section longer "
+            "than one window (150000 chars) continues at the next offset the read "
+            "returns, up to offset+length.\\n"
         )
         # The result ceiling covers the whole result (#122). Lines go in until
         # the next would pass it, and what is left is counted: never cut
@@ -7337,7 +7339,8 @@ async def filings_markdown_outline(
                 out.append(
                     f"... and {len(listed) - index} more headings, not shown to keep "
                     "the result inside its size limit: ask again with a smaller "
-                    "`limit` or a `max_level`."
+                    "`limit` or a `max_level`, or find a section not shown with "
+                    "filings_markdown_search."
                 )
                 break
             out.append(line)

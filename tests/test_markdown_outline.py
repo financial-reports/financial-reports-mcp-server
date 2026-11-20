@@ -106,6 +106,7 @@ async def test_truncation_is_said_with_the_level_shown_in_full(mcp_module, respx
     assert "2 of 900 headings" in out
     assert "Not every heading is listed" in out
     assert "every heading down to level 1 is here" in out
+    assert "continues at the next offset the read returns" in out
     assert "Pass a larger `limit` (up to 1000)" in out
     assert "filings_markdown_search" in out
 
@@ -228,6 +229,7 @@ async def test_the_result_stays_inside_the_ceiling_and_counts_what_it_left_out(
     shown = sum(1 for line in out.splitlines() if line[:1].isdigit())
     assert 0 < shown < 1000
     assert f"... and {1000 - shown} more headings, not shown" in out
+    assert "find a section not shown with filings_markdown_search" in out
     assert counted == [shown]
 
 
