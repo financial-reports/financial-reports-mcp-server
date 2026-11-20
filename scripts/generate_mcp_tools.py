@@ -5717,6 +5717,44 @@ def _echo_query(raw: str) -> str:
     )
 
 
+# Near matches (web: markdown_window.near_matches). On a miss the API also
+# returns up to 3 passages holding most of the query's content words, so an
+# agent can read around them instead of guessing a new phrasing (most measured
+# zero-hit queries are wording the filing does not use verbatim: "cash paid for
+# interest" where it says "interest paid"). They are APPROXIMATE, never hits:
+# a search that returns only near matches is still a miss, counted as one here
+# (record_result_count) and billed as one upstream (free under misses-free).
+# The field is read with .get(): an API that predates it simply has none, and
+# the output is then exactly what it was.
+_NEAR_MATCH_HEADER = (
+    "Closest passages -- APPROXIMATE, NOT matches: the filing does not contain the "
+    "query as written, but each passage holds some of its words (listed). Read "
+    "around an offset with filings_markdown_retrieve to see whether the filing says "
+    "the same thing in other words:"
+)
+
+
+def _near_matches(payload_or_row) -> list:
+    """The `near_matches` list of a search response or batch row, else []."""
+    near = (payload_or_row or {}).get("near_matches")
+    if not isinstance(near, list):
+        return []
+    return [n for n in near if isinstance(n, dict)]
+
+
+def _near_match_lines(near: list, limit: int) -> list:
+    """One labelled block per near match, at most `limit` of them."""
+    lines = []
+    for n in near[:limit]:
+        has = ", ".join(str(w) for w in (n.get("matched_words") or []))
+        lacks = ", ".join(str(w) for w in (n.get("missing_words") or []))
+        label = f"--- approximate, near offset {n.get('offset')} (has: {has or '-'}"
+        if lacks:
+            label += f"; missing: {lacks}"
+        lines.append(f"{label}) ---\\n...{n.get('snippet') or ''}...")
+    return lines
+
+
 @mcp.tool(
     tags={"Filings"},
     annotations=ToolAnnotations(
@@ -5755,7 +5793,10 @@ async def filings_markdown_search(
     out. Exact hits come first in document order, then those split ones; `total_hits`
     counts both. Each hit shows ~440 chars of context and an offset you can pass to
     filings_markdown_retrieve to read more around it. `query` is at most 200 characters
-    -- search a distinctive phrase, not a whole passage."""
+    -- search a distinctive phrase, not a whole passage. When NOTHING matches, it lists
+    up to 3 closest passages, marked APPROXIMATE (they hold most of the query's words,
+    e.g. "interest paid" for "cash paid for interest"): read around them, but they are
+    not matches."""
     try:
         _require_auth_context()
         if not isinstance(filing_id, int) or filing_id <= 0:
@@ -5827,17 +5868,30 @@ async def filings_markdown_search(
             payload = response.json()
             if payload.get("hits"):
                 break
+        # ⛔ `snippet`, NOT `context`. The endpoint has returned
+        # `hits: [{offset, snippet}]` since it shipped (web filings/markdown_window.py
+        # `search`, docs/API.md); this read `context`, a key the API never sends, so
+        # every hit rendered as an empty `......` -- an offset with no text. The
+        # tests mocked the same wrong key, so they agreed with the code and not the
+        # API. Measured in prod: ~75 characters of tool output per hit over the 14
+        # days to 2026-11-20, where a ~440-character snippet would give ~480.
         hits = [
-            (h.get("offset"), h.get("context") or "")
+            (h.get("offset"), h.get("snippet") or "")
             for h in (payload.get("hits") or [])
         ][:cap]
         total_hits = payload.get("total_hits")
         total_chars = payload.get("total_chars")
         record_result_count(len(hits))
         if not hits:
-            return (
+            miss = (
                 f"No match for {_echo_query(query)} in filing {filing_id} "
-                f"({total_chars} chars searched, all of it). "
+                f"({total_chars} chars searched, all of it)."
+            )
+            near = _near_matches(payload)
+            if near:
+                return "\\n".join([f"{miss} {_NEAR_MATCH_HEADER}", *_near_match_lines(near, cap)])
+            return (
+                f"{miss} "
                 "Try a shorter or different query (e.g. a single key term), or page the "
                 "document with filings_markdown_retrieve."
             )
@@ -5916,7 +5970,8 @@ async def filings_markdown_search_batch(
     retry those; and, only for a numeric query, SEARCHED FOR ONLY SOME SPELLINGS,
     where one spelling of the number was searched and another was not, so the
     filing is unresolved rather than clear. Treat the last three as UNKNOWN, never
-    as 'no match'. Hits carry
+    as 'no match'. A NO MATCH filing may also list its closest passages, marked
+    APPROXIMATE (most of the query's words, not a match). Hits carry
     character offsets you can pass to filings_markdown_retrieve, and the match count is
     the exact total in the document even when only the first few are shown.
     Max 50 filings per call.
@@ -6032,6 +6087,7 @@ async def filings_markdown_search_batch(
 
         matched = []          # (fid, matched_query, [(offset, snippet)], total_hits)
         no_match = []         # fid — searched in full for every spelling, absent
+        near_by_fid = {}      # fid -> near_matches of a no_match filing (typed spelling first)
         part_searched = []    # (fid, [unsearched spellings], [reasons])
         unavailable = []      # (fid, reason)
         skipped = []          # (fid, reason)
@@ -6060,6 +6116,9 @@ async def filings_markdown_search_batch(
             searched = [r for r in present if r.get("status") == "no_match"]
             if len(searched) == len(candidates):
                 no_match.append(fid)
+                near = next((n for n in map(_near_matches, searched) if n), [])
+                if near:
+                    near_by_fid[fid] = near
             elif searched:
                 # ⚠ SOME SPELLINGS SEARCHED, SOME NOT — and this is the one
                 # outcome the endpoint's four statuses cannot express, because it
@@ -6216,6 +6275,41 @@ async def filings_markdown_search_batch(
                 f"{_BATCH_MAX_RESULT_CHARS}-character result ceiling — they DID match and "
                 "are counted above; re-run with just these to read the passages: "
                 + ", ".join(str(f) for f, _q, _h, _t in matched[len(matched) - omitted:])
+            )
+        # Near matches for the NO MATCH filings, last: the lowest-priority text,
+        # so the budget drops them before any hit detail and never the outcomes
+        # above. A filing listed here is still a definite "no match"; these
+        # passages only say where the closest wording is.
+        near_fids = [f for f in no_match if f in near_by_fid]
+        near_omitted = []
+        if near_fids and not omitted:
+            header = (
+                "\\nNo-match filings, closest passages -- APPROXIMATE, NOT matches: the "
+                "query is not in these documents as written, but each passage holds "
+                "some of its words (listed):"
+            )
+            budget -= len(header) + 1
+            shown_near = []
+            for i, fid in enumerate(near_fids):
+                block = [f"\\n=== filing {fid} — no match ==="]
+                block.extend(_near_match_lines(near_by_fid[fid], cap))
+                cost = sum(len(b) + 1 for b in block)
+                if cost > budget - _BATCH_OMITTED_NOTICE_CHARS:
+                    near_omitted = near_fids[i:]
+                    break
+                shown_near.extend(block)
+                budget -= cost
+            if shown_near:
+                parts.append(header)
+                parts.extend(shown_near)
+        elif near_fids:
+            near_omitted = near_fids
+        if near_omitted:
+            parts.append(
+                f"\\nNOTE: closest passages for {len(near_omitted)} no-match filing(s) "
+                "omitted to stay under the result ceiling; filings_markdown_search on "
+                "one of them lists them: "
+                + ", ".join(str(f) for f in near_omitted)
             )
         return "\\n".join(parts)
     except UpstreamHTTPError:

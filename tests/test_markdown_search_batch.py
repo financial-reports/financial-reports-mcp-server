@@ -82,7 +82,7 @@ def _mock_search(respx_router, fid, *, hits, total_hits=None, total_chars=1000, 
         "query": "q",
         "total_chars": total_chars,
         "total_hits": total_hits if total_hits is not None else len(hits),
-        "hits": [{"offset": o, "context": c} for o, c in hits],
+        "hits": [{"offset": o, "snippet": c} for o, c in hits],
     }
     respx_router.get(f"{TEST_API_BASE}/filings/{fid}/markdown/search/").mock(
         return_value=httpx.Response(status, text=_json.dumps(body))
@@ -98,11 +98,12 @@ def _mock_md(respx_router, fid, text=DOC, status=200):
 def _row(fid, query, status="hit", *, hits=(), total_hits=None, reason=None):
     """ONE row of the endpoint's `results`, in the endpoint's own shape.
 
-    Note `snippet`, NOT `context`: the batch endpoint names the field
-    differently from the single-filing one (`_mock_search` above uses
-    `context`), and reading the wrong key yields EMPTY snippets rather than an
-    error — `...` with nothing between, which renders as a passage that exists
-    and is blank. The difference is pinned in section 15.
+    Note `snippet`, NOT `context`: both endpoints name the field `snippet`
+    (web markdown_window.search builds the hits of both), and reading the wrong
+    key yields EMPTY snippets rather than an error — `...` with nothing
+    between, which renders as a passage that exists and is blank. Pinned in
+    section 15 for the batch and in test_markdown_near_matches.py for the
+    single tool, which read `context` until that was found.
     """
     row = {"filing_id": fid, "query": query, "status": status}
     if status == "hit":
@@ -939,9 +940,11 @@ def test_the_client_side_scanner_and_its_bounds_are_GONE(mcp_module):
 async def test_the_batch_reads_snippet_NOT_context(
     mcp_module, monkeypatch, fake_access_token, respx_router
 ):
-    """⛔ THE TWO ENDPOINTS NAME THE FIELD DIFFERENTLY: the single-filing search
-    returns `hits[].context`, the batch returns `hits[].snippet`. Reading the
-    wrong key does not error -- it yields an EMPTY span, which renders as
+    """⛔ THE FIELD IS `hits[].snippet`, on the batch AND on the single-filing
+    search (web markdown_window.search builds both). This docstring used to say
+    the single endpoint returns `hits[].context`; it never did, and the single
+    tool, which read `context`, rendered every hit blank in prod until the
+    near-match change found it. Reading the wrong key does not error -- it yields an EMPTY span, which renders as
     `......`, a passage that exists and is blank. So the failure mode is a
     confident empty quote rather than a crash, and only an assertion on the
     TEXT catches it.

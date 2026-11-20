@@ -219,8 +219,8 @@ async def test_markdown_search_hit_count_reaches_analytics_through_real_middlewa
 
     doc_chars = 66
     _hits = (
-        [{"offset": 7, "context": "Total revenue was 10."},
-         {"offset": 36, "context": "Total Revenue rose to 12."}]
+        [{"offset": 7, "snippet": "Total revenue was 10."},
+         {"offset": 36, "snippet": "Total Revenue rose to 12."}]
         if expected_count else []
     )
     respx_router.get(f"{TEST_API_BASE}/filings/7/markdown/search/").mock(
