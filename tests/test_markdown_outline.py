@@ -259,6 +259,10 @@ async def test_a_json_404_is_the_endpoints_own_answer(mcp_module, respx_router) 
     httpx.Response(200, text="<html>a proxy page</html>"),
     httpx.Response(200, json={}),
     httpx.Response(200, json={"entries": []}),
+    httpx.Response(200, json={"entries": [], "total_chars": 5000, "scanned_chars": 5000}),
+    httpx.Response(200, json={"entries": [], "total_chars": 5000, "total_headings": 0}),
+    httpx.Response(200, json={"entries": [], "total_chars": 5000, "scanned_chars": "5000",
+                              "total_headings": 0}),
     httpx.ConnectError("refused"),
 ])
 async def test_failures_reach_the_client_as_isError(mcp_module, respx_router, response) -> None:

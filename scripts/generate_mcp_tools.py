@@ -7224,7 +7224,13 @@ async def filings_markdown_outline(
         except ValueError:
             payload = None
         entries = payload.get("entries") if isinstance(payload, dict) else None
-        if not isinstance(entries, list) or type(payload.get("total_chars")) is not int:
+        # The endpoint always sends these three counts with `entries`
+        # (web#10737, markdown_outline.outline); without them a 200 is not an
+        # outline, and an empty one would read as "no sections" (SPECHT on #222).
+        if not isinstance(entries, list) or any(
+            type(payload.get(key)) is not int
+            for key in ("total_chars", "scanned_chars", "total_headings")
+        ):
             # A 200 that is not an outline (an intermediary's page, a changed
             # API): an error, never an empty outline.
             raise UpstreamHTTPError(
