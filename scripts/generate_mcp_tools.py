@@ -7240,7 +7240,17 @@ async def filings_markdown_outline(
             e for e in entries
             if isinstance(e, dict) and type(e.get("offset")) is int
         ]
-        record_result_count(len(listed))
+        if entries and not listed:
+            # Headings came back but none is readable (an API shape change):
+            # an error, never "this filing has no headings" (SPECHT on #222).
+            raise UpstreamHTTPError(
+                "upstream filings_markdown_outline returned headings in a shape this "
+                "tool cannot read, so none can be listed. Use filings_markdown_search "
+                "on this filing.",
+                upstream_status=response.status_code,
+                request_id=_upstream_request_id(response),
+            )
+        total_headings = payload.get("total_headings")
         scanned = payload.get("scanned_chars")
         partial = (
             f" Only the first {scanned} chars were outlined; for a section after "
@@ -7250,6 +7260,14 @@ async def filings_markdown_outline(
             else ""
         )
         if not listed:
+            record_result_count(0)
+            if isinstance(total_headings, int) and total_headings > 0:
+                # Filtered out, not absent: the headings sit below `max_level`.
+                return (
+                    f"No headings at level {params.get('max_level')} or above in filing "
+                    f"{filing_id}; it has {total_headings} at deeper levels. Call again "
+                    "with a larger max_level, or without it."
+                )
             return (
                 f"No headings in filing {filing_id} ({total_chars} chars): its conversion "
                 "marked no sections, so there is no outline to jump by. Find the passage "
@@ -7268,9 +7286,10 @@ async def filings_markdown_outline(
         if len(listed) < len(entries):
             head += f" {len(entries) - len(listed)} malformed entries were left out."
         # `truncated` also covers the scan bound. Trimming by `limit` shows as a
-        # level cap the caller did not ask for, or, with none asked, as fewer
-        # entries than headings found.
-        total_headings = payload.get("total_headings")
+        # level cap the caller did not ask for: the API reports the deepest level
+        # listed in full, below any cap asked for, or 0 (web#10737), so a trim
+        # always changes it. Fewer entries than headings with no cap asked is
+        # the same signal read from the counts.
         trimmed = payload.get("max_level") != params.get("max_level") or (
             params.get("max_level") is None
             and isinstance(total_headings, int)
@@ -7305,6 +7324,8 @@ async def filings_markdown_outline(
                 break
             out.append(line)
             used += len(line) + 1
+        # The headings the client receives, not the ones upstream sent.
+        record_result_count(len(out) - 1 - (out[-1].startswith("... and ")))
         return "\\n".join(out)
     except UpstreamHTTPError:
         # See #104 — must stay an error, not become a successful string result.

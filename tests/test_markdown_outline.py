@@ -149,6 +149,29 @@ async def test_malformed_entries_are_counted_never_printed(mcp_module, respx_rou
 
 
 @pytest.mark.asyncio
+async def test_headings_none_of_which_can_be_read_are_an_error(mcp_module, respx_router) -> None:
+    respx_router.get(OUTLINE).mock(return_value=httpx.Response(200, json=_payload(
+        [{**_entry(0, "A"), "offset": "0"}, {"title": "B"}])))
+    with pytest.raises(mcp_module.UpstreamHTTPError) as exc:
+        await _fn(mcp_module)(filing_id=7)
+    assert "cannot read" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_a_level_filter_that_leaves_nothing_is_not_no_headings(
+    mcp_module, respx_router, monkeypatch
+) -> None:
+    counted = []
+    monkeypatch.setattr(mcp_module, "record_result_count", counted.append)
+    respx_router.get(OUTLINE).mock(return_value=httpx.Response(200, json=_payload(
+        [], total_headings=12, max_level=1)))
+    out = await _fn(mcp_module)(filing_id=7, max_level=1)
+    assert out.startswith("No headings at level 1 or above in filing 7; it has 12")
+    assert "marked no sections" not in out
+    assert counted == [0]
+
+
+@pytest.mark.asyncio
 async def test_an_outline_without_headings_says_to_search(mcp_module, respx_router) -> None:
     respx_router.get(OUTLINE).mock(return_value=httpx.Response(200, json=_payload([])))
     out = await _fn(mcp_module)(filing_id=7)
@@ -159,10 +182,13 @@ async def test_an_outline_without_headings_says_to_search(mcp_module, respx_rout
 @pytest.mark.asyncio
 @pytest.mark.parametrize("title_chars", [151, 157, 163, 169, 175, 181])
 async def test_the_result_stays_inside_the_ceiling_and_counts_what_it_left_out(
-    mcp_module, respx_router, title_chars
+    mcp_module, respx_router, monkeypatch, title_chars
 ) -> None:
     """Several title lengths, so the stop point lands at different distances
-    from the ceiling: one fixed length lets a zero notice room pass by luck."""
+    from the ceiling: one fixed length lets a zero notice room pass by luck.
+    Analytics records the headings the client received, not those sent."""
+    counted = []
+    monkeypatch.setattr(mcp_module, "record_result_count", counted.append)
     entries = [_entry(i * 1000, f"{i:04d} " + "x" * title_chars) for i in range(1000)]
     respx_router.get(OUTLINE).mock(return_value=httpx.Response(200, json=_payload(entries)))
     out = await _fn(mcp_module)(filing_id=7, limit=1000)
@@ -170,6 +196,7 @@ async def test_the_result_stays_inside_the_ceiling_and_counts_what_it_left_out(
     shown = sum(1 for line in out.splitlines() if line[:1].isdigit())
     assert 0 < shown < 1000
     assert f"... and {1000 - shown} more headings, not shown" in out
+    assert counted == [shown]
 
 
 @pytest.mark.asyncio
