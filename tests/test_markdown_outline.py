@@ -135,17 +135,33 @@ async def test_no_headings_in_the_outlined_start_is_not_no_headings(mcp_module, 
     respx_router.get(OUTLINE).mock(return_value=httpx.Response(200, json=body))
     out = await _fn(mcp_module)(filing_id=7)
     assert "Only the first 20000000 chars were outlined" in out
+    assert out.startswith("No headings in the first 20000000 of 90000000 chars of filing 7")
+    assert "marked no sections" not in out
+
+
+@pytest.mark.asyncio
+async def test_a_level_filter_on_a_partial_scan_is_scoped_to_it(mcp_module, respx_router) -> None:
+    body = _payload([], total_headings=40, truncated=True, max_level=1, total_chars=90_000_000)
+    body["scanned_chars"] = 20_000_000
+    respx_router.get(OUTLINE).mock(return_value=httpx.Response(200, json=body))
+    out = await _fn(mcp_module)(filing_id=7, max_level=1)
+    assert out.startswith("No headings at level 1 or above in the first 20000000 of 90000000")
+    assert "Only the first 20000000 chars were outlined" in out
 
 
 @pytest.mark.asyncio
 async def test_malformed_entries_are_counted_never_printed(mcp_module, respx_router) -> None:
     respx_router.get(OUTLINE).mock(return_value=httpx.Response(200, json=_payload(
         [_entry(10, "Real"), {"title": "no offset"}, "junk", _entry(None, "null offset"),
-         {**_entry(5, "bool"), "offset": True}], total_headings=5)))
+         {**_entry(5, "bool"), "offset": True}, {**_entry(6, "nolen"), "length": None},
+         {**_entry(7, "nolevel"), "level": "2"}, {**_entry(8, "nopage"), "page": None}],
+        total_headings=8)))
     out = await _fn(mcp_module)(filing_id=7)
     assert "10 +100 L2 Real" in out
     assert "None" not in out and "no offset" not in out and "bool" not in out
-    assert "4 malformed entries were left out" in out
+    assert "nolen" not in out and "nolevel" not in out
+    assert "8 +100 L2 nopage" in out  # a null page is fine
+    assert "6 malformed entries were left out" in out
 
 
 @pytest.mark.asyncio
@@ -166,7 +182,7 @@ async def test_a_level_filter_that_leaves_nothing_is_not_no_headings(
     respx_router.get(OUTLINE).mock(return_value=httpx.Response(200, json=_payload(
         [], total_headings=12, max_level=1)))
     out = await _fn(mcp_module)(filing_id=7, max_level=1)
-    assert out.startswith("No headings at level 1 or above in filing 7; it has 12")
+    assert out.startswith("No headings at level 1 or above in filing 7 (5000 chars); it has 12")
     assert "marked no sections" not in out
     assert counted == [0]
 

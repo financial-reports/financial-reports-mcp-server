@@ -7234,11 +7234,13 @@ async def filings_markdown_outline(
                 request_id=_upstream_request_id(response),
             )
         total_chars = payload.get("total_chars")
-        # Only entries with an integer offset can be read back; anything else
-        # would print "None" where the model expects a number to pass on.
+        # Only entries whose offset, length and level are integers can be read
+        # back; anything else would print "None" where the model expects a
+        # number to pass on. `page` may be null.
         listed = [
             e for e in entries
-            if isinstance(e, dict) and type(e.get("offset")) is int
+            if isinstance(e, dict)
+            and all(type(e.get(key)) is int for key in ("offset", "length", "level"))
         ]
         if entries and not listed:
             # Headings came back but none is readable (an API shape change):
@@ -7261,17 +7263,24 @@ async def filings_markdown_outline(
         )
         if not listed:
             record_result_count(0)
+            # Scoped to what was read: past the scan bound a heading is unknown,
+            # not absent (SPECHT on #222).
+            where = (
+                f"the first {scanned} of {total_chars} chars of filing {filing_id}"
+                if partial else f"filing {filing_id} ({total_chars} chars)"
+            )
             if isinstance(total_headings, int) and total_headings > 0:
                 # Filtered out, not absent: the headings sit below `max_level`.
                 return (
-                    f"No headings at level {params.get('max_level')} or above in filing "
-                    f"{filing_id}; it has {total_headings} at deeper levels. Call again "
-                    "with a larger max_level, or without it."
+                    f"No headings at level {params.get('max_level')} or above in {where}; "
+                    f"it has {total_headings} at deeper levels. Call again with a larger "
+                    "max_level, or without it." + partial
                 )
             return (
-                f"No headings in filing {filing_id} ({total_chars} chars): its conversion "
-                "marked no sections, so there is no outline to jump by. Find the passage "
-                f"with filings_markdown_search(filing_id={filing_id}, query='<a heading or "
+                f"No headings in {where}: "
+                + ("" if partial else "its conversion marked no sections, so ")
+                + "there is no outline to jump by. Find the passage with "
+                f"filings_markdown_search(filing_id={filing_id}, query='<a heading or "
                 "phrase>') instead, then read around its offset with filings_markdown_retrieve."
                 + partial
             )
