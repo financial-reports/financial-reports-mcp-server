@@ -1,6 +1,6 @@
 # FinancialFilings MCP: Tool Cheatsheet
 
-64 tools across 10 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
+65 tools across 10 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
 
 Note on surface size: only a curated subset is exposed by default (`companies_*`, `filings_*`, `isins_*`, plus the guide tools and in-filing search). The rest: ISIC, reference data, watchlists, webhooks, require `MCP_FULL_SURFACE=1` on the server. If a tool below isn't in your `tools/list`, that's why.
 
@@ -60,7 +60,7 @@ Returns: `id`, `shell_id`, `canonical_id`, `shell_name`, `canonical_name`, `patt
 
 Pitfall: `reversed_at` being set means the merge was undone. Do not follow `canonical_id` in that case.
 
-## Filings (7)
+## Filings (8)
 
 ### `filings_list`
 List filings across companies. **outputSchema-advertised**.
@@ -122,6 +122,15 @@ Key params: `filing_ids` (max 50 per call), `query`, `max_hits_per_filing` (1-10
 Returns: per-filing hits with character offsets, and outcomes reported SEPARATELY, matched, no match, searched only in part, not searched.
 
 Pitfall: it searches ONLY the filings you name, so a "no match" says nothing about filings outside your list, that question is `filings_search`'s. A filing can be BOTH matched and only partly searched: hits found before the byte cap are real, the tail past it is unknown. Do not read a partial search as an absence.
+
+### `filings_markdown_outline`
+The section headings of ONE filing, each with its character offset and length.
+
+Key params: `filing_id`, `max_level` (1-6, top levels only), `limit` (headings listed, default 500).
+
+Returns: one line per heading, `offset +length Llevel [pPage] title`. Pass the offset (and the length as `limit`) to `filings_markdown_retrieve` to read that section from its heading.
+
+Pitfall: it lists what the conversion marked as headings. A short filing, a transcript or a scan converted as plain text can have few or none; then use `filings_markdown_search` with the section's heading. On a long filing not every heading fits: the result says so, and the deepest levels keep only their longest sections. Ask again with `max_level` or a larger `limit`.
 
 ## Guide tools (3)
 
@@ -270,7 +279,7 @@ Pitfall: there are no free-form event names: a webhook fires on the three `trigg
 
 ## Tool annotation summary
 
-- 52 tools have `readOnlyHint=true` (safe to call without confirmation). All 19 on the default
+- 53 tools have `readOnlyHint=true` (safe to call without confirmation). All 20 on the default
   surface are read-only; every mutating tool is behind `MCP_FULL_SURFACE=1`.
 - 10 tools have `destructiveHint=true` (mutations: watchlist add/remove, webhook create and
   update, secret rotation, agent account onboarding). None is on the default surface.

@@ -56,7 +56,7 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # The default generated surface drops cold per-item reference singletons, the
 # ISIC hierarchy family (folded into the get_fr_industry_classification guide
 # tool), and webhooks/watchlist (real features, off the default surface per the
-# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full 64-tool surface
+# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full 65-tool surface
 # (NOT a superset: it drops the three get_fr_* guide tools below, which are
 # emitted on the curated surface only. tests/test_published_tool_counts.py
 # derives both counts from this generator, so neither can go stale here).
@@ -76,6 +76,9 @@ _REPLACED_BY_SYNTHETIC = {
     "filings_search_list",
     "filings_facts_retrieve",
     "filings_statements_retrieve",
+    # GET /filings/{id}/markdown/outline/ (web#8004): served by the hand-built
+    # filings_markdown_outline, which renders the JSON one line per heading.
+    "filings_markdown_outline_retrieve",
 }
 
 _PRUNED_EXCLUDE = {
@@ -4737,7 +4740,9 @@ async def {{ func_name }}(
                 "Do NOT page through all of it. To find a specific figure, line item, "
                 f"or section, call filings_markdown_search(filing_id={filing_id}, "
                 "query='<what you need, e.g. total revenue>') — it returns only the "
-                "matching passages with their offsets.\\n\\n"
+                "matching passages with their offsets. For a whole section, "
+                f"filings_markdown_outline(filing_id={filing_id}) lists the headings "
+                "with offsets.\\n\\n"
             )
         if not window_text and offset >= total_length:
             return (
@@ -5555,6 +5560,11 @@ def _resource_markdown() -> str:
         "the error alone does not say whether it ever will, so do not "
         "promise it. Any other error is about access or availability.\\n\\n"
         "## Pagination\\n\\n"
+        "To read one SECTION of a long filing, call "
+        "`filings_markdown_outline(filing_id)` first: it lists the headings "
+        "with character offsets, and `filings_markdown_retrieve` at a "
+        "heading's offset starts at that heading. Page only when the outline "
+        "has nothing usable.\\n\\n"
         "Long filings (ESEF annual reports can be 100+ pages) come back "
         "paginated. `filings_markdown_retrieve` accepts `offset` and "
         "`limit` (default limit 50000 chars, per-call cap 150000). "
@@ -7099,6 +7109,256 @@ filings_search.parameters = _unlisted_schema(filings_search.parameters, _FILINGS
 '''
 
 
+# Section outline of ONE filing (web#8004; raised on web#10473). Hand-written over
+# GET /filings/{id}/markdown/outline/, which returns the filing's Markdown headings
+# with the character offset and length of each. Rendered here as one line per
+# heading: the JSON spends about twice the tokens on the same facts. Offsets are
+# the API's character offsets, the ones filings_markdown_retrieve windows on
+# (#175), so a heading's offset reads back as that heading.
+MARKDOWN_OUTLINE_TOOL_BLOCK = '''
+
+# The endpoint's own default; past it the API keeps the deepest level's longest
+# sections only (measured on 87 filings: ~4.5k tokens at p90 in this format).
+_OUTLINE_DEFAULT_LIMIT = 500
+# Below the API's ceiling (2,000): at up to ~180 characters a line, 1,000 lines
+# can already approach the result ceiling, which the renderer enforces anyway.
+_OUTLINE_MAX_LIMIT = 1000
+_OUTLINE_MAX_LEVEL = 6
+# Kept free at the end of the result for the "N more headings" notice.
+_OUTLINE_NOTICE_ROOM = 200
+
+
+def _outline_unavailable(response: httpx.Response, filing_id: int) -> UpstreamHTTPError:
+    """The API this server talks to has no outline route yet.
+
+    The web side ships the endpoint before this tool can rely on it, and an older
+    API answers the unknown path with Django's HTML 404 page. That is not a
+    missing filing, and the generic 404 hint ("check the id") would send the model
+    away from a filing it can still read. Every 404 the endpoint itself returns is
+    JSON (no such filing, or no Markdown, with a `reason`), so a 404 whose body is
+    not JSON is the missing route.
+    """
+    return UpstreamHTTPError(
+        "The section outline is not available from the FinancialFilings API yet; "
+        f"this says nothing about filing {filing_id}. Find the section with "
+        f"filings_markdown_search(filing_id={filing_id}, query='<its heading, e.g. "
+        "Segment information>'), then read it with filings_markdown_retrieve at the "
+        "hit's offset.",
+        upstream_status=response.status_code,
+        request_id=_upstream_request_id(response),
+        error_kind="outline_unavailable",
+    )
+
+
+def _outline_line(entry: dict) -> str:
+    """One heading as `offset +length Llevel [pPage] title`."""
+    page = entry.get("page")
+    title = " ".join(str(entry.get("title") or "").split())
+    return (
+        f"{entry.get('offset')} +{entry.get('length')} L{entry.get('level')}"
+        + (f" p{page}" if page is not None else "")
+        + f" {title}"
+    )
+
+
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="Outline Filing Document",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+@subscription_required
+async def filings_markdown_outline(
+    filing_id: int,
+    max_level: Optional[int] = None,
+    limit: int = _OUTLINE_DEFAULT_LIMIT,
+) -> str:
+    """List ONE filing's section headings, each with its character offset and length,
+    to jump straight to a section (Item 7, notes to the financial statements, segment
+    information, risk factors) instead of paging a long filing window by window. Then
+    call filings_markdown_retrieve(filing_id, offset=<that offset>) to read it. Use it
+    first on a long filing when you need a section; for a phrase or a figure use
+    filings_markdown_search. Few or no headings means the conversion marked none:
+    search instead. `max_level` (1-6) keeps only the top levels; `limit` caps the
+    headings listed (default 500)."""
+    try:
+        _require_auth_context()
+        if not isinstance(filing_id, int) or filing_id <= 0:
+            raise ToolInputError("filing_id must be a positive integer")
+        params: dict[str, Any] = {}
+        if max_level is not None:
+            bad_level = f"max_level must be an integer from 1 to {_OUTLINE_MAX_LEVEL}"
+            try:
+                max_level = int(max_level)
+            except (TypeError, ValueError, OverflowError):
+                raise ToolInputError(bad_level)
+            if not 1 <= max_level <= _OUTLINE_MAX_LEVEL:
+                raise ToolInputError(bad_level)
+            params["max_level"] = max_level
+        try:
+            params["limit"] = max(1, min(int(limit), _OUTLINE_MAX_LIMIT))
+        except (TypeError, ValueError, OverflowError):
+            raise ToolInputError(f"limit must be an integer from 1 to {_OUTLINE_MAX_LIMIT}")
+
+        try:
+            response = await _api_get(f"/filings/{filing_id}/markdown/outline/", params=params)
+        except httpx.HTTPError as exc:
+            # Raised, not returned: a failed call must not read as a result
+            # (#104). Only the exception TYPE reaches the client (its message
+            # can carry the request URL).
+            raise UpstreamHTTPError(
+                f"upstream filings_markdown_outline request failed ({exc.__class__.__name__}). "
+                "The FinancialFilings API was unreachable or timed out (already retried once)."
+            ) from exc
+        if response.is_error:  # 4xx/5xx only
+            body = response.text[:_MAX_ERROR_BODY]
+            if response.status_code == 404 and _parse_upstream_json(body) is None:
+                raise _outline_unavailable(response, filing_id)
+            _raise_upstream_text_error(response, body)
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        entries = payload.get("entries") if isinstance(payload, dict) else None
+        # The endpoint always sends these three counts with `entries`
+        # (web#10737, markdown_outline.outline); without them a 200 is not an
+        # outline, and an empty one would read as "no sections" (SPECHT on #222).
+        if not isinstance(entries, list) or any(
+            type(payload.get(key)) is not int
+            for key in ("total_chars", "scanned_chars", "total_headings")
+        ):
+            # A 200 that is not an outline (an intermediary's page, a changed
+            # API): an error, never an empty outline.
+            raise UpstreamHTTPError(
+                "upstream filings_markdown_outline returned a body that is not an outline, "
+                "so no headings can be listed. Use filings_markdown_search on this filing.",
+                upstream_status=response.status_code,
+                request_id=_upstream_request_id(response),
+            )
+        total_chars = payload.get("total_chars")
+        # Only entries whose offset, length and level are integers can be read
+        # back; anything else would print "None" where the model expects a
+        # number to pass on. `page` may be null.
+        listed = [
+            e for e in entries
+            if isinstance(e, dict)
+            and all(type(e.get(key)) is int for key in ("offset", "length", "level"))
+        ]
+        if entries and not listed:
+            # Headings came back but none is readable (an API shape change):
+            # an error, never "this filing has no headings" (SPECHT on #222).
+            raise UpstreamHTTPError(
+                "upstream filings_markdown_outline returned headings in a shape this "
+                "tool cannot read, so none can be listed. Use filings_markdown_search "
+                "on this filing.",
+                upstream_status=response.status_code,
+                request_id=_upstream_request_id(response),
+            )
+        total_headings = payload.get("total_headings")
+        scanned = payload.get("scanned_chars")
+        partial = (
+            f" Only the first {scanned} chars were outlined; for a section after "
+            "that, use filings_markdown_search."
+            if isinstance(scanned, int) and isinstance(total_chars, int)
+            and scanned < total_chars
+            else ""
+        )
+        if not listed:
+            record_result_count(0)
+            # Scoped to what was read: past the scan bound a heading is unknown,
+            # not absent (SPECHT on #222).
+            where = (
+                f"the first {scanned} of {total_chars} chars of filing {filing_id}"
+                if partial else f"filing {filing_id} ({total_chars} chars)"
+            )
+            if isinstance(total_headings, int) and total_headings > 0:
+                # Filtered out, not absent: the headings sit below `max_level`.
+                return (
+                    f"No headings at level {params.get('max_level')} or above in {where}; "
+                    f"it has {total_headings} at deeper levels. Call again with a larger "
+                    "max_level, or without it." + partial
+                )
+            return (
+                f"No headings in {where}: "
+                + ("" if partial else "its conversion marked no sections, so ")
+                + "there is no outline to jump by. Find the passage with "
+                f"filings_markdown_search(filing_id={filing_id}, query='<a heading or "
+                "phrase>') instead, then read around its offset with filings_markdown_retrieve."
+                + partial
+            )
+
+        head = (
+            f"Outline of filing {filing_id}: {len(listed)} of "
+            f"{payload.get('total_headings')} headings (document is {total_chars} chars)."
+        )
+        # A very long document is outlined only up to the API's scan bound: the
+        # headings after it exist but are not listed, so say where it stops.
+        head += partial
+        if len(listed) < len(entries):
+            head += f" {len(entries) - len(listed)} malformed entries were left out."
+        # `truncated` also covers the scan bound. Trimming by `limit` shows as a
+        # level cap the caller did not ask for: the API reports the deepest level
+        # listed in full, below any cap asked for, or 0 (web#10737), so a trim
+        # always changes it. Fewer entries than headings with no cap asked is
+        # the same signal read from the counts.
+        trimmed = payload.get("max_level") != params.get("max_level") or (
+            params.get("max_level") is None
+            and isinstance(total_headings, int)
+            and len(entries) < total_headings
+        )
+        if payload.get("truncated") and (trimmed or not partial):
+            full_to = payload.get("max_level")
+            head += (
+                " Not every heading is listed: past the limit the deepest levels keep "
+                "only their longest sections"
+                + (f" (every heading down to level {full_to} is here)" if full_to else "")
+                + "."
+                + (" Pass a larger `limit` (up to {max}), or a `max_level`, to change that.".format(max=_OUTLINE_MAX_LIMIT)
+                   if params.get("limit", _OUTLINE_DEFAULT_LIMIT) < _OUTLINE_MAX_LIMIT else "")
+                + " A section not listed here can still be found with filings_markdown_search."
+            )
+        head += (
+            "\\nEach line: offset +length Llevel [pPDF-page] title. Read a section with "
+            f"filings_markdown_retrieve(filing_id={filing_id}, offset=<offset>, "
+            "limit=<length>); the window starts at the heading. A section longer "
+            "than one window (150000 chars) continues at the next offset the read "
+            "returns, up to offset+length.\\n"
+        )
+        # The result ceiling covers the whole result (#122). Lines go in until
+        # the next would pass it, and what is left is counted: never cut
+        # mid-line, never dropped without saying so.
+        out = [head]
+        used = len(head)
+        for index, entry in enumerate(listed):
+            line = _outline_line(entry)
+            if used + len(line) + 1 > _MAX_RESULT_CHARS - _OUTLINE_NOTICE_ROOM:
+                out.append(
+                    f"... and {len(listed) - index} more headings, not shown to keep "
+                    "the result inside its size limit: ask again with a smaller "
+                    "`limit` or a `max_level`, or find a section not shown with "
+                    "filings_markdown_search."
+                )
+                break
+            out.append(line)
+            used += len(line) + 1
+        # The headings the client receives, not the ones upstream sent.
+        record_result_count(len(out) - 1 - (out[-1].startswith("... and ")))
+        return "\\n".join(out)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
+    except ToolInputError as exc:
+        return _safe_error("filings_markdown_outline", exc)
+    except Exception as exc:
+        logger.exception("filings_markdown_outline failed")
+        return _safe_error("filings_markdown_outline", exc)
+'''
+
+
 # As-reported facts tools (web#10586, built in web#4964). Hand-written, 1:1 with
 # GET /filings/{id}/facts/ and GET /filings/{id}/statements/: same params, same
 # shapes, nothing MCP-only. Always EMITTED (the generated module is the same
@@ -7399,7 +7659,12 @@ async def find_filing_section(
         "so do NOT make it a selection gate: if it is null or absent, just "
         "proceed. Treat it only as "
         "an explanation if a markdown fetch then comes back empty.\\n"
-        f"4. `filings_markdown_search` with filing_id=<that id>, "
+        "4. On a long filing (an annual report, a 10-K), first "
+        "`filings_markdown_outline` with filing_id=<that id>: it lists the "
+        "headings with their character offsets. If one names the section, "
+        "skip to `filings_markdown_retrieve` with that offset. Otherwise, or "
+        "if the outline has few or no headings: "
+        f"`filings_markdown_search` with filing_id=<that id>, "
         f"query=\\"{section_keyword}\\". It searches the WHOLE filing in one "
         "call and returns each hit with a character offset. No hit: retry "
         "once or twice with the section's usual heading or a synonym, in the "
@@ -8598,6 +8863,9 @@ def main() -> None:
     # Huge-filing search tool (synthetic) — emitted on every surface; pairs with
     # the in-result pointer filings_markdown_retrieve adds on big (>120k) filings.
     generated_code.append(MARKDOWN_SEARCH_TOOL_BLOCK)
+    # Section outline (synthetic, every surface): the outline endpoint's headings
+    # with offsets for filings_markdown_retrieve.
+    generated_code.append(MARKDOWN_OUTLINE_TOOL_BLOCK)
     # As-reported facts tools (web#10586) — emitted on every surface, registered
     # only when MCP_UNSTD_FACTS_TOOLS=1 at runtime. Deliberately NOT added to
     # generated_tools, so the README tool table never lists them.

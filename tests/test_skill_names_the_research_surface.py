@@ -133,7 +133,7 @@ def test_the_skill_names_every_research_tool(mcp_module) -> None:
 # The shape test is a heuristic, so it gets a control: see
 # test_the_tool_name_matcher_can_see_every_served_tool.
 _TOOL_NAME_IN_PROSE = re.compile(
-    r"`(get_fr_[a-z0-9_]+|[a-z][a-z0-9_]*(?:_list|_retrieve|_create|_search|_batch))`"
+    r"`(get_fr_[a-z0-9_]+|[a-z][a-z0-9_]*(?:_list|_retrieve|_create|_search|_batch|_outline))`"
 )
 
 

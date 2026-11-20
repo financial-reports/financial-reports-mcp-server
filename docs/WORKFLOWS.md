@@ -40,7 +40,7 @@ at or near 1.00 on its case where the same model without it scores near 0. See
 
 ## Tool decision table
 
-**Check what you actually have before following a sequence below.** The hosted server exposes a curated **19** tools by default — 13 schema-derived, the 3 `get_fr_*` guide tools, and the 3 hand-written search tools (`filings_search`, `filings_markdown_search`, `filings_markdown_search_batch`) — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not in your `tools/list` and calling them will fail**.
+**Check what you actually have before following a sequence below.** The hosted server exposes a curated **20** tools by default — 13 schema-derived, the 3 `get_fr_*` guide tools, and the 4 hand-written tools (`filings_search`, `filings_markdown_search`, `filings_markdown_search_batch`, `filings_markdown_outline`) — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not in your `tools/list` and calling them will fail**.
 
 Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default surface, say so plainly rather than substituting a tool that answers a different question.
 
@@ -53,6 +53,7 @@ Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default sur
 | Which companies mention X (a list of companies, not filings) | `filings_search` with `group_by="company"`: one row per company with its matching-filing count, first and last release date and best-matching filing, counted over the top matches by relevance (the result says when there are more: narrow the dates, countries or types to count them all). Then `filings_search` with `companies=<id>`, or `companies=<id,id,…>` for a basket, to read those companies' hits |
 | Get filings | `filings_list` → `filings_retrieve` → `filings_markdown_retrieve` for content |
 | Search inside a large filing | `filings_markdown_search` (don't fetch 10 MB to find one section); `filings_markdown_search_batch` for one query across a set you already hold |
+| Read one section of a long filing | `filings_markdown_outline` (its headings with offsets) → `filings_markdown_retrieve` at the section's offset, instead of paging from the start; few or no headings → `filings_markdown_search` |
 | Get financials | `companies_financials_retrieve` (annual or quarterly, normalized line items) |
 | Predict next report | `companies_next_annual_report_retrieve` |
 | Understand filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` |

@@ -100,6 +100,10 @@ ALLOWED_ARG_KEYS = frozenset({
     # with "query"/"q" above, under #163's ruling. "filing_ids_count" is in
     # DERIVED_ARG_KEYS below, deliberately NOT here — see that comment.
     "max_hits_per_filing",
+    # The outline tool's level cap (filings_markdown_outline, web#8004): an
+    # integer 1-6. Its other args, filing_id and limit, are already here. The
+    # receiver allowlists it in the web PR that ships the endpoint (web#10737).
+    "max_level",
     # The batch tool's filing id list itself (Alex, 2026-11-16: "log them"; receiver
     # web#10413). Kept out at first as a user's research set; without it the batch
     # reads that follow a search were invisible to search_rank_feedback, so search

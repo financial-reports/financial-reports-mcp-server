@@ -54,12 +54,17 @@ the company-brief skill or `companies_financials_retrieve` instead.
    and nothing else about the period. To state the period end, call
    `filings_retrieve` on the filing you chose, which is one call and worth it
    because the period end is the figure a reader uses to judge the vintage.
-3. **Search inside it.** `filings_markdown_search?filing_id=<id>&query=<phrase>`.
-   This returns matching passages with a character `offset` and the exact total
-   number of matches in the document.
+3. **Find the section in it.** For a whole section of a long filing (an annual
+   report, a 10-K), `filings_markdown_outline?filing_id=<id>` lists its headings,
+   each with a character `offset` and `length`. If the section is there, go to
+   step 4 with that offset. If it is not, if the outline has few or no headings,
+   or if you need a phrase rather than a section, search:
+   `filings_markdown_search?filing_id=<id>&query=<phrase>` returns matching
+   passages with a character `offset` and the exact total number of matches in
+   the document.
 4. **Widen only if needed.** `filings_markdown_retrieve` with the `offset` from
-   step 3 reads the surrounding window. Use it to quote in context, not to read
-   the report.
+   step 3 reads the window that starts there. Use it to quote in context, not to
+   read the report.
 
 Across several filings of the same company, use
 `filings_markdown_search_batch` with up to 50 filing ids in one call. It is the

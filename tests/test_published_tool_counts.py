@@ -33,13 +33,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GENERATED = REPO_ROOT / "src/financial_reports_mcp.py"
 GENERATOR = REPO_ROOT / "scripts/generate_mcp_tools.py"
 
-# The three tools the generator emits from inline `*_BLOCK` templates rather
+# The four tools the generator emits from inline `*_BLOCK` templates rather
 # than from the OpenAPI schema. Named so the decomposition in the docs
-# ("N schema-derived + 3 guide + 3 hand-written") stays checkable.
+# ("N schema-derived + 3 guide + 4 hand-written") stays checkable.
 HAND_WRITTEN = {
     "filings_search",
     "filings_markdown_search",
     "filings_markdown_search_batch",
+    "filings_markdown_outline",
 }
 
 
@@ -181,7 +182,7 @@ def _doc(relpath: str) -> str:
 # --- the measurements themselves ---------------------------------------------
 
 def test_the_default_surface_decomposes_as_the_docs_describe_it(surfaces) -> None:
-    """13 schema-derived + 3 guide + 3 hand-written. Pin the parts, not just the sum.
+    """13 schema-derived + 3 guide + 4 hand-written. Pin the parts, not just the sum.
 
     A total alone cannot catch a tool moving between categories, and the docs
     describe the categories.
@@ -191,7 +192,7 @@ def test_the_default_surface_decomposes_as_the_docs_describe_it(surfaces) -> Non
     hand = default & HAND_WRITTEN
     schema = default - guide - hand
     assert len(guide) == 3, sorted(guide)
-    assert len(hand) == 3, sorted(hand)
+    assert len(hand) == 4, sorted(hand)
 
     # \u26d4 THE LINE THAT USED TO BE HERE WAS A TAUTOLOGY, and SPECHT caught it:
     #     assert len(default) == len(schema) + len(guide) + len(hand)
@@ -440,17 +441,17 @@ def test_the_secondary_docs_lost_their_stale_counts(relpath: str, stale) -> None
 _NOT_A_SURFACE_COUNT = (
     # the RESEARCH surface: default minus the 3 administrative/reference tools.
     # Pinned against the module by tests/test_skill_names_the_research_surface.py.
-    "16 research tools",
-    "**16** tools for regulatory-filings research",
+    "17 research tools",
+    "**17** tools for regulatory-filings research",
     # decomposition sub-counts, pinned by
     # test_the_default_surface_decomposes_as_the_docs_describe_it
     "3 `get_fr_*` guide tools",
-    "3 hand-written search tools",
+    "4 hand-written tools",
     # Annotation counts in the cheatsheet: properties of the full surface's
     # ToolAnnotations, not sizes of a surface. Measured 2026-11-19 over the
     # full render excluding the `_pay_*` x402 variants, and pinned by
     # tests/test_cheatsheet_annotation_counts.py.
-    "52 tools have",
+    "53 tools have",
     "10 tools have",
     "2 tools are non-destructive probes",
     "6 tools advertise",
