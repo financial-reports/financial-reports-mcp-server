@@ -7316,7 +7316,10 @@ async def filings_markdown_outline(
                 " Not every heading is listed: past the limit the deepest levels keep "
                 "only their longest sections"
                 + (f" (every heading down to level {full_to} is here)" if full_to else "")
-                + ". Pass a larger `limit`, or a `max_level`, to change that."
+                + "."
+                + (" Pass a larger `limit` (up to {max}), or a `max_level`, to change that.".format(max=_OUTLINE_MAX_LIMIT)
+                   if params.get("limit", _OUTLINE_DEFAULT_LIMIT) < _OUTLINE_MAX_LIMIT else "")
+                + " A section not listed here can still be found with filings_markdown_search."
             )
         head += (
             "\\nEach line: offset +length Llevel [pPDF-page] title. Read a section with "

@@ -106,6 +106,22 @@ async def test_truncation_is_said_with_the_level_shown_in_full(mcp_module, respx
     assert "2 of 900 headings" in out
     assert "Not every heading is listed" in out
     assert "every heading down to level 1 is here" in out
+    assert "Pass a larger `limit` (up to 1000)" in out
+    assert "filings_markdown_search" in out
+
+
+@pytest.mark.asyncio
+async def test_a_capped_outline_at_the_largest_limit_points_to_search_not_a_larger_limit(
+    mcp_module, respx_router
+) -> None:
+    """At limit=1000 (the tool's ceiling) a larger limit cannot help: the guidance is search."""
+    respx_router.get(OUTLINE).mock(return_value=httpx.Response(200, json=_payload(
+        [_entry(0, "Part A", level=1), _entry(50, "Long section", level=2)],
+        total_headings=1500, truncated=True, max_level=1)))
+    out = await _fn(mcp_module)(filing_id=7, limit=1000)
+    assert "Not every heading is listed" in out
+    assert "Pass a larger `limit`" not in out
+    assert "can still be found with filings_markdown_search" in out
 
 
 @pytest.mark.asyncio
