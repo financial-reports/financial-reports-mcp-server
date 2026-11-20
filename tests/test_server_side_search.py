@@ -51,13 +51,14 @@ def _mock_search(respx_router, fid, *, hits, total_hits=None, total_chars=1000):
             "query": "q",
             "total_chars": total_chars,
             "total_hits": total_hits if total_hits is not None else len(hits),
-            "hits": [{"offset": o, "context": c} for o, c in hits],
+            # `snippet`: the field web's search endpoint returns (markdown_window.search).
+            "hits": [{"offset": o, "snippet": c} for o, c in hits],
         })
     )
 
 
 def _hit(offset, span):
-    return {"offset": offset, "context": span}
+    return {"offset": offset, "snippet": span}
 
 
 @pytest.mark.asyncio
@@ -470,7 +471,7 @@ async def test_no_hit_is_reported_as_OUT_OF_REACH_any_more(
         return_value=httpx.Response(
             200,
             json={
-                "hits": [{"offset": far, "context": "the passage"}],
+                "hits": [{"offset": far, "snippet": "the passage"}],
                 "total_hits": 1,
                 "total_chars": 20_000_000,
             },

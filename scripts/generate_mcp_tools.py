@@ -5717,6 +5717,108 @@ def _echo_query(raw: str) -> str:
     )
 
 
+# Near matches (web: markdown_window.near_matches). On a miss the API also
+# returns up to 3 passages holding most of the query's content words, so an
+# agent can read around them instead of guessing a new phrasing (most measured
+# zero-hit queries are wording the filing does not use verbatim: "cash paid for
+# interest" where it says "interest paid"). They are APPROXIMATE, never hits:
+# a search that returns only near matches is still a miss, counted as one here
+# (record_result_count) and billed as one upstream (free under misses-free).
+# The field is read with .get(): an API that predates it simply has none, and
+# the output is then exactly what it was.
+_NEAR_MATCH_HEADER = (
+    "Closest passages -- APPROXIMATE, NOT matches: the filing does not contain the "
+    "query as written, but each passage holds some of its words (listed). Read "
+    "around an offset with filings_markdown_retrieve to see whether the filing says "
+    "the same thing in other words:"
+)
+
+
+def _near_matches(payload_or_row) -> list:
+    """The `near_matches` list of a search response or batch row, else []."""
+    near = (payload_or_row or {}).get("near_matches")
+    if not isinstance(near, list):
+        return []
+    return [n for n in near if isinstance(n, dict)]
+
+
+# The API sends at most 3 near matches of ~740 characters; these bound what a
+# malformed or future response could make either tool emit.
+_NEAR_SNIPPET_CHARS = 1_000
+_NEAR_WORDS_SHOWN = 20
+
+
+def _near_words(value) -> str:
+    """A near match's word list for display; anything but a list shows nothing."""
+    if not isinstance(value, list):
+        return ""
+    return ", ".join(str(w) for w in value[:_NEAR_WORDS_SHOWN])
+
+
+def _near_match_lines(near: list, limit: int) -> list:
+    """One labelled block per near match, at most `limit` of them."""
+    lines = []
+    for n in near[:limit]:
+        has = _near_words(n.get("matched_words"))
+        lacks = _near_words(n.get("missing_words"))
+        label = f"--- approximate, near offset {n.get('offset')} (has: {has or '-'}"
+        if lacks:
+            label += f"; missing: {lacks}"
+        snippet = str(n.get("snippet") or "")[:_NEAR_SNIPPET_CHARS]
+        lines.append(f"{label}) ---\\n...{snippet}...")
+    return lines
+
+
+def _near_section(fids: list, near_by_fid: dict, cap: int, room: int, show: bool) -> list:
+    """The batch's near-match lines for the no-match filings `fids`, in at most
+    `room` characters (each line costs its length plus a newline).
+
+    Whole filings are dropped from the end until the section, plus a notice
+    naming what was dropped, fits; failing that the notice loses its ids, and
+    failing that the section is empty. So it can never push the result past the
+    ceiling, and never drops anything but near-match text."""
+    header = (
+        "\\nNo-match filings, closest passages -- APPROXIMATE, NOT matches: the "
+        "query is not in these documents as written, but each passage holds "
+        "some of its words (listed):"
+    )
+    blocks = []
+    if show:
+        for fid in fids:
+            block = [f"\\n=== filing {fid} — no match ==="]
+            block.extend(_near_match_lines(near_by_fid[fid], cap))
+            blocks.append((fid, block))
+
+    def cost(lines):
+        return sum(len(line) + 1 for line in lines)
+
+    def notice(left_out, with_ids=True):
+        text = (
+            f"\\nNOTE: closest passages for {len(left_out)} no-match filing(s) "
+            "omitted to stay under the result ceiling"
+        )
+        if with_ids:
+            text += "; filings_markdown_search on one of them lists them: " + ", ".join(
+                str(f) for f in left_out
+            )
+        return text
+
+    while True:
+        kept = {fid for fid, _block in blocks}
+        left_out = [f for f in fids if f not in kept]
+        section = [header] + [line for _fid, block in blocks for line in block] if blocks else []
+        if left_out:
+            section = section + [notice(left_out)]
+        if cost(section) <= room:
+            return section
+        if blocks:
+            blocks.pop()
+            continue
+        for fallback in ([notice(left_out, with_ids=False)], []):
+            if cost(fallback) <= room:
+                return fallback
+
+
 @mcp.tool(
     tags={"Filings"},
     annotations=ToolAnnotations(
@@ -5755,7 +5857,10 @@ async def filings_markdown_search(
     out. Exact hits come first in document order, then those split ones; `total_hits`
     counts both. Each hit shows ~440 chars of context and an offset you can pass to
     filings_markdown_retrieve to read more around it. `query` is at most 200 characters
-    -- search a distinctive phrase, not a whole passage."""
+    -- search a distinctive phrase, not a whole passage. When NOTHING matches, it lists
+    up to 3 closest passages, marked APPROXIMATE (they hold most of the query's words,
+    e.g. "interest paid" for "cash paid for interest"): read around them, but they are
+    not matches."""
     try:
         _require_auth_context()
         if not isinstance(filing_id, int) or filing_id <= 0:
@@ -5804,6 +5909,7 @@ async def filings_markdown_search(
         # because the day-dedup keys on (user, filing) and not on the endpoint
         # (web #5691; filing-markdown-search is LEVEL_2, same as the download).
         payload = None
+        typed_payload = None  # the first candidate's: the spelling the caller typed
         # Each CANDIDATE crosses the wire, not `raw` — so the length bound has to
         # be applied here too. SPECHT S2 (2/3 phrasings) on the commit that added
         # the input guard, and it was a defect that guard INTRODUCED: a 151-digit
@@ -5825,19 +5931,36 @@ async def filings_markdown_search(
                     response, response.text[:_MAX_ERROR_BODY]
                 )
             payload = response.json()
+            if typed_payload is None:
+                typed_payload = payload
             if payload.get("hits"):
                 break
+        # ⛔ `snippet`, NOT `context`. The endpoint has returned
+        # `hits: [{offset, snippet}]` since it shipped (web filings/markdown_window.py
+        # `search`, docs/API.md); this read `context`, a key the API never sends, so
+        # every hit rendered as an empty `......` -- an offset with no text. The
+        # tests mocked the same wrong key, so they agreed with the code and not the
+        # API. Measured in prod: ~75 characters of tool output per hit over the 14
+        # days to 2026-11-20, where a ~440-character snippet would give ~480.
         hits = [
-            (h.get("offset"), h.get("context") or "")
+            (h.get("offset"), h.get("snippet") or "")
             for h in (payload.get("hits") or [])
         ][:cap]
         total_hits = payload.get("total_hits")
         total_chars = payload.get("total_chars")
         record_result_count(len(hits))
         if not hits:
-            return (
+            miss = (
                 f"No match for {_echo_query(query)} in filing {filing_id} "
-                f"({total_chars} chars searched, all of it). "
+                f"({total_chars} chars searched, all of it)."
+            )
+            # From the spelling the caller TYPED, as the batch does: for "19409"
+            # the passages closest to "19409", not to the comma form tried after.
+            near = _near_matches(typed_payload) or _near_matches(payload)
+            if near:
+                return "\\n".join([f"{miss} {_NEAR_MATCH_HEADER}", *_near_match_lines(near, cap)])
+            return (
+                f"{miss} "
                 "Try a shorter or different query (e.g. a single key term), or page the "
                 "document with filings_markdown_retrieve."
             )
@@ -5916,7 +6039,8 @@ async def filings_markdown_search_batch(
     retry those; and, only for a numeric query, SEARCHED FOR ONLY SOME SPELLINGS,
     where one spelling of the number was searched and another was not, so the
     filing is unresolved rather than clear. Treat the last three as UNKNOWN, never
-    as 'no match'. Hits carry
+    as 'no match'. A NO MATCH filing may also list its closest passages, marked
+    APPROXIMATE (most of the query's words, not a match). Hits carry
     character offsets you can pass to filings_markdown_retrieve, and the match count is
     the exact total in the document even when only the first few are shown.
     Max 50 filings per call.
@@ -6032,6 +6156,7 @@ async def filings_markdown_search_batch(
 
         matched = []          # (fid, matched_query, [(offset, snippet)], total_hits)
         no_match = []         # fid — searched in full for every spelling, absent
+        near_by_fid = {}      # fid -> near_matches of a no_match filing (typed spelling first)
         part_searched = []    # (fid, [unsearched spellings], [reasons])
         unavailable = []      # (fid, reason)
         skipped = []          # (fid, reason)
@@ -6060,6 +6185,9 @@ async def filings_markdown_search_batch(
             searched = [r for r in present if r.get("status") == "no_match"]
             if len(searched) == len(candidates):
                 no_match.append(fid)
+                near = next((n for n in map(_near_matches, searched) if n), [])
+                if near:
+                    near_by_fid[fid] = near
             elif searched:
                 # ⚠ SOME SPELLINGS SEARCHED, SOME NOT — and this is the one
                 # outcome the endpoint's four statuses cannot express, because it
@@ -6217,6 +6345,23 @@ async def filings_markdown_search_batch(
                 "are counted above; re-run with just these to read the passages: "
                 + ", ".join(str(f) for f, _q, _h, _t in matched[len(matched) - omitted:])
             )
+        # Near matches for the NO MATCH filings, last: the lowest-priority text,
+        # so the budget drops them before any hit detail and never the outcomes
+        # above. A filing listed here is still a definite "no match"; these
+        # passages only say where the closest wording is.
+        near_fids = [f for f in no_match if f in near_by_fid]
+        if near_fids:
+            parts.extend(_near_section(
+                near_fids, near_by_fid, cap,
+                # Fit against what is ALREADY in `parts`, outcome blocks, hit
+                # detail and its own omission notice included, rather than
+                # against the running budget: that one reserves room for the
+                # hit notice only, so a second notice could overrun it.
+                room=_BATCH_MAX_RESULT_CHARS - sum(len(p) + 1 for p in parts),
+                # Once hit detail had to be cut, no near-match text is shown,
+                # only the notice: a hit outranks an approximate passage.
+                show=not omitted,
+            ))
         return "\\n".join(parts)
     except UpstreamHTTPError:
         # A whole-batch failure must stay an ERROR. Two things reach here: the
