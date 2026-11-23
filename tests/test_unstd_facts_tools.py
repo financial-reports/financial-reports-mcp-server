@@ -136,8 +136,8 @@ async def test_flag_on_tools_listed_read_only_with_their_params(unstd_module) ->
         tools = {t.name: t for t in await client.list_tools()}
     assert set(UNSTD_TOOLS) <= set(tools)
     expected_params = {
-        "filings_facts": {"id", "statement", "method", "status", "page", "page_size"},
-        "filings_statements": {"id", "statement", "method"},
+        "filings_facts": {"id", "statement", "method", "scope", "page", "page_size"},
+        "filings_statements": {"id", "statement", "method", "scope"},
     }
     for name, params in expected_params.items():
         tool = tools[name]
@@ -186,12 +186,12 @@ async def test_filings_facts_path_params_and_compact_output(
         return_value=httpx.Response(200, json=FACTS_BODY)
     )
     out = await _tool(unstd_module, "filings_facts")(
-        id=42817733, statement="IS", method="llm", page=2, page_size=500
+        id=42817733, statement="IS", method="llm", scope="consolidated,separate", page=2, page_size=500
     )
     assert route.called
     req = route.calls.last.request
     assert dict(req.url.params) == {
-        "statement": "IS", "method": "llm", "page": "2", "page_size": "100",
+        "statement": "IS", "method": "llm", "scope": "consolidated,separate", "page": "2", "page_size": "100",
     }
     assert req.headers["authorization"] == "Bearer real-access-token"
     assert out == _compact(FACTS_BODY)
@@ -213,7 +213,7 @@ async def test_filings_statements_path_and_defaults_send_no_params(
 
 
 @pytest.mark.asyncio
-async def test_filings_statements_sends_statement_and_method(
+async def test_filings_statements_sends_statement_method_and_scope(
     unstd_module, monkeypatch, fake_access_token, respx_router
 ) -> None:
     _auth_as(unstd_module, monkeypatch, fake_access_token)
@@ -221,10 +221,10 @@ async def test_filings_statements_sends_statement_and_method(
         return_value=httpx.Response(200, json=STATEMENTS_BODY)
     )
     await _tool(unstd_module, "filings_statements")(
-        id=14477798, statement="IS,CF", method="structured"
+        id=14477798, statement="IS,CF", method="structured", scope="separate"
     )
     assert dict(route.calls.last.request.url.params) == {
-        "statement": "IS,CF", "method": "structured",
+        "statement": "IS,CF", "method": "structured", "scope": "separate",
     }
 
 

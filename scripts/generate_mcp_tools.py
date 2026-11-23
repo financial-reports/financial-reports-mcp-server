@@ -8287,6 +8287,15 @@ if MCP_UNSTD_FACTS_TOOLS:
                 "filing has them, else llm (read from the report, not authoritative)."
             ),
         ] = None,
+        scope: Annotated[
+            Literal["consolidated", "separate", "all"] | None,
+            Field(
+                description="Whose statements. Default: the group's (consolidated) where "
+                "the filing has any, else the company's own (separate). separate = the "
+                "parent-only or individual statements; all = both, each table labelled. "
+                "The response's scopes_available says which the filing has."
+            ),
+        ] = None,
     ) -> str:
         """ONE filing's financial statements AS REPORTED: the company's own line
         items and labels, in printed order, nested as printed, with every period
@@ -8300,7 +8309,7 @@ if MCP_UNSTD_FACTS_TOOLS:
         is what a PARTICULAR filing printed."""
         return await _unstd_facts_get(
             "filings_statements", id, "statements",
-            {"statement": statement, "method": method},
+            {"statement": statement, "method": method, "scope": scope},
         )
 
     @mcp.tool(
@@ -8318,9 +8327,12 @@ if MCP_UNSTD_FACTS_TOOLS:
                 "filing has, mixed; check each fact's `method`."
             ),
         ] = None,
-        status: Annotated[
-            Literal["accepted", "all"] | None,
-            Field(description="Default accepted; all adds read-from-report facts still under review."),
+        scope: Annotated[
+            str | None,
+            Field(
+                description="Comma list: only facts of these entities: consolidated (the "
+                "group), separate (the parent's own), segment, other, unknown. Default: all."
+            ),
         ] = None,
         page: int | None = None,
         page_size: int | None = None,
@@ -8330,12 +8342,13 @@ if MCP_UNSTD_FACTS_TOOLS:
         tagged, statement, period, unit and dimensions. `value` is a decimal
         string, fully scaled (`as_printed` is the printed figure and scale, for
         audit). XBRL or structured facts are the filer's own; llm facts are read
-        from the report, carry `confidence`/`status` and are not authoritative.
+        from the report, carry `confidence` and are not authoritative (only
+        accepted facts are served).
         No note numbers. Prefer filings_statements for the statement tables; use
         this for notes or to find one tagged figure."""
         return await _unstd_facts_get(
             "filings_facts", id, "facts",
-            {"statement": statement, "method": method, "status": status,
+            {"statement": statement, "method": method, "scope": scope,
              "page": page, "page_size": page_size},
         )
 '''
