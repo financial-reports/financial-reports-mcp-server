@@ -7430,6 +7430,10 @@ SAVED_SEARCH_TOOLS_BLOCK = '''
 #   404      every route while the feature is off for the caller, and an id
 #            that is not the caller's; the two cannot be told apart.
 _SAVED_SEARCH_PATH = "/filings/search/saved/"
+# Rows per list page: an account keeps at most 20 ACTIVE searches but any
+# number of paused ones, and a row can carry five 200-character queries, so a
+# page of 100 could pass the result ceiling (SPECHT on #224).
+_SAVED_LIST_PAGE_SIZE = 20
 # A pull is billed as one filings_search page, so it returns about what one
 # default filings_search page does (20 rows). The API's own default (50) puts
 # 50 filings' snippets into one result, a lot for an agent's context on every
@@ -8043,20 +8047,34 @@ async def filings_search_saved_list(page: int = 1) -> str:
             raise ToolInputError("page must be an integer")
         try:
             response = await _api_get(
-                _SAVED_SEARCH_PATH, params={"page": page_no, "page_size": 100}
+                _SAVED_SEARCH_PATH,
+                params={"page": page_no, "page_size": _SAVED_LIST_PAGE_SIZE},
             )
         except httpx.HTTPError as exc:
             raise UpstreamHTTPError(
                 f"upstream filings_search_saved_list request failed ({exc.__class__.__name__}). "
                 "The FinancialFilings API was unreachable or timed out (already retried once)."
             ) from exc
-        if response.status_code == 404:
-            if page_no > 1:
-                # A page past the last is a 404 too, and its body need not say so.
+        if response.status_code == 404 and page_no > 1:
+            # A page past the last is a 404 too, and so is every page when saved
+            # searches are off for this account: page 1 tells them apart (SPECHT
+            # on #224). Listing is free, so the extra request costs nothing.
+            try:
+                first = await _api_get(
+                    _SAVED_SEARCH_PATH, params={"page": 1, "page_size": _SAVED_LIST_PAGE_SIZE}
+                )
+            except httpx.HTTPError as exc:
+                raise UpstreamHTTPError(
+                    f"upstream filings_search_saved_list request failed ({exc.__class__.__name__}). "
+                    "The FinancialFilings API was unreachable or timed out (already retried once)."
+                ) from exc
+            if first.status_code != 404:
                 return (
                     f"No saved searches on page {page_no}. Call with page=1 for the "
                     "first ones."
                 )
+            response = first
+        if response.status_code == 404:
             raise _saved_unavailable(response, "there are no saved searches to list")
         if response.is_error:
             _raise_upstream_text_error(response, response.text[:_MAX_ERROR_BODY])

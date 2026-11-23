@@ -758,7 +758,7 @@ async def test_list_renders_each_search(m, respx_router) -> None:
         )
     )
     out = await _fn(m, "filings_search_saved_list")()
-    assert route.calls.last.request.url.params["page_size"] == "100"
+    assert route.calls.last.request.url.params["page_size"] == "20"
     assert "- saved search 7 | Going concern | queries" in out
     assert "filters: countries=DE" in out and "up to 20 per pull" in out
     assert "active, pulled with filings_search_new" in out
@@ -776,6 +776,32 @@ async def test_list_404_means_not_available_yet(m, respx_router) -> None:
     )
     with pytest.raises(m.UpstreamHTTPError) as exc:
         await _fn(m, "filings_search_saved_list")()
+    assert "not available on this FinancialFilings account yet" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_list_404_past_the_last_page_vs_feature_off(m, respx_router) -> None:
+    """A later-page 404 is "past the end" only when page 1 answers (SPECHT on #224)."""
+
+    def pages(first_status):
+        def answer(request):
+            if request.url.params["page"] == "1":
+                if first_status == 200:
+                    return httpx.Response(
+                        200, json={"count": 0, "next": None, "previous": None, "results": []}
+                    )
+                return httpx.Response(first_status, json={"detail": "Not found."})
+            return httpx.Response(404, json={"detail": "Invalid page."})
+
+        return answer
+
+    route = respx_router.get(SAVED).mock(side_effect=pages(200))
+    out = await _fn(m, "filings_search_saved_list")(page=3)
+    assert out.startswith("No saved searches on page 3.")
+    assert [c.request.url.params["page"] for c in route.calls] == ["3", "1"]
+    route.mock(side_effect=pages(404))
+    with pytest.raises(m.UpstreamHTTPError) as exc:
+        await _fn(m, "filings_search_saved_list")(page=2)
     assert "not available on this FinancialFilings account yet" in str(exc.value)
 
 
