@@ -79,6 +79,17 @@ _REPLACED_BY_SYNTHETIC = {
     # GET /filings/{id}/markdown/outline/ (web#8004): served by the hand-built
     # filings_markdown_outline, which renders the JSON one line per heading.
     "filings_markdown_outline_retrieve",
+    # Saved searches (web#10851), out of the schema until the web flag is on.
+    # These three are served by SAVED_SEARCH_TOOLS_BLOCK whenever the schema
+    # carries them (the block's gate needs exactly these routes), so a generic
+    # twin would be a second tool for the same endpoint. The list twin would
+    # even take the SAME name as the hand-built filings_search_saved_list and
+    # replace it. Keys read from the schema with the endpoints
+    # (operationId), not typed: this is a denylist, and a misspelt key fails
+    # open. The other two GET/POST operations are in _PRUNED_EXCLUDE.
+    "filings_search_saved_list",
+    "filings_search_saved_create",
+    "filings_search_saved_new_create",
 }
 
 _PRUNED_EXCLUDE = {
@@ -207,6 +218,17 @@ _PRUNED_EXCLUDE = {
     # `additionalProperties: {}`, so the tool would ship an untyped blob whose
     # `output_schema` tells the model nothing.
     "companies_financials_trust_tiers_retrieve",
+    # Saved searches (web#10851): the two GET/POST operations no hand-built tool
+    # serves. Keys read from the schema with the endpoints, not typed (a misspelt
+    # key fails open). `filings_search_saved_retrieve` is one search's row, which
+    # filings_search_saved_list already renders with its status.
+    # `filings_search_saved_preview_create` runs the search and shows what the
+    # next pull would return without recording it: a billed search whose answer
+    # the next filings_search_new returns anyway, and next to it a model would
+    # have two pull-shaped tools to pick from. Both stay on MCP_FULL_SURFACE=1.
+    # (PUT/PATCH/DELETE are never generated.)
+    "filings_search_saved_retrieve",
+    "filings_search_saved_preview_create",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 
@@ -6768,7 +6790,7 @@ async def filings_search(
     Cost: one Markdown request (6 credits, 12 if any filing on the page is a premium
     type) for each page that returns at least one result, company rows included. A
     search with no results bills nothing. Every page is billed separately, so fetch
-    further pages only when you need them."""
+    further pages only when you need them.__SAVED_SEARCH_STEER__"""
     try:
         _require_auth_context()
         # Aliases models send (prod MCP errors, 11-14..16): `q` (the REST name)
@@ -7356,6 +7378,818 @@ async def filings_markdown_outline(
     except Exception as exc:
         logger.exception("filings_markdown_outline failed")
         return _safe_error("filings_markdown_outline", exc)
+'''
+
+
+# Saved searches you pull (financial-reports/web#10851): filings_search_save,
+# filings_search_new, filings_search_saved_list, filings_search_saved_delete.
+# Emitted on every surface, but ONLY when the schema carries the endpoints
+# (_saved_search_ready); with today's snapshot they are not, and the module is
+# what it was before this block existed. The steering sentence in
+# filings_search's description (SAVED_SEARCH_STEER) follows the same gate, so a
+# description never names a tool that is not served.
+SAVED_SEARCH_TOOLS_BLOCK = '''
+
+# Saved searches you pull (financial-reports/web#10851). Hand-written over
+# /filings/search/saved/ and its POST {id}/new/: save a filings_search query,
+# then pull the filings ADDED to FinancialFilings since the previous pull. The
+# point is A2 (late-publish drop): a caller re-running filings_search with a
+# moving release_datetime_from misses a filing released before its last run but
+# added after it, which backfills and late conversions make common. The pull
+# runs on an added-to-platform cursor with a lookback, and the endpoint keeps the
+# set it has returned, so each filing comes back once.
+#
+# EMITTED ONLY WHEN THE SCHEMA CARRIES THE ENDPOINTS (_saved_search_ready in
+# main()). The web side hides them from the schema while
+# CROSS_SEARCH_SAVED_SEARCHES_ENABLED is off, and answers 404, so tools emitted
+# before then would fail on every call. The snapshot refresh that first carries
+# them adds these four tools; the generic twins are dropped by
+# _REPLACED_BY_SYNTHETIC / _PRUNED_EXCLUDE.
+#
+# Contract (web 46a7e56d8 and its review, schema read 2026-11-23):
+#   save     POST /filings/search/saved/ {name, params, max_hits_per_run};
+#            no `webhook` = a pulled search. `params` are /filings/search/'s
+#            query params with `q` a list; the run owns added_to_platform_*,
+#            ordering, page, page_size, cursor and view (400 if sent), and a
+#            name the search does not take (group_by, max_results) is a 400 too.
+#            At most 20 active per account (400 on `is_active`). Free.
+#   pull     POST {id}/new/: the new hits, oldest first, at most
+#            max_hits_per_run, RECORDED AS RETURNED by the same response: the
+#            response is the delivery. `more` = hits left (pull again now);
+#            `capped` = more than the search's result cap fell in the window
+#            (some may never come back); `scan_complete` false = the scan
+#            stopped early, so more may exist than returned (with no hits,
+#            nothing was recorded). 409 delivers_to_webhook / saved_search_paused.
+#            Billed as one search page when it returns a hit; empty is free.
+#   repeat   POST {id}/new/?repeat_last_pull=true: the hits of the last pull
+#            that returned any, again, with `pulled_at` (null: none yet), match
+#            always null, nothing searched or recorded, free. The only recovery
+#            for a pull whose response was lost.
+#   list     GET /filings/search/saved/ (paginated). Free.
+#   delete   DELETE /filings/search/saved/{id}/ (204). Free.
+#   404      every route while the feature is off for the caller, and an id
+#            that is not the caller's; the two cannot be told apart.
+_SAVED_SEARCH_PATH = "/filings/search/saved/"
+# Rows per list page: an account keeps at most 20 ACTIVE searches but any
+# number of paused ones, and a row can carry five 200-character queries, so a
+# page of 100 could pass the result ceiling (SPECHT on #224).
+_SAVED_LIST_PAGE_SIZE = 20
+# A pull is billed as one filings_search page, so it returns about what one
+# default filings_search page does (20 rows). The API's own default (50) puts
+# 50 filings' snippets into one result, a lot for an agent's context on every
+# check; a burst past 20 costs one more (billed) pull, and the result says so.
+_SAVED_SEARCH_DEFAULT_HITS = 20
+_SAVED_SEARCH_MAX_HITS = 200
+_SAVED_SEARCH_MAX_NAME = 200
+# filings_search arguments a saved search cannot take, and why. Accepted in
+# the signature (unlisted) so a call copied from filings_search is refused with
+# the reason, not with FastMCP's bare "unexpected keyword argument".
+_SAVED_SEARCH_REFUSED = {
+    "ordering": "each pull returns the new filings oldest first, by when they were "
+                "added to FinancialFilings",
+    "group_by": "a saved search returns filings, not company rows",
+    "page": "each pull returns the next new filings itself",
+    "page_size": "use max_hits_per_pull",
+    "limit": "use max_hits_per_pull",
+    "max_results": "the search's own result cap applies",
+    "added_to_platform_from": "each pull searches the filings added since the previous pull",
+    "added_to_platform_to": "each pull searches the filings added since the previous pull",
+}
+# Kept free at the end of a pull's result for the footer lines.
+_SAVED_PULL_FOOTER_ROOM = 2_000
+
+
+async def _api_send_unreplayed(method: str, url: str, **kwargs: Any) -> httpx.Response:
+    """One request that must not be replayed once it may have reached the API.
+
+    `_api_post` retries a transport error and a 502/503/504, which is safe only
+    for a POST that changes nothing (its docstring). A pull RECORDS its hits as
+    it answers, and a save creates a row, so a replay after a lost or late
+    answer would drop that pull's hits for good or save the search twice. So
+    the only retry here is a 429 that `_retry_delay` calls retryable (a burst
+    limit or `search_busy`): the throttles and the search-slot cap refuse a
+    request before the view runs, so the first attempt did nothing.
+    Connect-phase failures are already retried by the transport (`retries=2`),
+    and those never reached the server. Every other failure is the caller's to
+    explain. Auth and correlation are the client's request hooks, as for
+    `_api_get`.
+    """
+    response = await _api_client.request(method, url, **kwargs)
+    if response.status_code != 429:
+        return response
+    delay = _retry_delay(response.status_code, response.text, _retry_after_seconds(response))
+    if delay is None:
+        return response
+    logger.warning(
+        "upstream %s returned 429, retrying once after %.2fs", method, delay
+    )
+    await _retry_sleep(delay)
+    return await _api_client.request(method, url, **kwargs)
+
+
+async def _api_delete(url: str, **kwargs: Any) -> httpx.Response:
+    """DELETE the upstream. Not replayed after an ambiguous failure: a second
+    DELETE of a row the first one removed answers 404, which would report a
+    successful delete as a missing search."""
+    return await _api_send_unreplayed("DELETE", url, **kwargs)
+
+
+def _saved_search_id(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ToolInputError(
+            "saved_search_id must be a positive integer, as filings_search_save and "
+            "filings_search_saved_list return it"
+        )
+    return value
+
+
+def _saved_unavailable(response: httpx.Response, action: str) -> UpstreamHTTPError:
+    """A 404 on a route with no id: saved searches are off for this account.
+
+    The web side answers every saved-search route with 404 until the feature is
+    enabled for the caller (and an older API has no route at all), so this is
+    not a missing object and the generic "check the id" hint would mislead."""
+    return UpstreamHTTPError(
+        f"Saved searches are not available on this FinancialFilings account yet, so "
+        f"{action}. Meanwhile, to catch new filings re-run filings_search and keep "
+        "track of the filing ids you have already seen: a filing released earlier "
+        "can be added later, so do not rely on release dates alone.",
+        upstream_status=response.status_code,
+        request_id=_upstream_request_id(response),
+        error_kind="saved_searches_unavailable",
+    )
+
+
+def _saved_not_found(response: httpx.Response, saved_id: int) -> UpstreamHTTPError:
+    # An id that is not the caller's and a feature that is off both answer a
+    # JSON 404 with no distinguishing type, so the message names both.
+    return UpstreamHTTPError(
+        f"No saved search {saved_id} on this account (filings_search_saved_list "
+        "shows yours), or saved searches are not available on this account yet.",
+        upstream_status=response.status_code,
+        request_id=_upstream_request_id(response),
+        error_kind="saved_search_not_found",
+    )
+
+
+def _saved_conflict(response: httpx.Response, saved_id: int, body: str) -> UpstreamHTTPError:
+    """409 on a pull: the search delivers to a webhook, or is paused."""
+    kind = (_parse_upstream_json(body) or {}).get("type")
+    if kind == "delivers_to_webhook":
+        message = (
+            f"Saved search {saved_id} delivers its new filings to a webhook, so they "
+            "cannot also be pulled here. Save the search again with "
+            "filings_search_save to pull it (the new one starts from that moment)."
+        )
+    elif kind == "saved_search_paused":
+        message = (
+            f"Saved search {saved_id} is paused, so it cannot be pulled. It can be "
+            "resumed through the FinancialFilings API; or save the search again with "
+            "filings_search_save (the new one starts from that moment)."
+        )
+    else:
+        message = _upstream_error_text(response, body)
+    return UpstreamHTTPError(
+        message,
+        upstream_status=response.status_code,
+        request_id=_upstream_request_id(response),
+        error_kind=kind if kind in ("delivers_to_webhook", "saved_search_paused") else "unknown",
+    )
+
+
+def _saved_text(value: Any, limit: int = 300) -> str:
+    """Upstream text on one line, capped."""
+    text = " ".join(str(value if value is not None else "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _saved_params_text(params: Any) -> tuple[str, str]:
+    """(queries, filters) of a saved search's `params`, for display."""
+    if not isinstance(params, dict):
+        return "?", "?"
+    q = params.get("q")
+    values = q if isinstance(q, list) else [q] if isinstance(q, str) else []
+    queries = ", ".join(_echo_query(str(v)) for v in values) or "?"
+    filters = ", ".join(
+        f"{name}={_saved_text(value, 200)}"
+        for name, value in params.items()
+        if name != "q" and value not in (None, "")
+    )
+    return queries, filters or "none"
+
+
+def _saved_hit_head(hit: dict) -> str:
+    # Name and title capped so 200 head lines (the API's most per pull) stay
+    # well inside the result ceiling on their own.
+    company = hit.get("company") if isinstance(hit.get("company"), dict) else {}
+    released = str(hit.get("release_datetime") or "")[:10] or "no release date"
+    added = str(hit.get("added_to_platform") or "")[:10] or "?"
+    return (
+        f"- filing {hit.get('filing_id')} | {_saved_text(company.get('name'), 120) or '?'} "
+        f"(company {company.get('id')}) | {hit.get('filing_type_code') or '?'} | "
+        f"released {released} | added {added} | {_saved_text(hit.get('title'), 200)}"
+    )
+
+
+_SAVED_SNIPPETS_LEFT_OUT = (
+    "    matched; snippets left out to keep the result inside its size limit "
+    "(filings_markdown_search finds the passage)"
+)
+
+
+def _saved_hit_lines(hits: list, *, snippets: bool, budget: int) -> list[str]:
+    """Every hit, ALWAYS: a pulled hit is never returned again, so one cut for
+    length would be lost. Room for every head line (and, with snippets, the
+    short left-out line under it) is reserved first; snippets then go in, in
+    order, while what is left of `budget` allows."""
+    heads = [_saved_hit_head(hit) for hit in hits]
+    if not snippets:
+        return heads
+    fallback = len(_SAVED_SNIPPETS_LEFT_OUT) + 1
+    room = budget - sum(len(head) + 1 + fallback for head in heads)
+    lines: list[str] = []
+    for hit, head in zip(hits, heads):
+        lines.append(head)
+        match = hit.get("match")
+        if isinstance(match, dict):
+            extra = _cross_search_match_lines(match)
+        else:
+            # Not _cross_search_match_lines(None): its "only the first 10 of a
+            # page" reason is a filings_search fact, not a pull's.
+            extra = ["    matched; no snippet was computed for this filing"]
+        cost = sum(len(x) + 1 for x in extra) - fallback
+        if cost > room:
+            extra = [_SAVED_SNIPPETS_LEFT_OUT]
+        else:
+            room -= cost
+        lines.extend(extra)
+    return lines
+
+
+def _saved_hits(payload: dict) -> list[dict]:
+    # Every entry or none: the pull has already recorded each one as returned,
+    # so dropping one would lose that filing for good (SPECHT on #224). A
+    # malformed body is an error, and the caller can repeat the pull.
+    hits = payload.get("hits")
+    if not isinstance(hits, list) or not all(isinstance(h, dict) for h in hits):
+        raise ValueError("hits")
+    return hits
+
+
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="Save Search For New Filings",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    ),
+)
+@subscription_required
+async def filings_search_save(
+    queries: Optional[list[str] | str] = None,
+    name: Optional[str] = None,
+    companies: Optional[list[int] | StrictInt | str] = None,
+    countries: Optional[str] = None,
+    types: Optional[str] = None,
+    languages: Optional[str] = None,
+    release_datetime_from: Optional[str] = None,
+    release_datetime_to: Optional[str] = None,
+    # None = the default, so a client that sends null for an omitted argument
+    # is not refused by FastMCP's own validation.
+    max_hits_per_pull: Optional[int] = None,
+    # Unlisted (_FILINGS_SEARCH_SAVE_UNLISTED): filings_search's aliases and its
+    # rare filters, accepted as there, and the arguments refused with a reason
+    # (`view`, and `page` at 1, are ignored instead).
+    company: Optional[int] = None,
+    include_predecessors: Optional[bool] = None,
+    query: Optional[str] = None,
+    q: Optional[list[str] | str] = None,
+    company_id: Optional[int] = None,
+    ordering: Any = None,
+    group_by: Any = None,
+    page: Any = None,
+    page_size: Any = None,
+    limit: Any = None,
+    max_results: Any = None,
+    added_to_platform_from: Any = None,
+    added_to_platform_to: Any = None,
+    view: Any = None,
+) -> str:
+    """Save a filings_search query to check it for NEW filings: afterwards each
+    filings_search_new(saved_search_id) call returns the matching filings added to
+    FinancialFilings since the previous pull, each filing once. Use this to check a
+    search repeatedly, instead of re-running filings_search with a moving
+    release_datetime_from, which misses filings released earlier but added later.
+    Takes filings_search's arguments: `queries` (1 to 5 phrases, OR-ed; pass the
+    term's translations as separate entries) and the filters companies, countries,
+    types, languages, release_datetime_from / _to. No ordering, group_by or paging:
+    pulls return new filings oldest first. `name` labels it (default: the queries).
+    `max_hits_per_pull` (1-200, default 20) caps the filings one pull returns; the
+    rest wait for the next pull (unless a pull says the search is capped: then
+    narrow it, as some matches may never be returned). The search starts now: for what already matches,
+    run filings_search. Saving is free. An account can keep 20 active saved
+    searches (filings_search_saved_list shows them, filings_search_saved_delete
+    removes one)."""
+    try:
+        _require_auth_context()
+        # `view` means nothing here (filings_search ignores it too), and page=1
+        # is what a copied call carries by default: both are no-ops, not refusals.
+        del view
+        refused = {
+            "ordering": ordering, "group_by": group_by,
+            "page": None if page in (None, 1, "1") else page,
+            "page_size": page_size, "limit": limit, "max_results": max_results,
+            "added_to_platform_from": added_to_platform_from,
+            "added_to_platform_to": added_to_platform_to,
+        }
+        for arg, value in refused.items():
+            if value is not None and value != "":
+                raise ToolInputError(
+                    f"{arg} cannot be saved: {_SAVED_SEARCH_REFUSED[arg]}. Leave it out."
+                )
+        # The same aliases as filings_search: `q` for queries, `company_id` for
+        # company.
+        if q is not None:
+            parts = [part for part in (queries, q) if not _blank_queries(part)]
+            if len(parts) == 2:
+                queries = [*_cross_search_queries(parts[0], None), *_cross_search_queries(parts[1], None)]
+            elif parts:
+                queries = parts[0]
+        if company_id is not None:
+            if company is not None and company != company_id:
+                raise ToolInputError("company and company_id name different companies; send one")
+            company = company_id
+        values = _cross_search_queries(queries, query)
+        company_ids = _cross_search_companies(companies)
+        if include_predecessors and company is None and company_ids is None:
+            raise ToolInputError("include_predecessors needs company or companies")
+        if max_hits_per_pull is None:
+            max_hits_per_pull = _SAVED_SEARCH_DEFAULT_HITS
+        if (
+            isinstance(max_hits_per_pull, bool)
+            or not isinstance(max_hits_per_pull, int)
+            or not 1 <= max_hits_per_pull <= _SAVED_SEARCH_MAX_HITS
+        ):
+            raise ToolInputError(
+                f"max_hits_per_pull must be an integer from 1 to {_SAVED_SEARCH_MAX_HITS}"
+            )
+        if name is None or not str(name).strip():
+            label = "; ".join(values)
+            if len(label) > _SAVED_SEARCH_MAX_NAME:
+                label = label[: _SAVED_SEARCH_MAX_NAME - 1] + "…"
+        else:
+            label = " ".join(str(name).split())
+            if len(label) > _SAVED_SEARCH_MAX_NAME:
+                raise ToolInputError(
+                    f"name must be at most {_SAVED_SEARCH_MAX_NAME} characters"
+                )
+        # `q` is a list; every filter one scalar, as the endpoint stores it.
+        # No `webhook` key: a search without one is pulled, never run on a
+        # schedule.
+        params: dict[str, Any] = {"q": values}
+        for key, value in (
+            ("company", company),
+            ("companies", ",".join(str(i) for i in company_ids) if company_ids else None),
+            ("include_predecessors", include_predecessors),
+            ("countries", countries),
+            ("languages", languages),
+            ("types", types),
+            ("release_datetime_from", release_datetime_from),
+            ("release_datetime_to", release_datetime_to),
+        ):
+            if value is None or value == "":
+                continue
+            params[key] = value
+        try:
+            response = await _api_send_unreplayed(
+                "POST",
+                _SAVED_SEARCH_PATH,
+                json={"name": label, "params": params, "max_hits_per_run": max_hits_per_pull},
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamHTTPError(
+                f"upstream filings_search_save request failed ({exc.__class__.__name__}). "
+                "The search may have been saved anyway: check filings_search_saved_list "
+                "before saving it again, so you do not keep two copies."
+            ) from exc
+        if response.status_code == 404:
+            raise _saved_unavailable(response, "a search cannot be saved")
+        if response.is_error:
+            body = response.text[:_MAX_ERROR_BODY]
+            payload = _parse_upstream_json(body) or {}
+            if response.status_code == 400 and "is_active" in payload:
+                # The active-search limit. The API's own sentence says so; the
+                # model also needs the two tools that free a slot.
+                raise UpstreamHTTPError(
+                    _upstream_error_text(response, body)
+                    + " List them with filings_search_saved_list and remove one with "
+                    "filings_search_saved_delete, then save again.",
+                    upstream_status=response.status_code,
+                    request_id=_upstream_request_id(response),
+                    error_kind=_classify_upstream_error(response.status_code, body),
+                )
+            if response.status_code >= 500:
+                # A gateway 5xx can follow a POST the API applied (SPECHT on #224).
+                raise UpstreamHTTPError(
+                    _upstream_error_text(response, body)
+                    + " The search may have been saved anyway: check "
+                    "filings_search_saved_list before saving it again, so you do not "
+                    "keep two copies.",
+                    upstream_status=response.status_code,
+                    request_id=_upstream_request_id(response),
+                    error_kind=_classify_upstream_error(response.status_code, body),
+                )
+            _raise_upstream_text_error(response, body)
+        try:
+            saved = response.json()
+        except ValueError:
+            saved = None
+        saved_id = saved.get("id") if isinstance(saved, dict) else None
+        if isinstance(saved_id, bool) or not isinstance(saved_id, int):
+            # A 2xx with no id cannot be pulled, and the row may exist: say so
+            # rather than invent a success.
+            raise UpstreamHTTPError(
+                "upstream filings_search_save answered without a saved search id. "
+                "Check filings_search_saved_list before saving it again.",
+                upstream_status=response.status_code,
+                request_id=_upstream_request_id(response),
+            )
+        shown, filters = _saved_params_text(saved.get("params") or params)
+        per_pull = saved.get("max_hits_per_run") or max_hits_per_pull
+        record_result_count(1)
+        return "\\n".join([
+            f'Saved search {saved_id} "{_saved_text(saved.get("name") or label, 200)}": '
+            f"queries {shown}; filters: {filters}; up to {per_pull} filings per pull.",
+            f"Pull its new filings with filings_search_new(saved_search_id={saved_id}), "
+            "as often as you need: each pull returns the matching filings added to "
+            "FinancialFilings since the previous one (the first pull: since now), "
+            "oldest first, including filings released long ago that were added "
+            "since, and each filing only once.",
+            "It starts now: for the filings that already match, run filings_search.",
+            "Saving was free; a pull is billed as one filings_search page when it "
+            "returns filings, and an empty pull is free.",
+            f"When it is no longer needed: filings_search_saved_delete(saved_search_id={saved_id}).",
+        ])
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
+    except ToolInputError as exc:
+        return _safe_error("filings_search_save", exc)
+    except Exception as exc:
+        logger.exception("filings_search_save failed")
+        return _safe_error("filings_search_save", exc)
+
+
+_FILINGS_SEARCH_SAVE_UNLISTED = frozenset({
+    "company", "include_predecessors", "query", "q", "company_id", "view",
+    *_SAVED_SEARCH_REFUSED,
+})
+filings_search_save.parameters = _unlisted_schema(
+    filings_search_save.parameters, _FILINGS_SEARCH_SAVE_UNLISTED
+)
+
+
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="Pull New Filings Of A Saved Search",
+        readOnlyHint=False,
+        destructiveHint=False,
+        idempotentHint=False,
+        openWorldHint=False,
+    ),
+)
+@subscription_required
+async def filings_search_new(
+    saved_search_id: int,
+    repeat_last_pull: bool = False,
+) -> str:
+    """Pull the NEW filings of a saved search (filings_search_save): the matching
+    filings added to FinancialFilings since the previous pull, oldest first,
+    including filings released long ago that were added since and filings whose
+    text arrived late. Each filing is returned ONCE: a pulled filing is not
+    returned again, so keep what you need from the result. When the result says
+    more are waiting, call again. An empty pull (no new filings since the last
+    one) is free; a pull that returns filings is billed as one filings_search page
+    (6 credits, 12 if any filing is a premium type). repeat_last_pull=true: only if
+    the previous pull's result was lost (an error or a timeout), and before pulling
+    again; it returns the filings of the last pull that returned any, without
+    snippets, free."""
+    try:
+        _require_auth_context()
+        saved_id = _saved_search_id(saved_search_id)
+        if not isinstance(repeat_last_pull, bool):
+            raise ToolInputError("repeat_last_pull must be true or false")
+        url = f"{_SAVED_SEARCH_PATH}{saved_id}/new/"
+        params = {"repeat_last_pull": "true"} if repeat_last_pull else None
+        # Said on every failure of a real pull that may have run: the endpoint
+        # records the hits as it answers, so an answer lost on the way here
+        # loses them unless the caller repeats that pull. A repeat returns the
+        # last pull that returned ANY filings, which is an earlier one if the
+        # lost pull returned none or never ran: hence the pulled_at check.
+        recover = (
+            ""
+            if repeat_last_pull
+            else " If the pull went through anyway, its filings are recorded as "
+            f"returned: call filings_search_new(saved_search_id={saved_id}, "
+            "repeat_last_pull=true) before pulling again to get them back (if its "
+            "pulled_at is a pull you already have, the lost one returned nothing or "
+            "never ran)."
+        )
+        try:
+            response = await _api_send_unreplayed("POST", url, params=params)
+        except httpx.HTTPError as exc:
+            raise UpstreamHTTPError(
+                f"upstream filings_search_new request failed ({exc.__class__.__name__})."
+                + recover
+            ) from exc
+        if response.is_error:
+            body = response.text[:_MAX_ERROR_BODY]
+            if response.status_code == 404:
+                raise _saved_not_found(response, saved_id)
+            if response.status_code == 409:
+                raise _saved_conflict(response, saved_id, body)
+            # 503 search_unavailable / search_too_slow are raised before the
+            # search runs, so nothing was recorded; a 502/504 or a bare 5xx
+            # may have come after the pull finished.
+            ran = (_parse_upstream_json(body) or {}).get("type") not in (
+                "search_unavailable", "search_too_slow"
+            )
+            if response.status_code >= 500 and recover and ran:
+                raise UpstreamHTTPError(
+                    _upstream_error_text(response, body) + recover,
+                    upstream_status=response.status_code,
+                    request_id=_upstream_request_id(response),
+                    error_kind=_classify_upstream_error(response.status_code, body),
+                )
+            _raise_upstream_text_error(response, body)
+        try:
+            payload = response.json()
+            hits = _saved_hits(payload)
+        except (ValueError, AttributeError):
+            raise UpstreamHTTPError(
+                "upstream filings_search_new returned a body that is not a pull, so no "
+                "filings can be listed." + recover,
+                upstream_status=response.status_code,
+                request_id=_upstream_request_id(response),
+            )
+        ref = payload.get("saved_search") if isinstance(payload.get("saved_search"), dict) else {}
+        label = f'saved search {saved_id} "{_saved_text(ref.get("name"), 200)}"'
+        # A repeat carries `pulled_at` and none of a pull's counters. An API that
+        # ignored the flag ran a REAL pull: its hits are recorded, so render it
+        # as one, saying so, rather than as the copy it is not.
+        is_repeat = repeat_last_pull and "pulled_at" in payload and "window" not in payload
+        record_returned_entities([h.get("filing_id") for h in hits])
+        record_result_count(len(hits))
+        if is_repeat:
+            pulled_at = payload.get("pulled_at")
+            if not pulled_at:
+                return (
+                    f"No pull of {label} has returned filings yet, so there is nothing "
+                    "to repeat. Nothing was billed."
+                )
+            head = (
+                f"Repeat of the pull at {_saved_text(pulled_at, 40)} for {label}: "
+                f"{len(hits)} filing(s) that pull returned, without snippets "
+                "(filings_markdown_search finds a passage); a filing you can no longer "
+                "see, or that no longer matches the search, is left out. Nothing was "
+                "searched, recorded or billed. Only the last pull that returned filings "
+                "can be repeated: if that is a pull you already have, the lost one "
+                "returned nothing or never ran."
+            )
+            return "\\n".join([head, *_saved_hit_lines(hits, snippets=False, budget=0)])
+        lines: list[str] = []
+        if repeat_last_pull:
+            lines.append(
+                "The FinancialFilings API ran a new pull instead of repeating the last "
+                "one: the filings below are new and are now recorded as returned."
+            )
+        window = payload.get("window") if isinstance(payload.get("window"), dict) else {}
+        span = (
+            f"added to FinancialFilings between {_saved_text(window.get('added_to_platform_from'), 40)} "
+            f"and {_saved_text(window.get('added_to_platform_to'), 40)}"
+            if window else "added to FinancialFilings since the previous pull"
+        )
+        more = payload.get("more")
+        more = more if isinstance(more, int) and not isinstance(more, bool) and more > 0 else 0
+        capped = payload.get("capped") is True
+        # Only an explicit false is an early stop; a pull that does not say is
+        # read as complete, as the endpoint has always sent it.
+        stopped_early = payload.get("scan_complete") is False
+        footer: list[str] = []
+        if more:
+            footer.append(
+                f"{'At least ' if capped else ''}{more} more new filing(s) are waiting: "
+                f"call filings_search_new(saved_search_id={saved_id}) again now to get them."
+            )
+        if capped:
+            footer.append(
+                "More filings matched in this window than the search keeps (its first "
+                "matches by relevance), so some new filings may never be returned. "
+                "Narrow it: save a narrower search with filings_search_save, keep "
+                "pulling this one until it has nothing new, then delete it."
+            )
+        if stopped_early:
+            footer.append(
+                "This pull stopped before checking every candidate, so it may be "
+                "incomplete: more new filings may exist. Pull again later."
+                + ("" if hits else " Nothing was recorded.")
+            )
+        if not hits:
+            if stopped_early:
+                lead = (
+                    f"No new filing found for {label} among the candidates this pull "
+                    f"checked ({span}). This is NOT an absence."
+                )
+            elif capped:
+                lead = (
+                    f"No new filing for {label} among the first matches this search "
+                    f"keeps ({span}); new filings may exist beyond those."
+                )
+            else:
+                lead = (
+                    f"No new filings for {label} since the previous pull, or since it "
+                    f"was saved ({span})."
+                )
+            return "\\n".join([*lines, lead, *footer, "Nothing was billed."])
+        lines.append(
+            f"{len(hits)} new filing(s) for {label}, {span}, oldest first. They are now "
+            "recorded as returned: filings_search_new will not return them again, so "
+            "keep what you need from this result."
+        )
+        body_budget = (
+            _MAX_RESULT_CHARS - sum(len(x) + 1 for x in lines) - _SAVED_PULL_FOOTER_ROOM
+        )
+        lines.extend(_saved_hit_lines(hits, snippets=True, budget=body_budget))
+        lines.extend(footer)
+        lines.append(
+            "Billed as one filings_search page: one Markdown request (6 credits, 12 if "
+            "any filing above is a premium type)."
+        )
+        return "\\n".join(lines)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
+    except ToolInputError as exc:
+        return _safe_error("filings_search_new", exc)
+    except Exception as exc:
+        logger.exception("filings_search_new failed")
+        return _safe_error("filings_search_new", exc)
+
+
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="List Saved Searches",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+@subscription_required
+async def filings_search_saved_list(page: int = 1) -> str:
+    """List your saved searches (filings_search_save): each one's id, name, queries
+    and filters, filings per pull, whether it is active and when it last ran. Pull
+    one with filings_search_new(saved_search_id). Free."""
+    try:
+        _require_auth_context()
+        try:
+            page_no = max(1, int(page))
+        except (TypeError, ValueError, OverflowError):
+            raise ToolInputError("page must be an integer")
+        try:
+            response = await _api_get(
+                _SAVED_SEARCH_PATH,
+                params={"page": page_no, "page_size": _SAVED_LIST_PAGE_SIZE},
+            )
+        except httpx.HTTPError as exc:
+            raise UpstreamHTTPError(
+                f"upstream filings_search_saved_list request failed ({exc.__class__.__name__}). "
+                "The FinancialFilings API was unreachable or timed out (already retried once)."
+            ) from exc
+        if response.status_code == 404 and page_no > 1:
+            # A page past the last is a 404 too, and so is every page when saved
+            # searches are off for this account: page 1 tells them apart (SPECHT
+            # on #224). Listing is free, so the extra request costs nothing.
+            try:
+                first = await _api_get(
+                    _SAVED_SEARCH_PATH, params={"page": 1, "page_size": _SAVED_LIST_PAGE_SIZE}
+                )
+            except httpx.HTTPError as exc:
+                raise UpstreamHTTPError(
+                    f"upstream filings_search_saved_list request failed ({exc.__class__.__name__}). "
+                    "The FinancialFilings API was unreachable or timed out (already retried once)."
+                ) from exc
+            if first.status_code != 404:
+                if first.is_error:
+                    # Page 1 failing proves nothing about page N: report it.
+                    _raise_upstream_text_error(first, first.text[:_MAX_ERROR_BODY])
+                return (
+                    f"No saved searches on page {page_no}. Call with page=1 for the "
+                    "first ones."
+                )
+            response = first
+        if response.status_code == 404:
+            raise _saved_unavailable(response, "there are no saved searches to list")
+        if response.is_error:
+            _raise_upstream_text_error(response, response.text[:_MAX_ERROR_BODY])
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        results = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            raise UpstreamHTTPError(
+                "upstream filings_search_saved_list returned a body that is not a list "
+                "of saved searches.",
+                upstream_status=response.status_code,
+                request_id=_upstream_request_id(response),
+            )
+        rows = [r for r in results if isinstance(r, dict)]
+        record_result_count(len(rows))
+        if not rows:
+            return (
+                "No saved searches on this account. Save one with filings_search_save "
+                "to pull its new filings with filings_search_new."
+            )
+        lines = [f"{payload.get('count', len(rows))} saved search(es) (page {page_no}):"]
+        for row in rows:
+            shown, filters = _saved_params_text(row.get("params"))
+            if row.get("webhook") is not None:
+                mode = "delivers to a webhook (cannot be pulled here)"
+            elif row.get("is_active") is False:
+                mode = "paused (cannot be pulled)"
+            else:
+                mode = "active, pulled with filings_search_new"
+            last = row.get("last_run_at")
+            status = row.get("last_status")
+            ran = (
+                f"last ran {_saved_text(last, 40)}"
+                + (f" ({_saved_text(status, 40)})" if status else "")
+                if last else "not pulled yet"
+            )
+            lines.append(
+                f"- saved search {row.get('id')} | {_saved_text(row.get('name'), 200)} | "
+                f"queries {shown} | filters: {filters} | up to "
+                f"{row.get('max_hits_per_run')} per pull | {mode} | {ran} | "
+                f"created {str(row.get('created_at') or '?')[:10]}"
+            )
+        if payload.get("next"):
+            lines.append(f"More saved searches: call again with page={page_no + 1}.")
+        return "\\n".join(lines)
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
+    except ToolInputError as exc:
+        return _safe_error("filings_search_saved_list", exc)
+    except Exception as exc:
+        logger.exception("filings_search_saved_list failed")
+        return _safe_error("filings_search_saved_list", exc)
+
+
+@mcp.tool(
+    tags={"Filings"},
+    annotations=ToolAnnotations(
+        title="Delete Saved Search",
+        readOnlyHint=False,
+        destructiveHint=True,
+        idempotentHint=True,
+        openWorldHint=False,
+    ),
+)
+@subscription_required
+async def filings_search_saved_delete(saved_search_id: int) -> str:
+    """Delete a saved search by id (filings_search_saved_list shows them). Filings
+    it already returned are not affected. Saving the same search again starts from
+    that moment, so filings added in between are never pulled: delete only a search
+    you no longer need. Free."""
+    try:
+        _require_auth_context()
+        saved_id = _saved_search_id(saved_search_id)
+        try:
+            response = await _api_delete(f"{_SAVED_SEARCH_PATH}{saved_id}/")
+        except httpx.HTTPError as exc:
+            raise UpstreamHTTPError(
+                f"upstream filings_search_saved_delete request failed ({exc.__class__.__name__}). "
+                "It may have been deleted anyway: check filings_search_saved_list."
+            ) from exc
+        if response.status_code == 404:
+            raise _saved_not_found(response, saved_id)
+        if response.is_error:
+            _raise_upstream_text_error(response, response.text[:_MAX_ERROR_BODY])
+        record_result_count(1)
+        return f"Deleted saved search {saved_id}. Nothing was billed."
+    except UpstreamHTTPError:
+        # See #104 — must stay an error, not become a successful string result.
+        raise
+    except ToolInputError as exc:
+        return _safe_error("filings_search_saved_delete", exc)
+    except Exception as exc:
+        logger.exception("filings_search_saved_delete failed")
+        return _safe_error("filings_search_saved_delete", exc)
 '''
 
 
@@ -8598,12 +9432,62 @@ def update_readme_tool_table(repo_root: Path, body: str) -> None:
         print(f"📝 Updated tool list in {readme}")
 
 
+# The routes SAVED_SEARCH_TOOLS_BLOCK calls, as (path, method). All of them, not
+# only the pull: a block whose save or delete 404s would be half a feature.
+_SAVED_SEARCH_ROUTES = (
+    ("/filings/search/saved/", "get"),
+    ("/filings/search/saved/", "post"),
+    ("/filings/search/saved/{id}/", "delete"),
+    ("/filings/search/saved/{id}/new/", "post"),
+)
+# Appended to filings_search's description when the block is emitted, at the
+# __SAVED_SEARCH_STEER__ placeholder (which is otherwise removed, leaving the
+# description byte for byte what it was).
+SAVED_SEARCH_STEER = (
+    "\n    To check a search repeatedly for new filings, save it with filings_search_save"
+    "\n    and pull with filings_search_new instead of re-running it with a moving"
+    "\n    release_datetime_from: that misses filings released earlier but added to"
+    "\n    FinancialFilings later."
+)
+
+
+def _saved_search_ready(paths: dict) -> bool:
+    """Whether the schema carries every route the saved-search tools call.
+
+    The pull must also take `repeat_last_pull`: on an API that did not know it,
+    a "repeat" would run a real pull and record its hits, the opposite of the
+    recovery it is for. A partial set is reported, not emitted.
+    """
+    present = [
+        isinstance((paths.get(path) or {}).get(method), dict)
+        for path, method in _SAVED_SEARCH_ROUTES
+    ]
+    if not any(present):
+        return False
+    pull = paths["/filings/search/saved/{id}/new/"]["post"] if present[-1] else {}
+    repeat = any(
+        p.get("name") == "repeat_last_pull" for p in pull.get("parameters") or []
+    )
+    if all(present) and repeat:
+        return True
+    print(
+        "⚠️  The schema carries only part of the saved-search API "
+        f"(routes {present}, repeat_last_pull {repeat}); the saved-search tools "
+        "are NOT emitted.",
+        file=sys.stderr,
+    )
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    schema = None
+def main(schema: dict | None = None, output_file: Path | None = None) -> None:
+    """Render the module. `schema` and `output_file` are for tests, which render
+    a schema of their own to a file of their own (the default module is
+    rendered only by tests/test_published_tool_counts.py)."""
+    output = output_file or OUTPUT_FILE
     last_exc: Exception | None = None
     # PROD FREEZE: FR_PIN_SCHEMA=1 + a committed openapi.snapshot.json disables the
     # build-time live OpenAPI fetch, so the generated tool surface is DETERMINISTIC
@@ -8611,7 +9495,7 @@ def main() -> None:
     # explicit, reviewed PR. The prod Dockerfile should set FR_PIN_SCHEMA=1.
     _pinned = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                            "openapi.snapshot.json")
-    if os.environ.get("FR_PIN_SCHEMA", "0") == "1":
+    if schema is None and os.environ.get("FR_PIN_SCHEMA", "0") == "1":
         if not os.path.exists(_pinned):
             print("FR_PIN_SCHEMA=1 but openapi.snapshot.json is missing — commit a "
                   "reviewed snapshot first.", file=sys.stderr)
@@ -8862,10 +9746,18 @@ def main() -> None:
         generated_code.append(GUIDE_TOOLS_BLOCK)
     # Huge-filing search tool (synthetic) — emitted on every surface; pairs with
     # the in-result pointer filings_markdown_retrieve adds on big (>120k) filings.
-    generated_code.append(MARKDOWN_SEARCH_TOOL_BLOCK)
+    saved_search_tools = _saved_search_ready(paths)
+    assert MARKDOWN_SEARCH_TOOL_BLOCK.count("__SAVED_SEARCH_STEER__") == 1
+    generated_code.append(MARKDOWN_SEARCH_TOOL_BLOCK.replace(
+        "__SAVED_SEARCH_STEER__", SAVED_SEARCH_STEER if saved_search_tools else ""
+    ))
     # Section outline (synthetic, every surface): the outline endpoint's headings
     # with offsets for filings_markdown_retrieve.
     generated_code.append(MARKDOWN_OUTLINE_TOOL_BLOCK)
+    # Saved searches (synthetic, every surface), only when the schema has them.
+    # Uses the cross-search helpers of MARKDOWN_SEARCH_TOOL_BLOCK, so after it.
+    if saved_search_tools:
+        generated_code.append(SAVED_SEARCH_TOOLS_BLOCK)
     # As-reported facts tools (web#10586) — emitted on every surface, registered
     # only when MCP_UNSTD_FACTS_TOOLS=1 at runtime. Deliberately NOT added to
     # generated_tools, so the README tool table never lists them.
@@ -8879,11 +9771,11 @@ def main() -> None:
     generated_code.extend(pay_code)
     generated_code.append(FILE_FOOTER)
 
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with open(output, "w", encoding="utf-8") as f:
         f.write("\n".join(generated_code))
 
-    print(f"✅ Generated {tool_count} tools at {OUTPUT_FILE}")
+    print(f"✅ Generated {tool_count} tools at {output}")
     if structured_count:
         print(
             f"   ↳ {structured_count} of those advertise an `output_schema` "
@@ -8909,9 +9801,10 @@ def main() -> None:
         if len(skipped_methods) > 20:
             print(f"     ... and {len(skipped_methods) - 20} more", file=sys.stderr)
 
-    update_readme_tool_table(
-        OUTPUT_FILE.parent.parent, render_readme_tool_table(generated_tools)
-    )
+    if output_file is None:  # a test's own render never touches README.md
+        update_readme_tool_table(
+            OUTPUT_FILE.parent.parent, render_readme_tool_table(generated_tools)
+        )
 
 
 if __name__ == "__main__":
