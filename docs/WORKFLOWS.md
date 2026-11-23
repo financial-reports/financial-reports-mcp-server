@@ -40,7 +40,7 @@ at or near 1.00 on its case where the same model without it scores near 0. See
 
 ## Tool decision table
 
-**Check what you actually have before following a sequence below.** The hosted server exposes a curated **20** tools by default — 13 schema-derived, the 3 `get_fr_*` guide tools, and the 4 hand-written tools (`filings_search`, `filings_markdown_search`, `filings_markdown_search_batch`, `filings_markdown_outline`) — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not in your `tools/list` and calling them will fail**.
+**Check what you actually have before following a sequence below.** The hosted server exposes a curated **24** tools by default — 13 schema-derived, the 3 `get_fr_*` guide tools, and the 8 hand-written tools (`filings_search`, `filings_markdown_search`, `filings_markdown_search_batch`, `filings_markdown_outline`, `filings_search_save`, `filings_search_new`, `filings_search_saved_list`, `filings_search_saved_delete`) — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not in your `tools/list` and calling them will fail**.
 
 Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default surface, say so plainly rather than substituting a tool that answers a different question.
 
@@ -59,7 +59,8 @@ Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default sur
 | Understand filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` |
 | Track filing revisions **†** | `filings_history_retrieve` (audit trail of amendments) |
 | Industry screening | resolve a known peer → read its `sub_industry_code` → `companies_list?sub_industry=…` |
-| Monitoring | not on this connector — poll `filings_list` newest-first |
+| Watch for new filings matching a search | `filings_search_save` once with `filings_search`'s `queries` and its `companies`, `countries`, `types`, `languages` and `release_datetime_from` / `_to` filters → `filings_search_new` on each check: it returns only filings added since the last pull, each once, including ones published long ago but added since. `filings_search_saved_list` to find a saved search's id; `filings_search_saved_delete` to stop. Don't re-run `filings_search` with a moving date: it misses filings published before your last run but added after it |
+| Watch one company's filings | poll `filings_list?company=<id>&ordering=-added_to_platform` and keep the newest `added_to_platform` you have seen (see workflow 5) |
 | Reference data | `filing_categories_list`, `filing_types_list`; **†** `countries_list`, `languages_list`, `sources_list` |
 | Line item glossary **†** | `line_item_definitions_list`, `line_item_definitions_retrieve` |
 
@@ -104,12 +105,28 @@ ISIC ≠ NAICS ≠ GICS. This MCP exposes ISIC; if the user asks for GICS sector
 
 ### 5. Filings monitoring (multi-step setup)
 
-**Not available on this connector.** Watchlist and webhook tools are not part of
-the research surface, so "alert me when X files" cannot be set up here. Say so
-rather than attempting it.
+There are no push alerts on this connector: watchlist and webhook tools are not
+part of the research surface, so "email me when X files" cannot be set up here.
+Say so rather than attempting it. What does work is a check the user (or their
+agent) runs on a schedule:
 
-The workable alternative is polling: `filings_list?company=<id>&ordering=-release_datetime`
-on a schedule the user runs, comparing against the last `release_datetime` seen.
+1. **A topic or a set of filters** ("new filings mentioning a share buyback in
+   Germany") → `filings_search_save` once with `filings_search`'s query and
+   filters (`queries`, `companies`, `countries`, `types`, `languages`,
+   `release_datetime_from` / `_to`), and keep the id it returns. Leave out
+   `ordering`, `group_by` and paging: the save refuses them, because pulls come
+   oldest first by when a filing was added. On each check call
+   `filings_search_new(saved_search_id=…)`: it returns only the filings added
+   since the previous pull, each one once. `more=true` means another pull would
+   return more right now. If a response was lost, call it again with
+   `repeat_last_pull=True` to get that same batch back, free.
+2. **One company's filings** → `filings_list?company=<id>&ordering=-added_to_platform`,
+   keeping the newest `added_to_platform` seen; next time read back to a little
+   before it and skip the filing ids you already have.
+
+Compare on `added_to_platform` (when FinancialFilings received the filing), not
+`release_datetime` (when the issuer published it). A filing published last month
+can arrive today, and a check keyed on `release_datetime` skips it for good.
 
 ## Common pitfalls
 

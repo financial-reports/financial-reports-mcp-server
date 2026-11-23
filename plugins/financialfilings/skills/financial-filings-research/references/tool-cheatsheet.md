@@ -1,6 +1,6 @@
 # FinancialFilings MCP: Tool Cheatsheet
 
-65 tools across 10 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
+72 tools across 11 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
 
 Note on surface size: only a curated subset is exposed by default (`companies_*`, `filings_*`, `isins_*`, plus the guide tools and in-filing search). The rest: ISIC, reference data, watchlists, webhooks, require `MCP_FULL_SURFACE=1` on the server. If a tool below isn't in your `tools/list`, that's why.
 
@@ -131,6 +131,30 @@ Key params: `filing_id`, `max_level` (1-6, top levels only), `limit` (headings l
 Returns: one line per heading, `offset +length Llevel [pPage] title`. Pass the offset (and the length as `limit`) to `filings_markdown_retrieve` to read that section from its heading.
 
 Pitfall: it lists what the conversion marked as headings. A short filing, a transcript or a scan converted as plain text can have few or none; then use `filings_markdown_search` with the section's heading. On a long filing not every heading fits: the result says so, and the deepest levels keep only their longest sections. Ask again with `max_level` or a larger `limit`.
+
+## Saved searches (4)
+
+Check a search repeatedly for new filings without re-running it. Pulls are ordered by when FinancialFilings received a filing, so a filing published long ago but added since is still returned, once.
+
+### `filings_search_save`
+Save a `filings_search` query. Returns its `saved_search_id`.
+
+Key params: `queries` (1-5 phrases, OR-ed), `companies`, `countries`, `types`, `languages`, `release_datetime_from` / `release_datetime_to`, `name`, `max_hits_per_pull` (1-200, default 20). No ordering, grouping or paging.
+
+Pitfall: the first pull starts at about the moment of saving (reaching back up to 48 hours, for filings whose text arrived late), not from the past. Run `filings_search` once for what already exists, then save.
+
+### `filings_search_new`
+The filings added since the previous pull, oldest first, each one once. Billed as one `filings_search` page when it returns filings; free when empty.
+
+Key params: `saved_search_id`, `repeat_last_pull` (true only to recover a lost response: returns the last non-empty pull again, free).
+
+Pitfall: a pulled filing is never returned again, so keep what you need from the result. `more=true` means call again now; a `capped` search has more matches than one pull can scan, so narrow it.
+
+### `filings_search_saved_list`
+Your saved searches: id, name, queries and filters, filings per pull, status, last run. Free.
+
+### `filings_search_saved_delete`
+Delete a saved search. Free. Saving it again starts from that moment, so filings added in between are never pulled.
 
 ## Guide tools (3)
 
@@ -279,11 +303,13 @@ Pitfall: there are no free-form event names: a webhook fires on the three `trigg
 
 ## Tool annotation summary
 
-- 53 tools have `readOnlyHint=true` (safe to call without confirmation). All 20 on the default
-  surface are read-only; every mutating tool is behind `MCP_FULL_SURFACE=1`.
-- 10 tools have `destructiveHint=true` (mutations: watchlist add/remove, webhook create and
-  update, secret rotation, agent account onboarding). None is on the default surface.
-- 2 tools are non-destructive probes (`webhooks_test_create`, `webhooks_deliveries_replay_create`), they hit the user's external endpoint but don't mutate FinancialFilings state.
+- 56 tools have `readOnlyHint=true` (safe to call without confirmation). 21 of the 24 on the
+  default surface are; the other three are the saved-search tools that change state
+  (`filings_search_save`, `filings_search_new`, `filings_search_saved_delete`).
+- 12 tools have `destructiveHint=true` (mutations: watchlist add/remove, webhook create and
+  update, secret rotation, agent account onboarding, saved-search delete and preview). One is on
+  the default surface: `filings_search_saved_delete`.
+- 4 tools are non-destructive probes or additive writes: `webhooks_test_create` and `webhooks_deliveries_replay_create` hit the user's external endpoint but don't mutate FinancialFilings state; `filings_search_save` adds a saved search; `filings_search_new` marks the filings it returns as delivered, so they are not returned again (a lost response is recovered with `repeat_last_pull=true`).
 - 6 tools advertise `outputSchema` for structured rendering: `companies_list`, `companies_retrieve`, `companies_financials_retrieve`, `filings_list`, `filings_retrieve`, `isins_list`.
 
 ## Authentication
