@@ -111,8 +111,11 @@ Say so rather than attempting it. What does work is a check the user (or their
 agent) runs on a schedule:
 
 1. **A topic or a set of filters** ("new filings mentioning a share buyback in
-   Germany") → `filings_search_save` once with the same arguments you would give
-   `filings_search`, and keep the id it returns. On each check call
+   Germany") → `filings_search_save` once with `filings_search`'s query and
+   filters (`queries`, `companies`, `countries`, `types`, `languages`,
+   `release_datetime_from` / `_to`), and keep the id it returns. Leave out
+   `ordering`, `group_by` and paging: the save refuses them, because pulls come
+   oldest first by when a filing was added. On each check call
    `filings_search_new(saved_search_id=…)`: it returns only the filings added
    since the previous pull, each one once. `more=true` means another pull would
    return more right now. If a response was lost, call it again with

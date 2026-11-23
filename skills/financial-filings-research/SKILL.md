@@ -94,8 +94,8 @@ There are no push alerts here: watchlist and webhook tools are not part of the
 research surface, so "email me when X files" cannot be set up. Say so. What works
 is a check run on a schedule:
 
-- **A topic or a set of filters** → `filings_search_save` once (same arguments as
-  `filings_search`), then `filings_search_new(saved_search_id=…)` on each check.
+- **A topic or a set of filters** → `filings_search_save` once with `filings_search`'s
+  query and filters (no `ordering`, `group_by` or paging: the save refuses them), then `filings_search_new(saved_search_id=…)` on each check.
   It returns only filings added since the last pull, each once. Lost a response?
   Call again with `repeat_last_pull=True` for the same batch, free.
 - **One company** → `filings_list?company=<id>&ordering=-added_to_platform`,
