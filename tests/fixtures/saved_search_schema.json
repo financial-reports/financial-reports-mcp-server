@@ -1,0 +1,1209 @@
+{
+ "_source": "financial-reports/web#10851 saved-search routes, from the web schema with CROSS_SEARCH_SAVED_SEARCHES_ENABLED on (2026-11-23). Test input only: the committed snapshot does not carry them yet.",
+ "paths": {
+  "/filings/search/saved/": {
+   "get": {
+    "operationId": "filings_search_saved_list",
+    "description": "Your saved searches.\n\nFree: never charged credits.",
+    "summary": "List Saved Searches",
+    "parameters": [
+     {
+      "name": "page",
+      "required": false,
+      "in": "query",
+      "description": "A page number within the paginated result set.",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "page_size",
+      "required": false,
+      "in": "query",
+      "description": "Number of results to return per page.",
+      "schema": {
+       "type": "integer"
+      }
+     }
+    ],
+    "tags": [
+     "Filings"
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "CognitoJWT": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/PaginatedSavedSearchList"
+        }
+       }
+      },
+      "description": ""
+     },
+     "403": {
+      "description": "Missing or invalid API key, or the plan does not include this endpoint.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorDetail"
+        },
+        "examples": {
+         "MissingCredentials": {
+          "summary": "No X-API-Key header",
+          "value": {
+           "detail": "Authentication credentials were not provided.",
+           "type": "authentication_required",
+           "resolution": "Send your API key in the X-API-Key request header, e.g. curl -H \"X-API-Key: <your key>\" https://api.financialreports.eu/filings/ . A browser address bar never sends this header. No key yet? Get a free one at https://financialfilings.com/accounts/api-dashboard/ .",
+           "dashboard_url": "https://financialfilings.com/accounts/api-dashboard/"
+          }
+         },
+         "InvalidKey": {
+          "summary": "Unknown or inactive API key",
+          "value": {
+           "detail": "Invalid or inactive API key."
+          }
+         },
+         "PlanDoesNotPermit": {
+          "summary": "Plan does not include this endpoint",
+          "value": {
+           "detail": "Your current plan does not permit access. Requires a plan that includes **structured financials**."
+          }
+         }
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Rate limit, plan quota or spend cap reached.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RateLimitError"
+        },
+        "examples": {
+         "BurstLimit": {
+          "summary": "Too many requests per minute",
+          "value": {
+           "error": "Too Many Requests",
+           "detail": "Request was throttled. Expected available in 12 seconds.",
+           "retry_after_seconds": 12,
+           "scope": "burst",
+           "type": "burst_limit_exceeded",
+           "message": "Rate limit reached: 120 requests per minute.",
+           "resolution": "Retry after 12 seconds (Retry-After header). Pay-as-you-go raises this to 50/sec: https://financialfilings.com/accounts/payg/",
+           "rate_limit": "120/minute",
+           "payg_url": "https://financialfilings.com/accounts/payg/"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "operationId": "filings_search_saved_create",
+    "description": "Saves a full-text search to watch for new filings. With a `webhook`, FinancialFilings runs it about once an hour, sending the filings added since the last run to your webhook as one `saved_search.hits` event (at most `max_hits_per_run` hits, oldest first; `more` counts the rest, which the next runs send). Without one, pull the new hits yourself with `POST /filings/search/saved/{id}/new/`. Either way the search starts from when it is created: run `GET /filings/search/` for what already matches. Each run or pull that returns hits is billed as one page of `GET /filings/search/`; one with no new hits, or whose delivery fails, is free.\n\nFree: never charged credits.",
+    "summary": "Create Saved Search",
+    "tags": [
+     "Filings"
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SavedSearch"
+       }
+      }
+     },
+     "required": true
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "CognitoJWT": []
+     }
+    ],
+    "responses": {
+     "201": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SavedSearch"
+        }
+       }
+      },
+      "description": ""
+     },
+     "403": {
+      "description": "Missing or invalid API key, or the plan does not include this endpoint.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorDetail"
+        },
+        "examples": {
+         "MissingCredentials": {
+          "summary": "No X-API-Key header",
+          "value": {
+           "detail": "Authentication credentials were not provided.",
+           "type": "authentication_required",
+           "resolution": "Send your API key in the X-API-Key request header, e.g. curl -H \"X-API-Key: <your key>\" https://api.financialreports.eu/filings/ . A browser address bar never sends this header. No key yet? Get a free one at https://financialfilings.com/accounts/api-dashboard/ .",
+           "dashboard_url": "https://financialfilings.com/accounts/api-dashboard/"
+          }
+         },
+         "InvalidKey": {
+          "summary": "Unknown or inactive API key",
+          "value": {
+           "detail": "Invalid or inactive API key."
+          }
+         },
+         "PlanDoesNotPermit": {
+          "summary": "Plan does not include this endpoint",
+          "value": {
+           "detail": "Your current plan does not permit access. Requires a plan that includes **structured financials**."
+          }
+         }
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Rate limit, plan quota or spend cap reached.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RateLimitError"
+        },
+        "examples": {
+         "BurstLimit": {
+          "summary": "Too many requests per minute",
+          "value": {
+           "error": "Too Many Requests",
+           "detail": "Request was throttled. Expected available in 12 seconds.",
+           "retry_after_seconds": 12,
+           "scope": "burst",
+           "type": "burst_limit_exceeded",
+           "message": "Rate limit reached: 120 requests per minute.",
+           "resolution": "Retry after 12 seconds (Retry-After header). Pay-as-you-go raises this to 50/sec: https://financialfilings.com/accounts/payg/",
+           "rate_limit": "120/minute",
+           "payg_url": "https://financialfilings.com/accounts/payg/"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/filings/search/saved/{id}/": {
+   "get": {
+    "operationId": "filings_search_saved_retrieve",
+    "description": "One saved search, with how its last run ended.\n\nFree: never charged credits.",
+    "summary": "Retrieve Saved Search",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "A unique integer value identifying this saved search.",
+      "required": true
+     }
+    ],
+    "tags": [
+     "Filings"
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "CognitoJWT": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SavedSearch"
+        }
+       }
+      },
+      "description": ""
+     },
+     "403": {
+      "description": "Missing or invalid API key, or the plan does not include this endpoint.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorDetail"
+        },
+        "examples": {
+         "MissingCredentials": {
+          "summary": "No X-API-Key header",
+          "value": {
+           "detail": "Authentication credentials were not provided.",
+           "type": "authentication_required",
+           "resolution": "Send your API key in the X-API-Key request header, e.g. curl -H \"X-API-Key: <your key>\" https://api.financialreports.eu/filings/ . A browser address bar never sends this header. No key yet? Get a free one at https://financialfilings.com/accounts/api-dashboard/ .",
+           "dashboard_url": "https://financialfilings.com/accounts/api-dashboard/"
+          }
+         },
+         "InvalidKey": {
+          "summary": "Unknown or inactive API key",
+          "value": {
+           "detail": "Invalid or inactive API key."
+          }
+         },
+         "PlanDoesNotPermit": {
+          "summary": "Plan does not include this endpoint",
+          "value": {
+           "detail": "Your current plan does not permit access. Requires a plan that includes **structured financials**."
+          }
+         }
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Rate limit, plan quota or spend cap reached.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RateLimitError"
+        },
+        "examples": {
+         "BurstLimit": {
+          "summary": "Too many requests per minute",
+          "value": {
+           "error": "Too Many Requests",
+           "detail": "Request was throttled. Expected available in 12 seconds.",
+           "retry_after_seconds": 12,
+           "scope": "burst",
+           "type": "burst_limit_exceeded",
+           "message": "Rate limit reached: 120 requests per minute.",
+           "resolution": "Retry after 12 seconds (Retry-After header). Pay-as-you-go raises this to 50/sec: https://financialfilings.com/accounts/payg/",
+           "rate_limit": "120/minute",
+           "payg_url": "https://financialfilings.com/accounts/payg/"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "put": {
+    "operationId": "filings_search_saved_update",
+    "description": "Replaces a saved search. Its cursor is kept, so after a change to `params` the next run may also deliver matches of the new search added up to 48 hours before the cursor. Left out, `webhook` is kept; set it to null to pull the search instead, whose first pull then returns what is new since the cursor.\n\nFree: never charged credits.",
+    "summary": "Update Saved Search",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "A unique integer value identifying this saved search.",
+      "required": true
+     }
+    ],
+    "tags": [
+     "Filings"
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SavedSearch"
+       }
+      }
+     },
+     "required": true
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "CognitoJWT": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SavedSearch"
+        }
+       }
+      },
+      "description": ""
+     },
+     "403": {
+      "description": "Missing or invalid API key, or the plan does not include this endpoint.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorDetail"
+        },
+        "examples": {
+         "MissingCredentials": {
+          "summary": "No X-API-Key header",
+          "value": {
+           "detail": "Authentication credentials were not provided.",
+           "type": "authentication_required",
+           "resolution": "Send your API key in the X-API-Key request header, e.g. curl -H \"X-API-Key: <your key>\" https://api.financialreports.eu/filings/ . A browser address bar never sends this header. No key yet? Get a free one at https://financialfilings.com/accounts/api-dashboard/ .",
+           "dashboard_url": "https://financialfilings.com/accounts/api-dashboard/"
+          }
+         },
+         "InvalidKey": {
+          "summary": "Unknown or inactive API key",
+          "value": {
+           "detail": "Invalid or inactive API key."
+          }
+         },
+         "PlanDoesNotPermit": {
+          "summary": "Plan does not include this endpoint",
+          "value": {
+           "detail": "Your current plan does not permit access. Requires a plan that includes **structured financials**."
+          }
+         }
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Rate limit, plan quota or spend cap reached.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RateLimitError"
+        },
+        "examples": {
+         "BurstLimit": {
+          "summary": "Too many requests per minute",
+          "value": {
+           "error": "Too Many Requests",
+           "detail": "Request was throttled. Expected available in 12 seconds.",
+           "retry_after_seconds": 12,
+           "scope": "burst",
+           "type": "burst_limit_exceeded",
+           "message": "Rate limit reached: 120 requests per minute.",
+           "resolution": "Retry after 12 seconds (Retry-After header). Pay-as-you-go raises this to 50/sec: https://financialfilings.com/accounts/payg/",
+           "rate_limit": "120/minute",
+           "payg_url": "https://financialfilings.com/accounts/payg/"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "patch": {
+    "operationId": "filings_search_saved_partial_update",
+    "description": "Changes some fields of a saved search. Its cursor is kept (see Update).\n\nFree: never charged credits.",
+    "summary": "Partially Update Saved Search",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "A unique integer value identifying this saved search.",
+      "required": true
+     }
+    ],
+    "tags": [
+     "Filings"
+    ],
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PatchedSavedSearch"
+       }
+      }
+     }
+    },
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "CognitoJWT": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SavedSearch"
+        }
+       }
+      },
+      "description": ""
+     },
+     "403": {
+      "description": "Missing or invalid API key, or the plan does not include this endpoint.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorDetail"
+        },
+        "examples": {
+         "MissingCredentials": {
+          "summary": "No X-API-Key header",
+          "value": {
+           "detail": "Authentication credentials were not provided.",
+           "type": "authentication_required",
+           "resolution": "Send your API key in the X-API-Key request header, e.g. curl -H \"X-API-Key: <your key>\" https://api.financialreports.eu/filings/ . A browser address bar never sends this header. No key yet? Get a free one at https://financialfilings.com/accounts/api-dashboard/ .",
+           "dashboard_url": "https://financialfilings.com/accounts/api-dashboard/"
+          }
+         },
+         "InvalidKey": {
+          "summary": "Unknown or inactive API key",
+          "value": {
+           "detail": "Invalid or inactive API key."
+          }
+         },
+         "PlanDoesNotPermit": {
+          "summary": "Plan does not include this endpoint",
+          "value": {
+           "detail": "Your current plan does not permit access. Requires a plan that includes **structured financials**."
+          }
+         }
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Rate limit, plan quota or spend cap reached.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RateLimitError"
+        },
+        "examples": {
+         "BurstLimit": {
+          "summary": "Too many requests per minute",
+          "value": {
+           "error": "Too Many Requests",
+           "detail": "Request was throttled. Expected available in 12 seconds.",
+           "retry_after_seconds": 12,
+           "scope": "burst",
+           "type": "burst_limit_exceeded",
+           "message": "Rate limit reached: 120 requests per minute.",
+           "resolution": "Retry after 12 seconds (Retry-After header). Pay-as-you-go raises this to 50/sec: https://financialfilings.com/accounts/payg/",
+           "rate_limit": "120/minute",
+           "payg_url": "https://financialfilings.com/accounts/payg/"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "delete": {
+    "operationId": "filings_search_saved_destroy",
+    "description": "Deletes a saved search.\n\nFree: never charged credits.",
+    "summary": "Delete Saved Search",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "A unique integer value identifying this saved search.",
+      "required": true
+     }
+    ],
+    "tags": [
+     "Filings"
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "CognitoJWT": []
+     }
+    ],
+    "responses": {
+     "204": {
+      "description": "No response body"
+     },
+     "403": {
+      "description": "Missing or invalid API key, or the plan does not include this endpoint.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorDetail"
+        },
+        "examples": {
+         "MissingCredentials": {
+          "summary": "No X-API-Key header",
+          "value": {
+           "detail": "Authentication credentials were not provided.",
+           "type": "authentication_required",
+           "resolution": "Send your API key in the X-API-Key request header, e.g. curl -H \"X-API-Key: <your key>\" https://api.financialreports.eu/filings/ . A browser address bar never sends this header. No key yet? Get a free one at https://financialfilings.com/accounts/api-dashboard/ .",
+           "dashboard_url": "https://financialfilings.com/accounts/api-dashboard/"
+          }
+         },
+         "InvalidKey": {
+          "summary": "Unknown or inactive API key",
+          "value": {
+           "detail": "Invalid or inactive API key."
+          }
+         },
+         "PlanDoesNotPermit": {
+          "summary": "Plan does not include this endpoint",
+          "value": {
+           "detail": "Your current plan does not permit access. Requires a plan that includes **structured financials**."
+          }
+         }
+        }
+       }
+      }
+     },
+     "429": {
+      "description": "Rate limit, plan quota or spend cap reached.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/RateLimitError"
+        },
+        "examples": {
+         "BurstLimit": {
+          "summary": "Too many requests per minute",
+          "value": {
+           "error": "Too Many Requests",
+           "detail": "Request was throttled. Expected available in 12 seconds.",
+           "retry_after_seconds": 12,
+           "scope": "burst",
+           "type": "burst_limit_exceeded",
+           "message": "Rate limit reached: 120 requests per minute.",
+           "resolution": "Retry after 12 seconds (Retry-After header). Pay-as-you-go raises this to 50/sec: https://financialfilings.com/accounts/payg/",
+           "rate_limit": "120/minute",
+           "payg_url": "https://financialfilings.com/accounts/payg/"
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/filings/search/saved/{id}/new/": {
+   "post": {
+    "operationId": "filings_search_saved_new_create",
+    "description": "Returns the filings added to FinancialFilings that match this saved search and that no earlier pull returned, oldest first, at most `max_hits_per_run`, and records them as returned: each filing is returned once. That includes a filing released long ago that reached FinancialFilings since the last pull, and one whose text arrived late (within 48 hours). Use this instead of re-running `GET /filings/search/` with a moving `release_datetime_from`, which misses both. When `more` is above 0, pull again for the rest. Only for an active saved search with no webhook (409 `delivers_to_webhook` or `saved_search_paused` otherwise). The response is the delivery: hits it returned are not returned again by a later pull, so keep them. If a response was lost, `repeat_last_pull=true` returns the hits of the last pull that returned any, again: no search, no snippets, nothing recorded, free. Billed as one page of `GET /filings/search/` when it returns at least one hit; an empty pull is free.",
+    "summary": "Pull New Saved Search Hits",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "A unique integer value identifying this saved search.",
+      "required": true
+     },
+     {
+      "in": "query",
+      "name": "repeat_last_pull",
+      "schema": {
+       "type": "boolean"
+      },
+      "description": "true: return the hits of the last pull that returned any, again (with `pulled_at`), instead of pulling. Not billed."
+     }
+    ],
+    "tags": [
+     "Filings"
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "CognitoJWT": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SavedSearchPull"
+        }
+       }
+      },
+      "description": ""
+     },
+     "409": {
+      "description": "The saved search delivers to a webhook (`delivers_to_webhook`), or is paused (`saved_search_paused`). Not billed."
+     },
+     "429": {
+      "description": "Too many searches running (`search_busy`). Retry after `Retry-After` seconds. Not billed."
+     },
+     "503": {
+      "description": "The full-text index is unavailable (`search_unavailable`). Retry later. Not billed."
+     },
+     "403": {
+      "description": "Missing or invalid API key, or the plan does not include this endpoint.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorDetail"
+        },
+        "examples": {
+         "MissingCredentials": {
+          "summary": "No X-API-Key header",
+          "value": {
+           "detail": "Authentication credentials were not provided.",
+           "type": "authentication_required",
+           "resolution": "Send your API key in the X-API-Key request header, e.g. curl -H \"X-API-Key: <your key>\" https://api.financialreports.eu/filings/ . A browser address bar never sends this header. No key yet? Get a free one at https://financialfilings.com/accounts/api-dashboard/ .",
+           "dashboard_url": "https://financialfilings.com/accounts/api-dashboard/"
+          }
+         },
+         "InvalidKey": {
+          "summary": "Unknown or inactive API key",
+          "value": {
+           "detail": "Invalid or inactive API key."
+          }
+         },
+         "PlanDoesNotPermit": {
+          "summary": "Plan does not include this endpoint",
+          "value": {
+           "detail": "Your current plan does not permit access. Requires a plan that includes **structured financials**."
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/filings/search/saved/{id}/preview/": {
+   "post": {
+    "operationId": "filings_search_saved_preview_create",
+    "description": "Runs the saved search now and returns the hits its next run would deliver, without delivering them or moving its cursor. Billed as one page of `GET /filings/search/`, only when it returns at least one hit.",
+    "summary": "Preview Saved Search",
+    "parameters": [
+     {
+      "in": "path",
+      "name": "id",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "A unique integer value identifying this saved search.",
+      "required": true
+     }
+    ],
+    "tags": [
+     "Filings"
+    ],
+    "security": [
+     {
+      "ApiKeyAuth": []
+     },
+     {
+      "CognitoJWT": []
+     }
+    ],
+    "responses": {
+     "200": {
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/SavedSearchPreview"
+        }
+       }
+      },
+      "description": ""
+     },
+     "429": {
+      "description": "Too many searches running (`search_busy`). Retry after `Retry-After` seconds. Not billed."
+     },
+     "503": {
+      "description": "The full-text index is unavailable (`search_unavailable`). Retry later."
+     },
+     "403": {
+      "description": "Missing or invalid API key, or the plan does not include this endpoint.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/ErrorDetail"
+        },
+        "examples": {
+         "MissingCredentials": {
+          "summary": "No X-API-Key header",
+          "value": {
+           "detail": "Authentication credentials were not provided.",
+           "type": "authentication_required",
+           "resolution": "Send your API key in the X-API-Key request header, e.g. curl -H \"X-API-Key: <your key>\" https://api.financialreports.eu/filings/ . A browser address bar never sends this header. No key yet? Get a free one at https://financialfilings.com/accounts/api-dashboard/ .",
+           "dashboard_url": "https://financialfilings.com/accounts/api-dashboard/"
+          }
+         },
+         "InvalidKey": {
+          "summary": "Unknown or inactive API key",
+          "value": {
+           "detail": "Invalid or inactive API key."
+          }
+         },
+         "PlanDoesNotPermit": {
+          "summary": "Plan does not include this endpoint",
+          "value": {
+           "detail": "Your current plan does not permit access. Requires a plan that includes **structured financials**."
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ "components": {
+  "schemas": {
+   "BlankEnum": {
+    "enum": [
+     ""
+    ]
+   },
+   "LastStatusEnum": {
+    "enum": [
+     "delivered",
+     "no_new_hits",
+     "delivery_failed",
+     "search_unavailable",
+     "deferred",
+     "not_entitled",
+     "no_webhook",
+     "spend_ceiling",
+     "invalid_params",
+     "disabled_after_failures",
+     "capped",
+     "error"
+    ],
+    "type": "string",
+    "description": "* `` - Never run\n* `delivered` - Delivered\n* `no_new_hits` - No new hits\n* `delivery_failed` - Delivery failed\n* `search_unavailable` - Search unavailable\n* `deferred` - Deferred: the search node was busy or slow\n* `not_entitled` - Not entitled\n* `no_webhook` - No active webhook\n* `spend_ceiling` - Spend ceiling reached\n* `invalid_params` - Invalid params\n* `disabled_after_failures` - Disabled after delivery failures\n* `capped` - Over the result cap: nothing new among the first matches\n* `error` - Error"
+   },
+   "PaginatedSavedSearchList": {
+    "type": "object",
+    "required": [
+     "count",
+     "results"
+    ],
+    "properties": {
+     "count": {
+      "type": "integer",
+      "example": 123,
+      "description": "Total matching results. Exact for cheap queries, an estimate on broad or expensive ones. Do not use it to decide when to stop: follow `next` until it is null."
+     },
+     "next": {
+      "type": "string",
+      "nullable": true,
+      "format": "uri",
+      "example": "http://api.example.org/accounts/?page=4"
+     },
+     "previous": {
+      "type": "string",
+      "nullable": true,
+      "format": "uri",
+      "example": "http://api.example.org/accounts/?page=2"
+     },
+     "results": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/SavedSearch"
+      }
+     }
+    }
+   },
+   "PatchedSavedSearch": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer",
+      "readOnly": true
+     },
+     "name": {
+      "type": "string",
+      "description": "Your label for the search.",
+      "maxLength": 200
+     },
+     "params": {
+      "description": "The search, as the query parameters of `GET /filings/search/`: `q` (a string or a list of up to 5 alternatives) and any filter that endpoint takes, e.g. `{\"q\": [\"going concern\", \"material uncertainty\"], \"countries\": \"DE,FR\"}`. Checked exactly as that endpoint checks them. `added_to_platform_from`/`_to`, `ordering`, `page`, `page_size` and `view` are set by each run and cannot be saved."
+     },
+     "webhook": {
+      "type": [
+       "integer",
+       "null"
+      ],
+      "description": "The id of your webhook that receives each run's `saved_search.hits` event. Leave it out (or null) to pull the new hits yourself with `POST /filings/search/saved/{id}/new/` instead; such a search is never run on a schedule."
+     },
+     "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "`false` pauses the search. At most 20 active per account."
+     },
+     "max_hits_per_run": {
+      "type": "integer",
+      "maximum": 200,
+      "minimum": 1,
+      "default": 50,
+      "description": "Hits per delivery or pull, 1-200 (default 50). Further new hits are counted in `more` and delivered by the next runs (or pulls), oldest first."
+     },
+     "cursor": {
+      "type": "string",
+      "format": "date-time",
+      "readOnly": true,
+      "description": "Filings added to FinancialFilings at or after this time (minus a short lookback for filings whose text arrived late) are searched by the next run or pull. It moves only after a delivery succeeds, or a pull returns hits."
+     },
+     "last_run_at": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "format": "date-time",
+      "readOnly": true
+     },
+     "last_status": {
+      "readOnly": true,
+      "description": "How the last run ended; empty before the first run.\n\n* `` - Never run\n* `delivered` - Delivered\n* `no_new_hits` - No new hits\n* `delivery_failed` - Delivery failed\n* `search_unavailable` - Search unavailable\n* `deferred` - Deferred: the search node was busy or slow\n* `not_entitled` - Not entitled\n* `no_webhook` - No active webhook\n* `spend_ceiling` - Spend ceiling reached\n* `invalid_params` - Invalid params\n* `disabled_after_failures` - Disabled after delivery failures\n* `capped` - Over the result cap: nothing new among the first matches\n* `error` - Error",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/LastStatusEnum"
+       },
+       {
+        "$ref": "#/components/schemas/BlankEnum"
+       }
+      ]
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "readOnly": true
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "readOnly": true
+     }
+    }
+   },
+   "SavedSearch": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "integer",
+      "readOnly": true
+     },
+     "name": {
+      "type": "string",
+      "description": "Your label for the search.",
+      "maxLength": 200
+     },
+     "params": {
+      "description": "The search, as the query parameters of `GET /filings/search/`: `q` (a string or a list of up to 5 alternatives) and any filter that endpoint takes, e.g. `{\"q\": [\"going concern\", \"material uncertainty\"], \"countries\": \"DE,FR\"}`. Checked exactly as that endpoint checks them. `added_to_platform_from`/`_to`, `ordering`, `page`, `page_size` and `view` are set by each run and cannot be saved."
+     },
+     "webhook": {
+      "type": [
+       "integer",
+       "null"
+      ],
+      "description": "The id of your webhook that receives each run's `saved_search.hits` event. Leave it out (or null) to pull the new hits yourself with `POST /filings/search/saved/{id}/new/` instead; such a search is never run on a schedule."
+     },
+     "is_active": {
+      "type": "boolean",
+      "default": true,
+      "description": "`false` pauses the search. At most 20 active per account."
+     },
+     "max_hits_per_run": {
+      "type": "integer",
+      "maximum": 200,
+      "minimum": 1,
+      "default": 50,
+      "description": "Hits per delivery or pull, 1-200 (default 50). Further new hits are counted in `more` and delivered by the next runs (or pulls), oldest first."
+     },
+     "cursor": {
+      "type": "string",
+      "format": "date-time",
+      "readOnly": true,
+      "description": "Filings added to FinancialFilings at or after this time (minus a short lookback for filings whose text arrived late) are searched by the next run or pull. It moves only after a delivery succeeds, or a pull returns hits."
+     },
+     "last_run_at": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "format": "date-time",
+      "readOnly": true
+     },
+     "last_status": {
+      "readOnly": true,
+      "description": "How the last run ended; empty before the first run.\n\n* `` - Never run\n* `delivered` - Delivered\n* `no_new_hits` - No new hits\n* `delivery_failed` - Delivery failed\n* `search_unavailable` - Search unavailable\n* `deferred` - Deferred: the search node was busy or slow\n* `not_entitled` - Not entitled\n* `no_webhook` - No active webhook\n* `spend_ceiling` - Spend ceiling reached\n* `invalid_params` - Invalid params\n* `disabled_after_failures` - Disabled after delivery failures\n* `capped` - Over the result cap: nothing new among the first matches\n* `error` - Error",
+      "oneOf": [
+       {
+        "$ref": "#/components/schemas/LastStatusEnum"
+       },
+       {
+        "$ref": "#/components/schemas/BlankEnum"
+       }
+      ]
+     },
+     "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "readOnly": true
+     },
+     "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "readOnly": true
+     }
+    },
+    "required": [
+     "created_at",
+     "cursor",
+     "id",
+     "last_run_at",
+     "last_status",
+     "name",
+     "params",
+     "updated_at"
+    ]
+   },
+   "SavedSearchHit": {
+    "type": "object",
+    "properties": {
+     "filing_id": {
+      "type": "string"
+     },
+     "title": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "company": {
+      "$ref": "#/components/schemas/SavedSearchHitCompany"
+     },
+     "filing_type_code": {
+      "type": [
+       "string",
+       "null"
+      ]
+     },
+     "release_datetime": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "format": "date-time"
+     },
+     "added_to_platform": {
+      "type": "string",
+      "format": "date-time"
+     },
+     "match": {
+      "oneOf": [
+       {},
+       {
+        "type": "null"
+       }
+      ],
+      "description": "Snippets, as `match` on `GET /filings/search/`; null when they were not computed."
+     }
+    },
+    "required": [
+     "added_to_platform",
+     "company",
+     "filing_id",
+     "filing_type_code",
+     "match",
+     "release_datetime",
+     "title"
+    ]
+   },
+   "SavedSearchHitCompany": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name"
+    ]
+   },
+   "SavedSearchPreview": {
+    "type": "object",
+    "properties": {
+     "hits": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/SavedSearchHit"
+      }
+     },
+     "saved_search": {
+      "$ref": "#/components/schemas/SavedSearchRef"
+     },
+     "more": {
+      "type": "integer",
+      "description": "New hits past `max_hits_per_run`, left for the next runs. A lower bound when `capped`."
+     },
+     "capped": {
+      "type": "boolean",
+      "description": "True: more than the first 1000 matches by relevance fell in the window, so some may never be delivered. Narrow the search."
+     },
+     "window": {
+      "$ref": "#/components/schemas/SavedSearchWindow"
+     }
+    },
+    "required": [
+     "capped",
+     "hits",
+     "more",
+     "saved_search",
+     "window"
+    ]
+   },
+   "SavedSearchPull": {
+    "type": "object",
+    "properties": {
+     "hits": {
+      "type": "array",
+      "items": {
+       "$ref": "#/components/schemas/SavedSearchHit"
+      }
+     },
+     "saved_search": {
+      "$ref": "#/components/schemas/SavedSearchPullRef"
+     },
+     "more": {
+      "type": "integer",
+      "description": "New hits past `max_hits_per_run`, left for the next pulls: pull again now to get them. A lower bound when `capped`."
+     },
+     "capped": {
+      "type": "boolean",
+      "description": "True: more than the first 1000 matches by relevance fell in the window, so some may never be returned. Narrow the search."
+     },
+     "scan_complete": {
+      "type": "boolean",
+      "description": "False: the search stopped before checking every candidate, so more new filings may exist than were returned. With no hits, nothing was recorded; pull again later."
+     },
+     "window": {
+      "$ref": "#/components/schemas/SavedSearchPullWindow"
+     },
+     "pulled_at": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "format": "date-time",
+      "description": "Only with `repeat_last_pull=true`: when that pull ran (null: no pull has returned hits yet). That response carries `saved_search`, `hits` and `pulled_at` only."
+     }
+    },
+    "required": [
+     "capped",
+     "hits",
+     "more",
+     "saved_search",
+     "scan_complete",
+     "window"
+    ]
+   },
+   "SavedSearchPullRef": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name"
+    ]
+   },
+   "SavedSearchPullWindow": {
+    "type": "object",
+    "properties": {
+     "added_to_platform_from": {
+      "type": "string",
+      "format": "date-time"
+     },
+     "added_to_platform_to": {
+      "type": "string",
+      "format": "date-time"
+     }
+    },
+    "required": [
+     "added_to_platform_from",
+     "added_to_platform_to"
+    ]
+   },
+   "SavedSearchRef": {
+    "type": "object",
+    "properties": {
+     "id": {
+      "type": "string"
+     },
+     "name": {
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "name"
+    ]
+   },
+   "SavedSearchWindow": {
+    "type": "object",
+    "properties": {
+     "added_to_platform_from": {
+      "type": "string",
+      "format": "date-time"
+     },
+     "added_to_platform_to": {
+      "type": "string",
+      "format": "date-time"
+     }
+    },
+    "required": [
+     "added_to_platform_from",
+     "added_to_platform_to"
+    ]
+   }
+  }
+ }
+}
