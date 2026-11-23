@@ -7627,10 +7627,13 @@ def _saved_hit_lines(hits: list, *, snippets: bool, budget: int) -> list[str]:
 
 
 def _saved_hits(payload: dict) -> list[dict]:
+    # Every entry or none: the pull has already recorded each one as returned,
+    # so dropping one would lose that filing for good (SPECHT on #224). A
+    # malformed body is an error, and the caller can repeat the pull.
     hits = payload.get("hits")
-    if not isinstance(hits, list):
+    if not isinstance(hits, list) or not all(isinstance(h, dict) for h in hits):
         raise ValueError("hits")
-    return [h for h in hits if isinstance(h, dict)]
+    return hits
 
 
 @mcp.tool(
@@ -8069,6 +8072,9 @@ async def filings_search_saved_list(page: int = 1) -> str:
                     "The FinancialFilings API was unreachable or timed out (already retried once)."
                 ) from exc
             if first.status_code != 404:
+                if first.is_error:
+                    # Page 1 failing proves nothing about page N: report it.
+                    _raise_upstream_text_error(first, first.text[:_MAX_ERROR_BODY])
                 return (
                     f"No saved searches on page {page_no}. Call with page=1 for the "
                     "first ones."

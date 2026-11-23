@@ -510,6 +510,19 @@ async def test_pull_renders_each_hit_as_filings_search_does_and_says_it_is_consu
 
 
 @pytest.mark.asyncio
+async def test_a_pull_with_a_malformed_hit_is_an_error_not_a_shorter_list(
+    m, respx_router
+) -> None:
+    """The pull recorded every entry, so none may be dropped (SPECHT on #224)."""
+    respx_router.post(PULL).mock(
+        return_value=httpx.Response(200, json=_pull([_hit(1), "2", None]))
+    )
+    with pytest.raises(m.UpstreamHTTPError) as exc:
+        await _fn(m, "filings_search_new")(saved_search_id=7)
+    assert "not a pull" in str(exc.value) and "repeat_last_pull" in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_pull_with_more_capped_and_an_early_stop(m, respx_router) -> None:
     respx_router.post(PULL).mock(
         return_value=httpx.Response(
@@ -803,6 +816,12 @@ async def test_list_404_past_the_last_page_vs_feature_off(m, respx_router) -> No
     with pytest.raises(m.UpstreamHTTPError) as exc:
         await _fn(m, "filings_search_saved_list")(page=2)
     assert "not available on this FinancialFilings account yet" in str(exc.value)
+    # Page 1 failing otherwise is reported, never read as "past the end".
+    for status in (500, 403, 429):
+        route.mock(side_effect=pages(status))
+        with pytest.raises(m.UpstreamHTTPError) as exc:
+            await _fn(m, "filings_search_saved_list")(page=2)
+        assert "No saved searches on page" not in str(exc.value)
 
 
 @pytest.mark.asyncio
