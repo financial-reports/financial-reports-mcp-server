@@ -7687,7 +7687,8 @@ async def filings_search_save(
     types, languages, release_datetime_from / _to. No ordering, group_by or paging:
     pulls return new filings oldest first. `name` labels it (default: the queries).
     `max_hits_per_pull` (1-200, default 20) caps the filings one pull returns; the
-    rest wait for the next pull. The search starts now: for what already matches,
+    rest wait for the next pull (unless a pull says the search is capped: then
+    narrow it, as some matches may never be returned). The search starts now: for what already matches,
     run filings_search. Saving is free. An account can keep 20 active saved
     searches (filings_search_saved_list shows them, filings_search_saved_delete
     removes one)."""
@@ -7785,6 +7786,17 @@ async def filings_search_save(
                     _upstream_error_text(response, body)
                     + " List them with filings_search_saved_list and remove one with "
                     "filings_search_saved_delete, then save again.",
+                    upstream_status=response.status_code,
+                    request_id=_upstream_request_id(response),
+                    error_kind=_classify_upstream_error(response.status_code, body),
+                )
+            if response.status_code >= 500:
+                # A gateway 5xx can follow a POST the API applied (SPECHT on #224).
+                raise UpstreamHTTPError(
+                    _upstream_error_text(response, body)
+                    + " The search may have been saved anyway: check "
+                    "filings_search_saved_list before saving it again, so you do not "
+                    "keep two copies.",
                     upstream_status=response.status_code,
                     request_id=_upstream_request_id(response),
                     error_kind=_classify_upstream_error(response.status_code, body),

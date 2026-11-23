@@ -510,6 +510,19 @@ async def test_pull_renders_each_hit_as_filings_search_does_and_says_it_is_consu
 
 
 @pytest.mark.asyncio
+async def test_a_5xx_save_says_to_check_the_list_first(m, respx_router) -> None:
+    route = respx_router.post(SAVED).mock(return_value=httpx.Response(502, text="bad gateway"))
+    with pytest.raises(m.UpstreamHTTPError) as exc:
+        await _fn(m, "filings_search_save")(queries=["going concern"])
+    assert "check filings_search_saved_list before saving it again" in str(exc.value)
+    assert route.call_count == 1  # never replayed
+    route.mock(return_value=httpx.Response(400, json={"params": ["bad"]}))
+    with pytest.raises(m.UpstreamHTTPError) as exc:
+        await _fn(m, "filings_search_save")(queries=["going concern"])
+    assert "may have been saved" not in str(exc.value)
+
+
+@pytest.mark.asyncio
 async def test_a_pull_with_a_malformed_hit_is_an_error_not_a_shorter_list(
     m, respx_router
 ) -> None:
