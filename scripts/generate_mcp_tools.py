@@ -79,7 +79,8 @@ _REPLACED_BY_SYNTHETIC = {
     # GET /filings/{id}/markdown/outline/ (web#8004): served by the hand-built
     # filings_markdown_outline, which renders the JSON one line per heading.
     "filings_markdown_outline_retrieve",
-    # Saved searches (web#10851), out of the schema until the web flag is on.
+    # Saved searches (web#10851), in the schema only while the web flag is on
+    # (on since 2026-11-23; the snapshot refreshed that day carries them).
     # These three are served by SAVED_SEARCH_TOOLS_BLOCK whenever the schema
     # carries them (the block's gate needs exactly these routes), so a generic
     # twin would be a second tool for the same endpoint. The list twin would
@@ -7394,8 +7395,9 @@ async def filings_markdown_outline(
 # Saved searches you pull (financial-reports/web#10851): filings_search_save,
 # filings_search_new, filings_search_saved_list, filings_search_saved_delete.
 # Emitted on every surface, but ONLY when the schema carries the endpoints
-# (_saved_search_ready); with today's snapshot they are not, and the module is
-# what it was before this block existed. The steering sentence in
+# (_saved_search_ready). The 2026-11-23 snapshot carries them; a snapshot taken
+# with the web flag off would not, and the module would then be what it was
+# before this block existed. The steering sentence in
 # filings_search's description (SAVED_SEARCH_STEER) follows the same gate, so a
 # description never names a tool that is not served.
 SAVED_SEARCH_TOOLS_BLOCK = '''

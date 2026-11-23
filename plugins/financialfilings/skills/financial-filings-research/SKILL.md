@@ -99,7 +99,8 @@ is a check run on a schedule:
   It returns only filings added since the last pull, each once. Lost a response?
   Call again with `repeat_last_pull=True` for the same batch, free.
 - **One company** → `filings_list?company=<id>&ordering=-added_to_platform`,
-  stopping at the newest `added_to_platform` seen last time.
+  reading back to a little before the newest `added_to_platform` seen last time and
+  skipping ids you already have.
 
 Never key a check on `release_datetime`: a filing published last month can arrive
 today, and a moving `release_datetime_from` skips it for good.

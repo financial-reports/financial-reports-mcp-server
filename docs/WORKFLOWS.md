@@ -118,7 +118,8 @@ agent) runs on a schedule:
    return more right now. If a response was lost, call it again with
    `repeat_last_pull=True` to get that same batch back, free.
 2. **One company's filings** → `filings_list?company=<id>&ordering=-added_to_platform`,
-   keeping the newest `added_to_platform` seen and stopping at it next time.
+   keeping the newest `added_to_platform` seen; next time read back to a little
+   before it and skip the filing ids you already have.
 
 Compare on `added_to_platform` (when FinancialFilings received the filing), not
 `release_datetime` (when the issuer published it). A filing published last month

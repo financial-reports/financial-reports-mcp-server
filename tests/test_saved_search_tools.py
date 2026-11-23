@@ -169,8 +169,11 @@ def _pull(hits, *, more=0, capped=False, scan_complete=True):
 def _without_saved_search(schema: dict) -> dict:
     """The schema as the web side publishes it with its flag off."""
     stripped = copy.deepcopy(schema)
+    extra = json.loads(FIXTURE.read_text(encoding="utf-8"))
     for path in [p for p in stripped["paths"] if p.startswith("/filings/search/saved/")]:
         del stripped["paths"][path]
+    for name in extra["components"]["schemas"]:
+        stripped["components"]["schemas"].pop(name, None)
     return stripped
 
 

@@ -141,7 +141,7 @@ Save a `filings_search` query. Returns its `saved_search_id`.
 
 Key params: `queries` (1-5 phrases, OR-ed), `companies`, `countries`, `types`, `languages`, `release_datetime_from` / `release_datetime_to`, `name`, `max_hits_per_pull` (1-200, default 20). No ordering, grouping or paging.
 
-Pitfall: the first pull starts from the moment of saving, not from the past. Run `filings_search` once for what already exists, then save.
+Pitfall: the first pull starts at about the moment of saving (reaching back up to 48 hours, for filings whose text arrived late), not from the past. Run `filings_search` once for what already exists, then save.
 
 ### `filings_search_new`
 The filings added since the previous pull, oldest first, each one once. Billed as one `filings_search` page when it returns filings; free when empty.
@@ -309,7 +309,7 @@ Pitfall: there are no free-form event names: a webhook fires on the three `trigg
 - 12 tools have `destructiveHint=true` (mutations: watchlist add/remove, webhook create and
   update, secret rotation, agent account onboarding, saved-search delete and preview). One is on
   the default surface: `filings_search_saved_delete`.
-- 4 tools are non-destructive probes or additive writes: `webhooks_test_create` and `webhooks_deliveries_replay_create` hit the user's external endpoint but don't mutate FinancialFilings state; `filings_search_save` adds a saved search and `filings_search_new` records which filings it returned, so neither changes what was there before.
+- 4 tools are non-destructive probes or additive writes: `webhooks_test_create` and `webhooks_deliveries_replay_create` hit the user's external endpoint but don't mutate FinancialFilings state; `filings_search_save` adds a saved search; `filings_search_new` marks the filings it returns as delivered, so they are not returned again (a lost response is recovered with `repeat_last_pull=true`).
 - 6 tools advertise `outputSchema` for structured rendering: `companies_list`, `companies_retrieve`, `companies_financials_retrieve`, `filings_list`, `filings_retrieve`, `isins_list`.
 
 ## Authentication

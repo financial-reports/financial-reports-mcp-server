@@ -456,7 +456,7 @@ _NOT_A_SURFACE_COUNT = (
     # Annotation counts in the cheatsheet: properties of the full surface's
     # ToolAnnotations, not sizes of a surface. Measured 2026-11-19 over the
     # full render excluding the `_pay_*` x402 variants, and pinned by
-    # tests/test_cheatsheet_annotation_counts.py.
+    # test_the_cheatsheet_annotation_counts_match_the_module below.
     "56 tools have",
     "12 tools have",
     "4 tools are non-destructive probes",
