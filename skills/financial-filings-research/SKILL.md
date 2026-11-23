@@ -19,7 +19,7 @@ Not for market data. Prices, quotes and volumes are a different domain.
 
 ## Tools
 
-The connector exposes **17 research tools**. Administrative, reference and
+The connector exposes **21 research tools**. Administrative, reference and
 webhook-management endpoints are not part of the research surface. If you need
 one, say so rather than substituting a tool that answers a different question.
 Full parameters in `references/tool-cheatsheet.md`.
@@ -33,6 +33,7 @@ Full parameters in `references/tool-cheatsheet.md`.
 | Which filings mention X | `filings_search` (full-text across the corpus) |
 | Search inside a filing | `filings_markdown_search`; `filings_markdown_search_batch` for one query across several filings |
 | Read one section of a long filing | `filings_markdown_outline` (headings with offsets) → `filings_markdown_retrieve` at that offset |
+| Watch a search for new filings | `filings_search_save` once → `filings_search_new` on each check (only filings added since the last pull); `filings_search_saved_list` to find one, `filings_search_saved_delete` to stop |
 | Financials | `companies_financials_retrieve` |
 | Next report due | `companies_next_annual_report_retrieve` |
 | Filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` (default surface only; on `MCP_FULL_SURFACE=1` use `filing_types_list` and the `isic_*` tools) |
@@ -89,11 +90,19 @@ approximate.
 
 ### 5. Monitoring and alerts
 
-**Not available on this connector.** Watchlist and webhook tools are not part of
-the research surface, so "alert me when X files" cannot be set up here. Say so.
+There are no push alerts here: watchlist and webhook tools are not part of the
+research surface, so "email me when X files" cannot be set up. Say so. What works
+is a check run on a schedule:
 
-The workable alternative is polling: `filings_list?company=<id>&ordering=-release_datetime`
-on a schedule the user runs, comparing against the last `release_datetime` seen.
+- **A topic or a set of filters** → `filings_search_save` once (same arguments as
+  `filings_search`), then `filings_search_new(saved_search_id=…)` on each check.
+  It returns only filings added since the last pull, each once. Lost a response?
+  Call again with `repeat_last_pull=True` for the same batch, free.
+- **One company** → `filings_list?company=<id>&ordering=-added_to_platform`,
+  stopping at the newest `added_to_platform` seen last time.
+
+Never key a check on `release_datetime`: a filing published last month can arrive
+today, and a moving `release_datetime_from` skips it for good.
 
 ## Data-quality checks
 

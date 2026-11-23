@@ -8,7 +8,7 @@ English | [简体中文](README.zh-CN.md)
 [![Status](https://img.shields.io/badge/status-production-green)](https://mcp.financialfilings.com/health)
 
 > **Official Model Context Protocol (MCP) server for the [FinancialFilings](https://financialfilings.com) API.**
-> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **20 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 65-tool surface). **Free for any FinancialFilings account.** Official filings, as published.
+> Direct access from Claude (and any MCP-compatible client) to regulatory filings, financial data, and corporate information from listed companies worldwide. **24 curated tools by default** (set `MCP_FULL_SURFACE=1` for the full 72-tool surface). **Free for any FinancialFilings account.** Official filings, as published.
 
 ---
 
@@ -182,18 +182,18 @@ Two things the error page itself doesn't tell you:
 
 ## What you get
 
-**20 LLM-callable tools by default** — the curated surface analysts actually use:
+**24 LLM-callable tools by default** — the curated surface analysts actually use:
 
 | Domain | Tools | Use cases |
 |---|---|---|
 | Companies | 5 | Search by name/ticker/ISIN, retrieve full company profiles, get normalized financials, predict next annual report, batch-resolve a list of identifiers to company IDs |
-| Filings | 7 | List, retrieve, fetch markdown content (capped at 150K chars); list a filing's section headings with offsets to jump to one (`filings_markdown_outline`); full-text search across the corpus (`filings_search`) — filings with extracted text, first 20 MB of each; keyword-search inside one filing (`filings_markdown_search`) or across several at once (`filings_markdown_search_batch`) |
+| Filings | 11 | List, retrieve, fetch markdown content (capped at 150K chars); list a filing's section headings with offsets to jump to one (`filings_markdown_outline`); full-text search across the corpus (`filings_search`) — filings with extracted text, first 20 MB of each; keyword-search inside one filing (`filings_markdown_search`) or across several at once (`filings_markdown_search_batch`); save a search and pull only the filings added since the last pull (`filings_search_save`, `filings_search_new`, `filings_search_saved_list`, `filings_search_saved_delete`) |
 | ISINs | 2 | Lookup by ISIN, list dual-listings |
 | Reference taxonomy | 2 | Filing categories and filing types |
 | Account | 1 | What your API and MCP usage has cost this cycle, spend caps and free credits left (free, never billed) |
 | Guides | 3 | Filing-type taxonomy, ISIC industry classification, and markdown-fetch strategy — callable references for tool-only clients that can't read MCP resources |
 
-Set `MCP_FULL_SURFACE=1` to restore the full **65-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, webhook subscriptions, the company-merge audit feed, per-exchange security listings, the agent account-onboarding endpoints (sign-up, key claim, key rotation, checkout link, owner confirmation, status), the raw `filings_markdown_search_retrieve` endpoint behind `filings_markdown_search`, the raw `filings_markdown_search_create` batch endpoint, the removed-filings feed (`filings_removed_list`, which requires a `since` timestamp), the measured accuracy of each `trust_tier` (`companies_financials_trust_tiers_retrieve` — the figure itself already travels inline on every line item as `trust_tier_accuracy`), and `filings_document_retrieve` (returns a file, not JSON). Note that `MCP_FULL_SURFACE=1` is **not a superset**: it drops the three `get_fr_*` guide tools, which exist to stand in for the gated reference data and are emitted on the curated surface only. 17 tools are on both surfaces, 3 are default-only and 48 are gated.
+Set `MCP_FULL_SURFACE=1` to restore the full **72-tool** surface: the ISIC section/division/group/class hierarchy, the rest of the reference data (countries, languages, sources, line-item definitions, filing history), per-user watchlists, webhook subscriptions, the company-merge audit feed, per-exchange security listings, the agent account-onboarding endpoints (sign-up, key claim, key rotation, checkout link, owner confirmation, status), the raw `filings_markdown_search_retrieve` endpoint behind `filings_markdown_search`, the raw `filings_markdown_search_create` batch endpoint, the removed-filings feed (`filings_removed_list`, which requires a `since` timestamp), the measured accuracy of each `trust_tier` (`companies_financials_trust_tiers_retrieve` — the figure itself already travels inline on every line item as `trust_tier_accuracy`), `filings_document_retrieve` (returns a file, not JSON), a restructured call transcript as JSON (`filings_transcript_retrieve`), and one saved search's row and a preview of its next pull (`filings_search_saved_retrieve`, `filings_search_saved_preview_create`). Note that `MCP_FULL_SURFACE=1` is **not a superset**: it drops the three `get_fr_*` guide tools, which exist to stand in for the gated reference data and are emitted on the curated surface only. 21 tools are on both surfaces, 3 are default-only and 51 are gated.
 
 The shipped surface is generated from a committed, reviewed snapshot of the [FinancialFilings OpenAPI schema](https://financialreports.eu/api/schema/) (`scripts/openapi.snapshot.json`, pinned via `FR_PIN_SCHEMA=1` in CI and the Docker build), so it's deterministic and never drifts silently on a rebuild.
 
@@ -218,7 +218,7 @@ The repository ships an [Agent Skill](skills/financial-filings-research/) — `f
 │  (FastAPI +      │                                       ▼
 │   FastMCP)       │     proxy bearer token         ┌──────────────────┐
 │                  │  ─────────────────────────►    │  api.            │
-│  20 tools        │                                │  financial-      │
+│  24 tools        │                                │  financial-      │
 │  generated from  │                                │  reports.eu      │
 │  OpenAPI schema  │                                │  (first-party)   │
 └──────────────────┘                                └──────────────────┘
@@ -226,7 +226,7 @@ The repository ships an [Agent Skill](skills/financial-filings-research/) — `f
 
 **Key design decisions:**
 
-- **Tools are generated, not hand-written.** `scripts/generate_mcp_tools.py` reads the OpenAPI schema — pinned to a committed snapshot via `FR_PIN_SCHEMA=1` in CI and the Docker build — and emits `src/financial_reports_mcp.py`. The default surface is curated to a focused 20-tool set; `MCP_FULL_SURFACE=1` emits the full surface. Note that `_PRUNED_EXCLUDE` in the generator is a **denylist**, so a new upstream endpoint joins the curated surface unless the snapshot-refresh PR explicitly excludes it.
+- **Tools are generated, not hand-written.** `scripts/generate_mcp_tools.py` reads the OpenAPI schema — pinned to a committed snapshot via `FR_PIN_SCHEMA=1` in CI and the Docker build — and emits `src/financial_reports_mcp.py`. The default surface is curated to a focused 24-tool set; `MCP_FULL_SURFACE=1` emits the full surface. Note that `_PRUNED_EXCLUDE` in the generator is a **denylist**, so a new upstream endpoint joins the curated surface unless the snapshot-refresh PR explicitly excludes it.
 - **Bearer-token proxy, not session storage.** The user's Cognito access token is forwarded to the upstream API on every call. No conversation data, no API responses cached server-side.
 - **Subscription gating in-process.** A 15-second LRU cache holds Cognito `sub` → tier mappings to avoid hammering the FR API on every tool call.
 - **Same-origin asset proxy.** `/favicon.ico`, `/icon.png`, `/icon-{32,192,512}.png` are served from this origin (proxied + cached from CDN) so connector UIs and the `/consent` page render without cross-origin CSP friction.

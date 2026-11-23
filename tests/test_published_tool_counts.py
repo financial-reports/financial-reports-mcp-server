@@ -33,14 +33,20 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 GENERATED = REPO_ROOT / "src/financial_reports_mcp.py"
 GENERATOR = REPO_ROOT / "scripts/generate_mcp_tools.py"
 
-# The four tools the generator emits from inline `*_BLOCK` templates rather
+# The eight tools the generator emits from inline `*_BLOCK` templates rather
 # than from the OpenAPI schema. Named so the decomposition in the docs
-# ("N schema-derived + 3 guide + 4 hand-written") stays checkable.
+# ("N schema-derived + 3 guide + 8 hand-written") stays checkable. The four
+# saved-search tools joined with the 2026-11-23 snapshot refresh, the first to
+# carry their routes (web#10851).
 HAND_WRITTEN = {
     "filings_search",
     "filings_markdown_search",
     "filings_markdown_search_batch",
     "filings_markdown_outline",
+    "filings_search_save",
+    "filings_search_new",
+    "filings_search_saved_list",
+    "filings_search_saved_delete",
 }
 
 
@@ -182,7 +188,7 @@ def _doc(relpath: str) -> str:
 # --- the measurements themselves ---------------------------------------------
 
 def test_the_default_surface_decomposes_as_the_docs_describe_it(surfaces) -> None:
-    """13 schema-derived + 3 guide + 4 hand-written. Pin the parts, not just the sum.
+    """13 schema-derived + 3 guide + 8 hand-written. Pin the parts, not just the sum.
 
     A total alone cannot catch a tool moving between categories, and the docs
     describe the categories.
@@ -192,7 +198,7 @@ def test_the_default_surface_decomposes_as_the_docs_describe_it(surfaces) -> Non
     hand = default & HAND_WRITTEN
     schema = default - guide - hand
     assert len(guide) == 3, sorted(guide)
-    assert len(hand) == 4, sorted(hand)
+    assert len(hand) == 8, sorted(hand)
 
     # \u26d4 THE LINE THAT USED TO BE HERE WAS A TAUTOLOGY, and SPECHT caught it:
     #     assert len(default) == len(schema) + len(guide) + len(hand)
@@ -280,7 +286,7 @@ _COUNT_CLAIMS: list[tuple[str, str]] = [
     # broke that test, which is the gate working: a number that differs from the
     # surface count is not therefore stale, and the only way to know is to find
     # out what it measures.
-    (r"All (\d+) on the default", "default"),
+    (r"of the (\d+) on the\s+default surface", "default"),
     # ⚠ Anchored on the sentence, not on "N tools across M domains": the looser
     # form also matched "16 tools across 5 domains" in the generator, which is the
     # x402 PAY surface, and the gate then read 16 as a claim about the full 64.
@@ -441,19 +447,19 @@ def test_the_secondary_docs_lost_their_stale_counts(relpath: str, stale) -> None
 _NOT_A_SURFACE_COUNT = (
     # the RESEARCH surface: default minus the 3 administrative/reference tools.
     # Pinned against the module by tests/test_skill_names_the_research_surface.py.
-    "17 research tools",
-    "**17** tools for regulatory-filings research",
+    "21 research tools",
+    "**21** tools for regulatory-filings research",
     # decomposition sub-counts, pinned by
     # test_the_default_surface_decomposes_as_the_docs_describe_it
     "3 `get_fr_*` guide tools",
-    "4 hand-written tools",
+    "8 hand-written tools",
     # Annotation counts in the cheatsheet: properties of the full surface's
     # ToolAnnotations, not sizes of a surface. Measured 2026-11-19 over the
     # full render excluding the `_pay_*` x402 variants, and pinned by
     # tests/test_cheatsheet_annotation_counts.py.
-    "53 tools have",
-    "10 tools have",
-    "2 tools are non-destructive probes",
+    "56 tools have",
+    "12 tools have",
+    "4 tools are non-destructive probes",
     "6 tools advertise",
 )
 

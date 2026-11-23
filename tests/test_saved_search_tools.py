@@ -166,26 +166,58 @@ def _pull(hits, *, more=0, capped=False, scan_complete=True):
 # --- the gate -----------------------------------------------------------------
 
 
-def test_todays_snapshot_emits_none_of_it(mcp_module, tmp_path) -> None:
-    """The committed snapshot has no saved-search route, so the served module
-    has none of the tools, no steering sentence and no placeholder left over."""
+def _without_saved_search(schema: dict) -> dict:
+    """The schema as the web side publishes it with its flag off."""
+    stripped = copy.deepcopy(schema)
+    for path in [p for p in stripped["paths"] if p.startswith("/filings/search/saved/")]:
+        del stripped["paths"][path]
+    return stripped
+
+
+def test_the_fixture_is_the_live_routes() -> None:
+    """The fixture the tests below build on is what the committed snapshot
+    carries, byte for byte (the 2026-11-23 refresh was the first to carry
+    them), so a test passing on the fixture is a test of the shipped schema."""
+    extra = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    snapshot = _snapshot()
+    for path, item in extra["paths"].items():
+        assert snapshot["paths"].get(path) == item, path
+    for name, schema in extra["components"]["schemas"].items():
+        assert snapshot["components"]["schemas"].get(name) == schema, name
+
+
+def test_todays_snapshot_serves_all_of_it(mcp_module, tmp_path) -> None:
+    """The committed snapshot carries the saved-search routes, so the served
+    module has the four tools and the steering sentence, and no placeholder
+    is left over."""
     gen = _generator("_gen_saved_gate")
     snapshot = _snapshot()
-    assert not any(p.startswith("/filings/search/saved/") for p in snapshot["paths"])
-    assert gen._saved_search_ready(snapshot["paths"]) is False
+    assert gen._saved_search_ready(snapshot["paths"]) is True
     served = set(mcp_module.mcp._tool_manager._tools)
-    assert TOOLS.isdisjoint(served)
+    assert TOOLS <= served
     description = mcp_module.mcp._tool_manager._tools["filings_search"].description
-    assert "filings_search_save" not in description
+    assert "filings_search_save" in description
     text = Path(mcp_module.__file__).read_text(encoding="utf-8")
+    assert "__SAVED_SEARCH_STEER__" not in text
+    # And an in-process render of the snapshot is the same module, byte for byte.
+    assert _render(tmp_path, snapshot) == text
+
+
+def test_a_snapshot_taken_with_the_flag_off_emits_none_of_it(tmp_path) -> None:
+    """A refresh taken while the web flag is off drops the routes: the module
+    then has none of the tools, no steering sentence and no placeholder."""
+    gen = _generator("_gen_saved_gate_off")
+    schema = _without_saved_search(_snapshot())
+    assert gen._saved_search_ready(schema["paths"]) is False
+    text = _render(tmp_path, schema)
+    assert TOOLS.isdisjoint(_tools_in(text))
     for marker in (
         "__SAVED_SEARCH_STEER__",
         "_api_send_unreplayed",
         "/filings/search/saved/",
+        "filings_search_save",
     ):
         assert marker not in text, marker
-    # And an in-process render of the snapshot is the same module, byte for byte.
-    assert _render(tmp_path, snapshot) == text
 
 
 @pytest.mark.parametrize("full_surface", [False, True])

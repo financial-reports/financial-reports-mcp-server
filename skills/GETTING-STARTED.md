@@ -19,8 +19,9 @@ before reporting a figure.
   ```
 
 You'll be asked to sign in to FinancialFilings the first time. The connector
-exposes 20 tools covering companies, filings, filing content, corpus-wide and
-in-filing text search, and normalised financial statements.
+exposes 24 tools covering companies, filings, filing content, corpus-wide and
+in-filing text search, saved searches that return only new filings, and
+normalised financial statements.
 
 ## 2. Install the skill
 

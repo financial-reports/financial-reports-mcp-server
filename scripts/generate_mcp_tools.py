@@ -56,7 +56,7 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # The default generated surface drops cold per-item reference singletons, the
 # ISIC hierarchy family (folded into the get_fr_industry_classification guide
 # tool), and webhooks/watchlist (real features, off the default surface per the
-# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full 65-tool surface
+# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full 72-tool surface
 # (NOT a superset: it drops the three get_fr_* guide tools below, which are
 # emitted on the curated surface only. tests/test_published_tool_counts.py
 # derives both counts from this generator, so neither can go stale here).
@@ -229,6 +229,16 @@ _PRUNED_EXCLUDE = {
     # (PUT/PATCH/DELETE are never generated.)
     "filings_search_saved_retrieve",
     "filings_search_saved_preview_create",
+    # Arrived with the 2026-11-23 refresh that carried the saved-search routes;
+    # key read from the live schema's paths, not typed (a misspelt key fails
+    # open). `filings_transcript_retrieve` is GET /filings/{id}/transcript/: a
+    # restructured call transcript as JSON (sections, speakers, question/answer
+    # links), 6 credits a call (12 premium). Its words are the same as the
+    # filing's markdown, which filings_markdown_retrieve already returns, and it
+    # 404s on every filing that is not a restructured call. Kept off pending a
+    # decision by the transcript pipeline's owner on whether agents should get
+    # the structured form; it stays on MCP_FULL_SURFACE=1.
+    "filings_transcript_retrieve",
 }
 PRUNE_DEFAULT = os.environ.get("MCP_FULL_SURFACE", "0") != "1"
 
@@ -8872,10 +8882,21 @@ _MAX_PARAM_DESCRIPTION = 320
 # three combinations the API refuses on a 40-credit call, written nowhere else.
 # Found by SPECHT at 3/3 passes; the census below MISSED it, which is why
 # `_OPERATIVE_RE` gained `combined with` in the same commit.
+# Three added with the 2026-11-23 refresh (the one carrying the saved-search
+# routes), each flagged by the census test on arrival:
+#   `min_trust_grade` and `include_withheld_grades` carry the same "Cannot be
+#   combined with `include=preliminary`, `include=ratios` or
+#   `include=standalone_quarters`" as `min_trust_tier`, written nowhere else, on
+#   the same 40-credit call; describing one of the three filters and not the
+#   other two would leave a model to learn the rule from a 400.
+#   `fiscal_periods` is where `fiscal_period`'s own description sends a model
+#   for the half-year and nine-month reports (`fiscal_periods=H1,Q2`); without
+#   its text it reaches the model as a bare string with no format.
 _DESCRIBED_PARAMS = frozenset(
     {"type", "types", "source_filing_type", "line_items", "fiscal_period",
      "cursor", "include", "primary_annual_report", "include_predecessors",
-     "min_trust_tier"}
+     "min_trust_tier", "min_trust_grade", "include_withheld_grades",
+     "fiscal_periods"}
 )
 
 # Params whose schema `enum` lists the legal MEMBERS of a comma-separated list
