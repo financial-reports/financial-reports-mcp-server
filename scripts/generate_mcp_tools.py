@@ -56,7 +56,7 @@ OVERRIDES_FILE = Path(__file__).parent / "tool_overrides.yaml"
 # The default generated surface drops cold per-item reference singletons, the
 # ISIC hierarchy family (folded into the get_fr_industry_classification guide
 # tool), and webhooks/watchlist (real features, off the default surface per the
-# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full 72-tool surface
+# behavioral eval). Set MCP_FULL_SURFACE=1 to emit the full 74-tool surface
 # (NOT a superset: it drops the three get_fr_* guide tools below, which are
 # emitted on the curated surface only. tests/test_published_tool_counts.py
 # derives both counts from this generator, so neither can go stale here).
@@ -3993,7 +3993,7 @@ _LANDING_HTML = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FinancialFilings MCP — Public-company filings in Claude, ChatGPT and Microsoft 365 Copilot</title>
-    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude, Claude Code, ChatGPT, Microsoft 365 Copilot and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 24 tools across 6 domains. Free for any FinancialFilings account.">
+    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude, Claude Code, ChatGPT, Microsoft 365 Copilot and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 26 tools across 7 domains. Free for any FinancialFilings account.">
     <meta name="robots" content="index, follow">
     __GOOGLE_SITE_VERIFICATION_META__
     <link rel="canonical" href="__MCP_BASE_URL__/">
@@ -4294,8 +4294,8 @@ _LANDING_HTML = """<!DOCTYPE html>
 
         <section class="stats">
             <div class="container stats__inner">
-                <div class="stat"><span class="stat__num">24</span><span class="stat__label">MCP tools</span></div>
-                <div class="stat"><span class="stat__num">6</span><span class="stat__label">Tool domains</span></div>
+                <div class="stat"><span class="stat__num">26</span><span class="stat__label">MCP tools</span></div>
+                <div class="stat"><span class="stat__num">7</span><span class="stat__label">Tool domains</span></div>
                 <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FinancialFilings account</span></div>
                 <div class="stat"><span class="stat__num">OAuth&nbsp;2.0</span><span class="stat__label">PKCE · DCR</span></div>
             </div>
@@ -4310,7 +4310,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                     <code id="mcp-url">__MCP_BASE_URL__/mcp</code>
                     <button class="btn btn--secondary" type="button" onclick="copyUrl()" id="copy-btn">Copy</button>
                 </div>
-                <p class="meta">Streamable HTTP · OAuth 2.0 · 24 tools</p>
+                <p class="meta">Streamable HTTP · OAuth 2.0 · 26 tools</p>
             </div>
         </section>
 
@@ -4321,7 +4321,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                 <ol class="steps">
                     <li>Create a free account at <a href="__SIGNUP_URL__">financialfilings.com</a> if you don't have one yet — no paid plan required for MCP access.</li>
                     <li>In your MCP client (Claude, ChatGPT, Cursor, etc.), add a custom connector with the URL <code>__MCP_BASE_URL__/mcp</code>.</li>
-                    <li>Sign in via OAuth when prompted. The 24 tools become available immediately, no reconnection needed.</li>
+                    <li>Sign in via OAuth when prompted. The 26 tools become available immediately, no reconnection needed.</li>
                 </ol>
                 <a href="__LANDING_URL__" class="btn btn--secondary">Full setup guide →</a>
             </div>
@@ -4330,7 +4330,7 @@ _LANDING_HTML = """<!DOCTYPE html>
         <section class="section">
             <div class="container">
                 <p class="eyebrow">04 / Tools</p>
-                <h2>24 tools across 6 domains</h2>
+                <h2>26 tools across 7 domains</h2>
                 <p>A curated, read-only slice of the FinancialFilings REST API — the most useful endpoints exposed as LLM-callable tools, regenerated automatically from the OpenAPI schema.</p>
                 <div class="tools">
                     <div class="tool">
@@ -4352,6 +4352,11 @@ _LANDING_HTML = """<!DOCTYPE html>
                         <p class="tool__count">02 tools</p>
                         <p class="tool__name">ISINs</p>
                         <p class="tool__desc">Look up one ISIN, search and resolve ISINs to companies</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">02 tools</p>
+                        <p class="tool__name">Insiders &amp; Holdings</p>
+                        <p class="tool__desc">Insider dealings line by line and major holders with their voting power and percent of class (Level 3 plan)</p>
                     </div>
                     <div class="tool">
                         <p class="tool__count">03 tools</p>
