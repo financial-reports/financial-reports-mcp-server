@@ -91,6 +91,14 @@ _REPLACED_BY_SYNTHETIC = {
     "filings_search_saved_list",
     "filings_search_saved_create",
     "filings_search_saved_new_create",
+    # Company fact series (web#10909), public only behind a web flag and served
+    # by the hand-built companies_series / companies_series_retrieve
+    # (UNSTD_FACTS_TOOLS_BLOCK, MCP_FACT_SERIES_TOOLS). The detail route's
+    # generic twin would take the SAME name as the hand-built
+    # companies_series_retrieve and replace it; the list twin would be a second
+    # tool for the same endpoint.
+    "companies_series_list",
+    "companies_series_retrieve",
 }
 
 _PRUNED_EXCLUDE = {
@@ -8218,14 +8226,20 @@ async def filings_search_saved_delete(saved_search_id: int) -> str:
 # runtime, so with the default (unset) they are in no tools/list anywhere and out
 # of the README table and docs/token-budget.md. The flag stays off until the
 # routes are public (web#10584); until then they 403 every non-staff caller.
-# The company series routes (/companies/{id}/series/) are NOT here: they stay
-# staff-only after go-live (their plan fences on series rows are missing).
-# When the two routes land in the snapshot, the schema loop would emit generic
-# twins (filings_facts_retrieve, filings_statements_retrieve); _REPLACED_BY_SYNTHETIC
-# drops them, so these hand-built tools are the only ones for each job.
+# The company series tools (companies_series, companies_series_retrieve, 1:1 with
+# GET /companies/{id}/series/ and /companies/{id}/series/{key}/, web#10909) live
+# here too, behind their OWN flag MCP_FACT_SERIES_TOOLS=1: prod already runs with
+# MCP_UNSTD_FACTS_TOOLS=1, and the series routes go public on a separate web flag,
+# so sharing one flag would list them while they still 403. Same rules as above:
+# emitted always, registered only with the flag, out of README and token budget.
+# When the routes land in the snapshot, the schema loop would emit generic twins
+# (filings_facts_retrieve, filings_statements_retrieve, companies_series_list,
+# companies_series_retrieve); _REPLACED_BY_SYNTHETIC drops them, so these
+# hand-built tools are the only ones for each job.
 UNSTD_FACTS_TOOLS_BLOCK = '''
 
 MCP_UNSTD_FACTS_TOOLS = os.environ.get("MCP_UNSTD_FACTS_TOOLS", "0").strip() == "1"
+MCP_FACT_SERIES_TOOLS = os.environ.get("MCP_FACT_SERIES_TOOLS", "0").strip() == "1"
 
 _UnstdStatement = Annotated[
     str | None,
@@ -8238,22 +8252,67 @@ _UnstdStatement = Annotated[
 _UNSTD_METHODS = Literal["xbrl", "structured", "llm"]
 
 
-async def _unstd_facts_get(func_name: str, filing_id: Any, route: str, params: dict[str, Any]) -> str:
+# Public series keys only (x_ XBRL, s_ structured). The route also takes l_/d_,
+# which are not served; anything else must never reach the URL.
+_SERIES_KEY_RE = re.compile(r"^[xs]_[0-9a-f]{16}$")
+_AS_OF_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+_UNSTD_NARROW_FILING = (
+    "ask for fewer statements (e.g. statement=IS), or page filings_facts with "
+    "statement= instead"
+)
+_UNSTD_NARROW_SERIES = (
+    "narrow with search= (label or concept), period=annual or quarterly, or a "
+    "smaller page_size="
+)
+
+
+def _unstd_path_value(name: str, value: Any) -> Any:
+    """Validate one path parameter before it is formatted into the URL."""
+    if name == "id":
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ToolInputError("id must be a positive integer")
+        return value
+    if name == "key":
+        if not isinstance(value, str) or not _SERIES_KEY_RE.fullmatch(value):
+            raise ToolInputError(
+                "key must be a series key like x_0123456789abcdef "
+                "(x_ or s_ and 16 hex digits), as returned by companies_series"
+            )
+        return value
+    raise ValueError(f"no validator for path parameter {name!r}")
+
+
+async def _unstd_facts_get(
+    func_name: str,
+    path: str,
+    path_params: dict[str, Any],
+    params: dict[str, Any],
+    narrow_hint: str,
+) -> str:
     """GET an as-reported facts endpoint, return its JSON compact (no indent).
 
-    The Django body is already compact and omits nulls, so this is a
-    pass-through re-serialisation. Errors follow the text-tool contract (#104):
-    an upstream 4xx/5xx raises with the forwarded field message.
+    `path` is a template such as "/filings/{id}/statements/"; every value in
+    `path_params` is validated before it is formatted in, so no argument can
+    rewrite the request path. The Django body is already compact and omits
+    nulls, so this is a pass-through re-serialisation. Errors follow the
+    text-tool contract (#104): an upstream 4xx/5xx raises with the forwarded
+    field message.
     """
     try:
         _require_auth_context()
-        if isinstance(filing_id, bool) or not isinstance(filing_id, int) or filing_id <= 0:
-            raise ToolInputError("id must be a positive integer")
-        url = f"/filings/{filing_id}/{route}/"
+        url = path.format(**{k: _unstd_path_value(k, v) for k, v in path_params.items()})
         for _pg_key in ("page", "page_size"):
             _pg_val = params.get(_pg_key)
             if _pg_val is not None and int(_pg_val) < 1:
                 raise ToolInputError(f"{_pg_key} must be >= 1")
+        _as_of = params.get("as_of")
+        if _as_of is not None:
+            try:
+                if not _AS_OF_RE.fullmatch(str(_as_of)):
+                    raise ValueError
+                _dt.date.fromisoformat(str(_as_of))
+            except ValueError:
+                raise ToolInputError("as_of must be a date in YYYY-MM-DD format") from None
         query = {k: v for k, v in params.items() if v is not None}
         if "page_size" in query:
             query = {**query, "page_size": min(int(query["page_size"]), _MAX_PAGE_SIZE)}
@@ -8265,13 +8324,12 @@ async def _unstd_facts_get(func_name: str, filing_id: Any, route: str, params: d
             record_result_count(len(data["results"]))
         out = _json.dumps(data, ensure_ascii=False, separators=(",", ":"))
         if len(out) > _MAX_RESULT_CHARS:
-            # The statements route is one unpaginated document; five statements
-            # of a large group can pass what a tool result may carry, and a
-            # client cut mid-JSON leaves the model half a table. Say how to narrow.
+            # The statements and series-detail routes are one unpaginated
+            # document; a large group can pass what a tool result may carry, and
+            # a client cut mid-JSON leaves the model half a table. Say how to narrow.
             raise ToolInputError(
                 f"result is {len(out):,} characters, over the {_MAX_RESULT_CHARS:,} "
-                "one tool result can carry; ask for fewer statements (e.g. "
-                "statement=IS), or page filings_facts with statement= instead"
+                f"one tool result can carry; {narrow_hint}"
             )
         return out
     except UpstreamHTTPError:
@@ -8326,8 +8384,9 @@ if MCP_UNSTD_FACTS_TOOLS:
         use companies_financials_retrieve instead; use this tool when the question
         is what a PARTICULAR filing printed."""
         return await _unstd_facts_get(
-            "filings_statements", id, "statements",
+            "filings_statements", "/filings/{id}/statements/", {"id": id},
             {"statement": statement, "method": method, "scope": scope},
+            _UNSTD_NARROW_FILING,
         )
 
     @mcp.tool(
@@ -8365,9 +8424,92 @@ if MCP_UNSTD_FACTS_TOOLS:
         No note numbers. Prefer filings_statements for the statement tables; use
         this for notes or to find one tagged figure."""
         return await _unstd_facts_get(
-            "filings_facts", id, "facts",
+            "filings_facts", "/filings/{id}/facts/", {"id": id},
             {"statement": statement, "method": method, "scope": scope,
              "page": page, "page_size": page_size},
+            _UNSTD_NARROW_FILING,
+        )
+
+
+_SeriesPeriod = Annotated[
+    Literal["annual", "quarterly"] | None,
+    Field(
+        description="annual = fiscal-year values and year-end balances; quarterly = "
+        "quarter values and every balance date. Default: both."
+    ),
+]
+_SeriesAsOf = Annotated[
+    str | None,
+    Field(
+        description="YYYY-MM-DD: only what had been filed by the end of that day "
+        "(point in time, later restatements excluded). Default: all filed to date. On the "
+        "largest companies this can fail with 422 series_too_large; drop it then."
+    ),
+]
+
+if MCP_FACT_SERIES_TOOLS:
+
+    @mcp.tool(
+        tags={"Companies"},
+        annotations=ToolAnnotations(title="Company Fact Series", **_UNSTD_ANNOTATIONS),
+    )
+    @subscription_required
+    async def companies_series(
+        id: int,
+        period: _SeriesPeriod = None,
+        as_of: _SeriesAsOf = None,
+        search: Annotated[
+            str | None,
+            Field(description="Only series whose label or concept contains this text."),
+        ] = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> str:
+        """ONE company's reported line items as time series, one summary per
+        series (paginated, max 100, most periods first): the filer's own label,
+        concept, unit, scope, period count and gaps, and the latest value with
+        its source filing. XBRL and structured filings only (no values read
+        from reports). Values are decimal strings, fully scaled. Each `key` is
+        stable across refreshes; pass it to companies_series_retrieve for the
+        full history. For standardised, comparable line items across companies
+        use companies_financials_retrieve; for what one filing printed use
+        filings_statements."""
+        return await _unstd_facts_get(
+            "companies_series", "/companies/{id}/series/", {"id": id},
+            {"period": period, "as_of": as_of, "search": search,
+             "page": page, "page_size": page_size},
+            _UNSTD_NARROW_SERIES,
+        )
+
+    @mcp.tool(
+        tags={"Companies"},
+        annotations=ToolAnnotations(title="Company Fact Series History", **_UNSTD_ANNOTATIONS),
+    )
+    @subscription_required
+    async def companies_series_retrieve(
+        id: int,
+        key: Annotated[
+            str,
+            Field(
+                description="Series key from companies_series (x_ or s_ plus 16 hex "
+                "digits). Any of the series' member keys resolves to it."
+            ),
+        ],
+        period: _SeriesPeriod = None,
+        as_of: _SeriesAsOf = None,
+    ) -> str:
+        """ONE series' full history for a company, as reported: every period's
+        value with its source filing and version, `restated` and
+        `previous_value` where a later filing changed it, plus the member keys
+        merged into the series. XBRL and structured only; values are decimal
+        strings, fully scaled. Keys are stable, so a key saved earlier still
+        works. Find keys with companies_series; for standardised values use
+        companies_financials_retrieve."""
+        return await _unstd_facts_get(
+            "companies_series_retrieve", "/companies/{id}/series/{key}/",
+            {"id": id, "key": key},
+            {"period": period, "as_of": as_of},
+            "pass period=annual or period=quarterly for one of them",
         )
 '''
 
@@ -9817,7 +9959,8 @@ def main(schema: dict | None = None, output_file: Path | None = None) -> None:
     if saved_search_tools:
         generated_code.append(SAVED_SEARCH_TOOLS_BLOCK)
     # As-reported facts tools (web#10586) — emitted on every surface, registered
-    # only when MCP_UNSTD_FACTS_TOOLS=1 at runtime. Deliberately NOT added to
+    # only when MCP_UNSTD_FACTS_TOOLS=1 at runtime (the company series pair only
+    # when MCP_FACT_SERIES_TOOLS=1, web#10909). Deliberately NOT added to
     # generated_tools, so the README tool table never lists them.
     generated_code.append(UNSTD_FACTS_TOOLS_BLOCK)
     generated_code.append(PROMPTS_BLOCK)

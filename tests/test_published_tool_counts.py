@@ -53,7 +53,7 @@ HAND_WRITTEN = {
 # Runtime flags whose `if <FLAG>:` branch registers tools that are OFF by default
 # (unset in prod until their routes are public), so no published count includes
 # them. tests/test_unstd_facts_tools.py covers what the branch registers.
-FLAG_GATED = {"MCP_UNSTD_FACTS_TOOLS"}
+FLAG_GATED = {"MCP_UNSTD_FACTS_TOOLS", "MCP_FACT_SERIES_TOOLS"}
 
 
 def _tool_names(source: str) -> set[str]:
@@ -80,7 +80,11 @@ def test_flag_gated_tools_are_emitted_but_not_counted() -> None:
     """The skip above must hit a real branch, or it hides nothing and rots."""
     source = GENERATED.read_text(encoding="utf-8")
     assert "if MCP_UNSTD_FACTS_TOOLS:" in source
-    assert {"filings_facts", "filings_statements"}.isdisjoint(_tool_names(source))
+    assert "if MCP_FACT_SERIES_TOOLS:" in source
+    assert {
+        "filings_facts", "filings_statements",
+        "companies_series", "companies_series_retrieve",
+    }.isdisjoint(_tool_names(source))
 
 
 def _regenerate_source(full_surface: bool) -> str:
