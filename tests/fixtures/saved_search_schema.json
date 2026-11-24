@@ -820,7 +820,7 @@
      "count": {
       "type": "integer",
       "example": 123,
-      "description": "Total matching results. Exact for cheap queries, an estimate on broad or expensive ones. Do not use it to decide when to stop: follow `next` until it is null."
+      "description": "Total matching results. Exact for cheap queries, an estimate on broad or expensive ones, which can be far too low: `count_is_estimate` says which. Do not use it to decide when to stop: follow `next` until it is null."
      },
      "next": {
       "type": "string",
@@ -839,6 +839,10 @@
       "items": {
        "$ref": "#/components/schemas/SavedSearch"
       }
+     },
+     "count_is_estimate": {
+      "type": "boolean",
+      "description": "True when `count` is an estimate rather than an exact count. An estimate can be off by a factor of ten or more. For an exact count, narrow the query (a shorter release_datetime window, fewer types or countries) until this is false, then add up the parts."
      }
     }
    },

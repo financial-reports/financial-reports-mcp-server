@@ -1,8 +1,8 @@
 # FinancialFilings MCP: Tool Cheatsheet
 
-72 tools across 11 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
+74 tools across 12 domains. This file is loaded on demand; the main `SKILL.md` covers the workflows. Use this when you need exact parameter names, return shapes, or pitfalls for a specific tool.
 
-Note on surface size: only a curated subset is exposed by default (`companies_*`, `filings_*`, `isins_*`, plus the guide tools and in-filing search). The rest: ISIC, reference data, watchlists, webhooks, require `MCP_FULL_SURFACE=1` on the server. If a tool below isn't in your `tools/list`, that's why.
+Note on surface size: only a curated subset is exposed by default (`companies_*`, `filings_*`, `isins_*`, the two insider and holdings tools, plus the guide tools and in-filing search). The rest: ISIC, reference data, watchlists, webhooks, require `MCP_FULL_SURFACE=1` on the server. If a tool below isn't in your `tools/list`, that's why.
 
 ## Companies (6)
 
@@ -216,6 +216,26 @@ Returns (ISIN): `code`, `is_primary`, `company`, `figi`, `composite_figi`, `shar
 
 Pitfall: not every ISIN is in our index. If `isins_retrieve` 404s, fall back to `companies_list?search=`.
 
+## Insiders & Holdings (2)
+
+Structured rows read from insider and major-holder notices. Both are paid at the API's Level 3 plan. Each row names `filing_id` and `release_datetime`, so `filings_retrieve` gives the notice it came from.
+
+### `insider_transactions_list`
+One row per line of an insider notice: US Forms 3, 4 and 5 (transactions and holdings, derivative or not) and the proposed sale on each Form 144.
+
+Key params: `company`, `company_isin`, `lei`, `countries`, `nature` (`buy`, `sell`, `award`, `exercise`, `conversion`, `gift`, `other`), `row_kind` (`transaction`, `holding`, `planned_sale`), `regime`, `insider_ref`, `transaction_date_from` / `transaction_date_to`, `release_datetime_from` / `release_datetime_to`, `filing`, `ordering`, `page`, `page_size`.
+
+Example: one company's insider sales this year are `company=<id>&nature=sell&transaction_date_from=2026-01-01`.
+
+Pitfall: an amendment's rows (`is_amendment`) sit next to the original's, not in place of them. Drop one of the two before adding up.
+
+### `major_holdings_list`
+One row per reporting person of a US Schedule 13D or 13G (and amendments): voting and dispositive power, aggregate amount owned, percent of class.
+
+Key params: `company`, `company_isin`, `lei`, `countries`, `regime`, `holder_ref`, `event_date_from` / `event_date_to`, `release_datetime_from` / `release_datetime_to`, `filing`, `ordering`, `page`, `page_size`.
+
+Pitfall: the persons on one notice often count the same shares (a fund and its manager, the members of a group), so never sum one notice's rows. Amendments sit next to the original, as above.
+
 ## Security Listings (2)
 
 Where a company's shares actually trade. Use these when the user asks about a **ticker on a specific exchange**: ISINs identify the security, listings identify the venue.
@@ -303,7 +323,7 @@ Pitfall: there are no free-form event names: a webhook fires on the three `trigg
 
 ## Tool annotation summary
 
-- 56 tools have `readOnlyHint=true` (safe to call without confirmation). 21 of the 24 on the
+- 58 tools have `readOnlyHint=true` (safe to call without confirmation). 23 of the 26 on the
   default surface are; the other three are the saved-search tools that change state
   (`filings_search_save`, `filings_search_new`, `filings_search_saved_delete`).
 - 12 tools have `destructiveHint=true` (mutations: watchlist add/remove, webhook create and

@@ -40,7 +40,7 @@ at or near 1.00 on its case where the same model without it scores near 0. See
 
 ## Tool decision table
 
-**Check what you actually have before following a sequence below.** The hosted server exposes a curated **24** tools by default — 13 schema-derived, the 3 `get_fr_*` guide tools, and the 8 hand-written tools (`filings_search`, `filings_markdown_search`, `filings_markdown_search_batch`, `filings_markdown_outline`, `filings_search_save`, `filings_search_new`, `filings_search_saved_list`, `filings_search_saved_delete`) — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not in your `tools/list` and calling them will fail**.
+**Check what you actually have before following a sequence below.** The hosted server exposes a curated **26** tools by default — 15 schema-derived, the 3 `get_fr_*` guide tools, and the 8 hand-written tools (`filings_search`, `filings_markdown_search`, `filings_markdown_search_batch`, `filings_markdown_outline`, `filings_search_save`, `filings_search_new`, `filings_search_saved_list`, `filings_search_saved_delete`) — plus 3 prompts (`summarize_recent_filings`, `compare_financials_yoy`, `find_filing_section`). The rest require `MCP_FULL_SURFACE=1` on the server, so on the hosted connector they are **not in your `tools/list` and calling them will fail**.
 
 Rows marked **†** need `MCP_FULL_SURFACE=1`. If you hit one on the default surface, say so plainly rather than substituting a tool that answers a different question.
 

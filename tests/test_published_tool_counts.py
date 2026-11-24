@@ -451,8 +451,8 @@ def test_the_secondary_docs_lost_their_stale_counts(relpath: str, stale) -> None
 _NOT_A_SURFACE_COUNT = (
     # the RESEARCH surface: default minus the 3 administrative/reference tools.
     # Pinned against the module by tests/test_skill_names_the_research_surface.py.
-    "21 research tools",
-    "**21** tools for regulatory-filings research",
+    "23 research tools",
+    "**23** tools for regulatory-filings research",
     # decomposition sub-counts, pinned by
     # test_the_default_surface_decomposes_as_the_docs_describe_it
     "3 `get_fr_*` guide tools",
@@ -461,7 +461,7 @@ _NOT_A_SURFACE_COUNT = (
     # ToolAnnotations, not sizes of a surface. Measured 2026-11-19 over the
     # full render excluding the `_pay_*` x402 variants, and pinned by
     # test_the_cheatsheet_annotation_counts_match_the_module below.
-    "56 tools have",
+    "58 tools have",
     "12 tools have",
     "4 tools are non-destructive probes",
     "6 tools advertise",
@@ -601,6 +601,7 @@ _DOMAIN_PREFIXES: dict[str, tuple[str, ...]] = {
     "ISINs": ("isins_",),
     # singular `filing_*`: the two reference-taxonomy lookups
     "Reference taxonomy": ("filing_types_", "filing_categories_"),
+    "Insiders & Holdings": ("insider_transactions_", "major_holdings_"),
     "Account": ("usage_",),
     "Guides": ("get_fr_",),
 }
@@ -613,6 +614,7 @@ _DOMAIN_ROW_LABELS: dict[str, dict[str, str]] = {
         "Filings": "公告",
         "ISINs": "ISIN",
         "Reference taxonomy": "参考分类",
+        "Insiders & Holdings": "内部人交易与主要持股",
         "Account": "账户",
         "Guides": "指南",
     },

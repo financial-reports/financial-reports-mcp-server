@@ -19,7 +19,7 @@ Not for market data. Prices, quotes and volumes are a different domain.
 
 ## Tools
 
-The connector exposes **21 research tools**. Administrative, reference and
+The connector exposes **23 research tools**. Administrative, reference and
 webhook-management endpoints are not part of the research surface. If you need
 one, say so rather than substituting a tool that answers a different question.
 Full parameters in `references/tool-cheatsheet.md`.
@@ -36,6 +36,7 @@ Full parameters in `references/tool-cheatsheet.md`.
 | Watch a search for new filings | `filings_search_save` once → `filings_search_new` on each check (only filings added since the last pull); `filings_search_saved_list` to find one, `filings_search_saved_delete` to stop |
 | Financials | `companies_financials_retrieve` |
 | Next report due | `companies_next_annual_report_retrieve` |
+| Insider dealings / major holders | `insider_transactions_list` (Forms 3/4/5 lines, Form 144 planned sales); `major_holdings_list` (13D/G holders) |
 | Filing types / ISIC / fetch strategy | `get_fr_filing_type_taxonomy`, `get_fr_industry_classification_isic`, `get_fr_markdown_fetch_strategy` (default surface only; on `MCP_FULL_SURFACE=1` use `filing_types_list` and the `isic_*` tools) |
 | Industry screening | resolve a known peer → read its `sub_industry_code` → `companies_list?sub_industry=…` |
 
