@@ -34,7 +34,9 @@ Rows from `filings_list` (either view) and the `filings_retrieve` response carry
 
 ## Pagination
 
-Long filings (ESEF annual reports can be 100+ pages) come back paginated. `filings_markdown_retrieve` accepts `offset` and `limit` (default limit 50000 chars, per-call cap 150000). When the response contains a truncation marker, call again with an increased `offset` until the marker is gone, you've located the section you needed, or you have made 10 calls — then stop and say the document was truncated.
+To read one SECTION of a long filing, call `filings_markdown_outline(filing_id)` first: it lists the headings with character offsets, and `filings_markdown_retrieve` at a heading's offset starts at that heading. Page only when the outline has nothing usable.
+
+Long filings (annual reports can run to hundreds of pages) come back paginated. `filings_markdown_retrieve` accepts `offset` and `limit` (default limit 50000 chars, per-call cap 150000). When the response contains a truncation marker, call again with an increased `offset` until the marker is gone, you've located the section you needed, or you have made 10 calls — then stop and say the document was truncated.
 
 Don't blindly fetch every page — if you've found the answer (e.g. located the risk-factor section the user asked for), stop.
 
@@ -44,6 +46,6 @@ User asks: "What's Roche's free cash flow for FY2024?"
 
 1. resolve: `companies_list?search=Roche` → company id.
 2. try the structured path: `companies_financials_retrieve(company_id, fiscal_year=2024)`.
-3. if free_cash_flow is null/missing in that response: `filings_list?company=<id>&type=10-K-ESEF&ordering=-release_datetime&page_size=10`, then take the newest row. If its processing_status is present and not 'COMPLETED' it has no markdown available — say so, and use the next-newest only if an older filing still answers the question. A null/absent value is not a reason to skip.
+3. if levered_free_cash_flow_cf is null/missing in that response: `filings_list?company=<id>&types=10-K,10-K-ESEF&ordering=-release_datetime&page_size=10`, then take the newest row. If its processing_status is present and not 'COMPLETED' it has no markdown available — say so, and use the next-newest only if an older filing still answers the question. A null/absent value is not a reason to skip.
 4. `filings_markdown_retrieve` on that filing_id, paginate until you hit the cash-flow statement.
 5. Extract the value, cite the filing (type + release_datetime + page-ish location).

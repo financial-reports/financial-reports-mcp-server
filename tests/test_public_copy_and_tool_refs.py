@@ -87,3 +87,39 @@ def test_public_docs_do_not_promise_alerts_or_webhooks() -> None:
     assert "Alert me when" not in (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     assert "提醒我" not in (REPO_ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
     assert "webhooks" not in (REPO_ROOT / "skills/README.md").read_text(encoding="utf-8")
+
+
+# Names a reader compares us against, the client a limit was measured on, and a
+# coverage claim that went stale once standardised financials went global.
+NAMED_THIRD_PARTY = re.compile(
+    r"Capital IQ|Bloomberg|FactSet|Refinitiv|\bWRDS\b|Compustat|Claude\.ai|ESEF/EU-derived",
+    re.IGNORECASE,
+)
+
+
+def test_tool_text_names_no_third_party(mcp_module) -> None:
+    texts = {"instructions": mcp_module.mcp.instructions}
+    texts.update(
+        {name: tool.description or "" for name, tool in mcp_module.mcp._tool_manager._tools.items()}
+    )
+    offenders = {name: NAMED_THIRD_PARTY.findall(text) for name, text in texts.items()}
+    assert not {name: hits for name, hits in offenders.items() if hits}
+
+
+def test_capped_upstream_description_ends_on_a_sentence() -> None:
+    from generate_mcp_tools import _cap_at_sentence
+
+    text = "First sentence. " + "word " * 400
+    cut = _cap_at_sentence(text, 1500)
+    assert cut == "First sentence."
+    no_stop = "word " * 400
+    cut = _cap_at_sentence(no_stop, 1500)
+    assert len(cut) <= 1503 and cut.endswith("word...")
+    assert _cap_at_sentence("Short.", 1500) == "Short."
+
+
+def test_financials_description_is_not_cut_mid_word(mcp_module) -> None:
+    """The upstream text is over the cap; the bare slice ended it on "A l..."."""
+    description = mcp_module.mcp._tool_manager._tools["companies_financials_retrieve"].description
+    upstream = description.split("**When to use this tool:**")[0].rstrip()
+    assert upstream.endswith("."), upstream[-80:]

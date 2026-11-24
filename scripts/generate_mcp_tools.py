@@ -1666,14 +1666,15 @@ mcp = FastMCP(
         "2. Company named → resolve it first: companies_list "
         "(name/ticker) or isins_retrieve (ISIN) → use the returned internal "
         "integer id for per-company tools (NOT the ticker or ISIN itself).\\n"
-        "3. Currency: always display the reporting currency next to "
-        "every monetary value. Never aggregate USD/EUR/CHF/etc. without "
-        "explicit FX conversion.\\n"
+        "3. Currency: show the reporting currency next to every "
+        "monetary value. Never sum across currencies without FX "
+        "conversion.\\n"
         "4. Periods: always state the fiscal period and period_end_date "
         "with financial data. \\"Last year\\" is ambiguous — name the "
         "fiscal period you returned.\\n"
-        "5. Provenance: call the data \\"official filings, as published\\", "
-        "also when asked where it comes from. Never name a "
+        "5. Provenance: call the data \\"official filings, as published\\"; "
+        "asked where it comes from, say that plainly and link the filing. "
+        "Never name a "
         "regulator or filing authority, or describe a filing by where it was "
         "filed. Titles and `source_filing_type` carry form labels: translate "
         "them (Form 4 -> insider transaction report, 13G -> major shareholder "
@@ -3984,7 +3985,7 @@ _LANDING_HTML = """<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FinancialFilings MCP — Public-company filings in Claude, ChatGPT and Microsoft 365 Copilot</title>
-    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude, Claude Code, ChatGPT, Microsoft 365 Copilot and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 16 tools across 5 domains. Free for any FinancialFilings account.">
+    <meta name="description" content="The official MCP (Model Context Protocol) connector for FinancialFilings. Direct access from Claude, Claude Code, ChatGPT, Microsoft 365 Copilot and any MCP-compatible client to regulatory filings, financial data, and corporate information from listed companies worldwide. 24 tools across 6 domains. Free for any FinancialFilings account.">
     <meta name="robots" content="index, follow">
     __GOOGLE_SITE_VERIFICATION_META__
     <link rel="canonical" href="__MCP_BASE_URL__/">
@@ -4285,8 +4286,8 @@ _LANDING_HTML = """<!DOCTYPE html>
 
         <section class="stats">
             <div class="container stats__inner">
-                <div class="stat"><span class="stat__num">16</span><span class="stat__label">MCP tools</span></div>
-                <div class="stat"><span class="stat__num">5</span><span class="stat__label">Tool domains</span></div>
+                <div class="stat"><span class="stat__num">24</span><span class="stat__label">MCP tools</span></div>
+                <div class="stat"><span class="stat__num">6</span><span class="stat__label">Tool domains</span></div>
                 <div class="stat"><span class="stat__num">Free</span><span class="stat__label">For any FinancialFilings account</span></div>
                 <div class="stat"><span class="stat__num">OAuth&nbsp;2.0</span><span class="stat__label">PKCE · DCR</span></div>
             </div>
@@ -4301,7 +4302,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                     <code id="mcp-url">__MCP_BASE_URL__/mcp</code>
                     <button class="btn btn--secondary" type="button" onclick="copyUrl()" id="copy-btn">Copy</button>
                 </div>
-                <p class="meta">Streamable HTTP · OAuth 2.0 · 16 tools</p>
+                <p class="meta">Streamable HTTP · OAuth 2.0 · 24 tools</p>
             </div>
         </section>
 
@@ -4312,7 +4313,7 @@ _LANDING_HTML = """<!DOCTYPE html>
                 <ol class="steps">
                     <li>Create a free account at <a href="__SIGNUP_URL__">financialfilings.com</a> if you don't have one yet — no paid plan required for MCP access.</li>
                     <li>In your MCP client (Claude, ChatGPT, Cursor, etc.), add a custom connector with the URL <code>__MCP_BASE_URL__/mcp</code>.</li>
-                    <li>Sign in via OAuth when prompted. The 16 tools become available immediately — no reconnection needed.</li>
+                    <li>Sign in via OAuth when prompted. The 24 tools become available immediately, no reconnection needed.</li>
                 </ol>
                 <a href="__LANDING_URL__" class="btn btn--secondary">Full setup guide →</a>
             </div>
@@ -4321,28 +4322,33 @@ _LANDING_HTML = """<!DOCTYPE html>
         <section class="section">
             <div class="container">
                 <p class="eyebrow">04 / Tools</p>
-                <h2>16 tools across 5 domains</h2>
+                <h2>24 tools across 6 domains</h2>
                 <p>A curated, read-only slice of the FinancialFilings REST API — the most useful endpoints exposed as LLM-callable tools, regenerated automatically from the OpenAPI schema.</p>
                 <div class="tools">
                     <div class="tool">
-                        <p class="tool__count">04 tools</p>
+                        <p class="tool__count">05 tools</p>
                         <p class="tool__name">Companies</p>
-                        <p class="tool__desc">Search, retrieve, normalised financials, predicted next annual report</p>
+                        <p class="tool__desc">Search, details, standardised financials, batch identifier resolution, next annual report date</p>
+                    </div>
+                    <div class="tool">
+                        <p class="tool__count">07 tools</p>
+                        <p class="tool__name">Filings</p>
+                        <p class="tool__desc">List, details, Markdown text and outline, full-text search across filings and within one</p>
                     </div>
                     <div class="tool">
                         <p class="tool__count">04 tools</p>
-                        <p class="tool__name">Filings</p>
-                        <p class="tool__desc">List, retrieve, Markdown content, full-text Markdown search</p>
+                        <p class="tool__name">Saved searches</p>
+                        <p class="tool__desc">Save a filing search, then fetch only the filings that are new since the last run</p>
                     </div>
                     <div class="tool">
                         <p class="tool__count">02 tools</p>
                         <p class="tool__name">ISINs</p>
-                        <p class="tool__desc">Lookup by ISIN, list dual-listings</p>
+                        <p class="tool__desc">Look up one ISIN, search and resolve ISINs to companies</p>
                     </div>
                     <div class="tool">
-                        <p class="tool__count">02 tools</p>
-                        <p class="tool__name">Filing taxonomy</p>
-                        <p class="tool__desc">Filing types &amp; categories reference</p>
+                        <p class="tool__count">03 tools</p>
+                        <p class="tool__name">Reference &amp; usage</p>
+                        <p class="tool__desc">Filing types, filing categories, usage and spend</p>
                     </div>
                     <div class="tool">
                         <p class="tool__count">03 tools</p>
@@ -4357,10 +4363,10 @@ _LANDING_HTML = """<!DOCTYPE html>
     <section class="cta">
         <div class="container">
             <h2>Free for the web. Free for <em>Claude</em>. Paid for the API.</h2>
-            <p>The MCP connector is part of the public utility — no paywall, no caveats. Programmatic API access (REST + GraphQL, redistribution rights, bulk pulls) lives behind a paid plan.</p>
+            <p>The MCP connector works with any FinancialFilings account, no paid plan required. Programmatic REST API access, redistribution rights and bulk delivery are on a paid plan.</p>
             <div class="cta__row">
-                <a href="https://financialreports.eu" class="btn btn--primary">Open FinancialFilings</a>
-                <a href="https://financialreports.eu/api/" class="btn btn--secondary">View API plans</a>
+                <a href="https://financialfilings.com" class="btn btn--primary">Open FinancialFilings</a>
+                <a href="https://financialfilings.com/api/" class="btn btn--secondary">View API plans</a>
             </div>
         </div>
     </section>
@@ -4649,7 +4655,7 @@ async def {{ func_name }}(
     For long filings, call this tool repeatedly with increasing `offset` values
     until the response no longer contains the truncation marker. Use a limit
     of 50000 chars (default) for most LLM context windows; the per-call cap
-    is 150000 chars for the whole result (Claude.ai's documented tool-result
+    is 150000 chars for the whole result (a common client tool-result
     ceiling), so a full-size slice is trimmed by the length of the header.
     """
     try:
@@ -5598,7 +5604,7 @@ def _resource_markdown() -> str:
         "with character offsets, and `filings_markdown_retrieve` at a "
         "heading's offset starts at that heading. Page only when the outline "
         "has nothing usable.\\n\\n"
-        "Long filings (ESEF annual reports can be 100+ pages) come back "
+        "Long filings (annual reports can run to hundreds of pages) come back "
         "paginated. `filings_markdown_retrieve` accepts `offset` and "
         "`limit` (default limit 50000 chars, per-call cap 150000). "
         "When the response contains a truncation marker, call again "
@@ -5613,8 +5619,8 @@ def _resource_markdown() -> str:
         "1. resolve: `companies_list?search=Roche` → company id.\\n"
         "2. try the structured path: `companies_financials_retrieve("
         "company_id, fiscal_year=2024)`.\\n"
-        "3. if free_cash_flow is null/missing in that response: "
-        "`filings_list?company=<id>&type=10-K-ESEF"
+        "3. if levered_free_cash_flow_cf is null/missing in that response: "
+        "`filings_list?company=<id>&types=10-K,10-K-ESEF"
         "&ordering=-release_datetime&page_size=10`, then take the newest "
         "row. If its processing_status is present and not 'COMPLETED' it "
         "has no markdown available — say so, and use the next-newest only if an "
@@ -9175,6 +9181,23 @@ def get_python_type(
     return py_type, default_val
 
 
+# Upstream descriptions are capped to keep tools/list small. The cut used to be
+# a bare slice, which ended the financials tool on "A l..." mid-word.
+MAX_UPSTREAM_DESCRIPTION = 1500
+_SENTENCE_END = re.compile(r"[.!?](?=\s)")
+
+
+def _cap_at_sentence(d: str, cap: int) -> str:
+    """Cut `d` to at most `cap` chars at the last sentence end, never mid-word."""
+    if len(d) <= cap:
+        return d
+    head = d[: cap + 1]
+    ends = [m.end() for m in _SENTENCE_END.finditer(head)]
+    if ends:
+        return head[: ends[-1]].rstrip()
+    return head[:cap].rsplit(None, 1)[0].rstrip() + "..."
+
+
 def sanitize_description(d: str) -> str:
     """Make an OpenAPI description safe to embed in a Python docstring."""
     if not d:
@@ -9192,8 +9215,7 @@ def sanitize_description(d: str) -> str:
     d = d.strip()
     if not d:
         return "No description available."
-    if len(d) > 1500:
-        d = d[:1500].rstrip() + "..."
+    d = _cap_at_sentence(d, MAX_UPSTREAM_DESCRIPTION)
     # Collapse runs of whitespace but preserve single newlines for readability
     d = re.sub(r"[ \t]+", " ", d)
     return d
