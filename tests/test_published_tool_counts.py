@@ -725,3 +725,36 @@ def test_the_cheatsheet_annotation_counts_match_the_module(surfaces, relpath) ->
         assert published == tally[key], (
             f"{relpath} says {published} for {key}, the module has {tally[key]}"
         )
+
+
+def _landing_page() -> str:
+    text = GENERATOR.read_text(encoding="utf-8")
+    start = text.index('_LANDING_HTML = """')
+    return text[start : text.index('"""', start + len('_LANDING_HTML = """'))]
+
+
+def test_the_landing_page_counts_match_the_default_surface(surfaces) -> None:
+    """The page served at / said "16 MCP tools" while 24 were served. It sits
+    inline in the generator, so the doc sweep above never read it."""
+    page = _landing_page()
+    total = len(surfaces["default"])
+    cards = [int(n) for n in re.findall(r'<p class="tool__count">(\d+) tools</p>', page)]
+    assert sum(cards) == total, f"domain cards add up to {sum(cards)}, the surface is {total}"
+    domains = len(cards)
+    claims = re.findall(r"(\d+) tools across (\d+) domains", page)
+    assert len(claims) == 2, "meta description and section heading"
+    assert all((int(n), int(d)) == (total, domains) for n, d in claims), claims
+    for phrase in (
+        f'<span class="stat__num">{total}</span><span class="stat__label">MCP tools',
+        f'<span class="stat__num">{domains}</span><span class="stat__label">Tool domains',
+        f"OAuth 2.0 · {total} tools",
+        f"The {total} tools become available",
+    ):
+        assert phrase in page, f"landing page lost or miscounts: {phrase!r}"
+
+
+def test_the_landing_page_makes_no_stale_offer() -> None:
+    """There is no GraphQL API, and "no caveats" was never true of a metered connector."""
+    page = _landing_page()
+    for stale in ("GraphQL", "no paywall", "no caveats"):
+        assert stale not in page, f"landing page still says {stale!r}"

@@ -75,14 +75,14 @@ companies_retrieve:
 companies_financials_retrieve:
   when_to_use: >
     Use to get standardized financial line items (income statement,
-    balance sheet, cash flow) for a company. Data is deduplicated
-    across filings — the most recently published filing wins.
+    balance sheet, cash flow) for a company, one selected statement per
+    period.
     SOURCING: attribute every figure to its fiscal period + period_end_date and
     reporting currency. GROUNDEDNESS (critical): report ONLY values present in
     the `periods` this call returns. If `period_count` is 0 or `periods` is
-    empty, FinancialFilings has no *structured* financials for this company yet
-    (common for US issuers — structured data is currently ESEF/EU-derived and
-    being expanded). Do NOT stop and do NOT estimate — FALL BACK to the filing:
+    empty, FinancialFilings has no standardized financials for this company or
+    period (coverage is global but not complete). Do NOT stop and do NOT
+    estimate — FALL BACK to the filing:
     call `filings_list` for this `id` filtered with `type` (or `types`) to an
     annual report (e.g. 10-K, 20-F, or the local annual type) with
     `ordering='-release_datetime'` and `page_size=10`, take the NEWEST row (do
@@ -117,7 +117,7 @@ companies_financials_retrieve:
   examples:
     - user_says: "Munich Re 2024 income statement"
       parameters: "id=<id>, fiscal_year=2024, statement_type='IS'"
-      notes: "Use depth + parent_code to render Capital IQ-style hierarchy"
+      notes: "Use depth + parent_code to render the statement hierarchy"
     - user_says: "Compare EBITDA across 3 companies"
       parameters: "id=<id>, statement_type='IS', line_items='ebitda'"
       notes: "Call in parallel for each company. Always show currency."
