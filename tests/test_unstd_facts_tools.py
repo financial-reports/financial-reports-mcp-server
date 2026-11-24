@@ -4,7 +4,13 @@ Two hand-written tools, 1:1 with the per-filing REST endpoints
 (/filings/{id}/facts/, /filings/{id}/statements/). They are always emitted into
 the generated module but registered only when MCP_UNSTD_FACTS_TOOLS=1, so the
 default surface (prod, docs/token-budget.md, README) never lists them until the
-routes are public (web#10584). The company series routes stay out.
+routes are public (web#10584).
+
+The company series pair (companies_series, companies_series_retrieve; GET
+/companies/{id}/series/ and /companies/{id}/series/{key}/, web#10909) lives in
+the same block behind its OWN flag, MCP_FACT_SERIES_TOOLS=1: prod runs with
+MCP_UNSTD_FACTS_TOOLS=1 already, and the series routes go public on a separate
+web flag. The series bodies below follow the shape of the web#10909 views.
 
 Upstream bodies below are trimmed copies of real responses from the web repo's
 views over the facts corpus, not invented shapes.
@@ -368,4 +374,312 @@ def test_generated_twins_are_replaced_by_the_hand_built_tools() -> None:
     from generate_mcp_tools import _REPLACED_BY_SYNTHETIC, snake_case
 
     for op_id in ("filings_facts_retrieve", "filings_statements_retrieve"):
+        assert snake_case(op_id) in _REPLACED_BY_SYNTHETIC
+
+
+# --- company series tools: their own flag (web#10909) ---------------------------
+
+SERIES_TOOLS = ("companies_series", "companies_series_retrieve")
+SERIES_KEY = "x_0f3a9c1d2b4e5a67"
+
+SERIES_LATEST = {
+    "value": "391035000000", "unit": "USD",
+    "period": {"start": "2023-10-01", "end": "2024-09-28", "fiscal_label": "FY2024"},
+    "method": "xbrl", "status": "accepted", "decimals": -6,
+    "source": {"filing_id": 31207761, "ref": "us-gaap:Revenues#c12"},
+}
+
+SERIES_HEAD = {
+    "key": SERIES_KEY, "label": "Total net sales", "concept": "us-gaap:Revenues",
+    "unit": "USD", "scope": "consolidated", "length": "duration", "key_kind": "xbrl",
+    "key_stable": True, "periods": 2, "first_period_end": "2023-09-30",
+    "last_period_end": "2024-09-28", "continuity": {"current": True, "gaps": 0},
+}
+
+SERIES_LIST_BODY = {
+    "count": 812,
+    "next": "https://api.financialreports.eu/companies/4471/series/?page=2&page_size=1",
+    "previous": None,
+    "results": [{**SERIES_HEAD, "latest": SERIES_LATEST}],
+}
+
+SERIES_DETAIL_BODY = {
+    **SERIES_HEAD,
+    "members": [{"key": SERIES_KEY, "concept": "us-gaap:Revenues"}],
+    "observations": [
+        {"value": "383285000000", "unit": "USD",
+         "period": {"start": "2022-09-25", "end": "2023-09-30", "fiscal_label": "FY2023"},
+         "method": "xbrl", "status": "accepted", "decimals": -6, "version": 2,
+         "restated": True, "previous_value": "383280000000",
+         "source": {"filing_id": 31207761, "ref": "us-gaap:Revenues#c13"}},
+        {**SERIES_LATEST, "version": 1},
+    ],
+}
+
+
+@pytest.fixture()
+def series_module(mcp_module, monkeypatch):
+    """The generated module re-imported with MCP_FACT_SERIES_TOOLS=1 only."""
+    monkeypatch.delenv("MCP_UNSTD_FACTS_TOOLS", raising=False)
+    monkeypatch.setenv("MCP_FACT_SERIES_TOOLS", "1")
+    importlib.reload(mcp_module)
+
+    async def _instant(_seconds: float) -> None:
+        return None
+
+    mcp_module._retry_sleep = _instant
+    yield mcp_module
+    monkeypatch.delenv("MCP_FACT_SERIES_TOOLS", raising=False)
+    importlib.reload(mcp_module)
+
+
+def test_series_flag_defaults_off(mcp_module) -> None:
+    assert mcp_module.MCP_FACT_SERIES_TOOLS is False
+
+
+@pytest.mark.asyncio
+async def test_series_flag_off_tools_absent_even_with_the_facts_flag_on(unstd_module) -> None:
+    """Prod runs with MCP_UNSTD_FACTS_TOOLS=1; that alone must not list them."""
+    from fastmcp import Client
+
+    assert unstd_module.MCP_UNSTD_FACTS_TOOLS is True
+    assert unstd_module.MCP_FACT_SERIES_TOOLS is False
+    async with Client(unstd_module.mcp) as client:
+        names = {t.name for t in await client.list_tools()}
+    assert set(UNSTD_TOOLS) <= names
+    assert names.isdisjoint(SERIES_TOOLS), names & set(SERIES_TOOLS)
+
+
+@pytest.mark.asyncio
+async def test_series_flag_off_call_is_rejected_as_unknown_tool(mcp_module) -> None:
+    from fastmcp import Client
+    from fastmcp.exceptions import ToolError
+
+    async with Client(mcp_module.mcp) as client:
+        names = {t.name for t in await client.list_tools()}
+        assert names.isdisjoint(SERIES_TOOLS)
+        for name, args in (
+            ("companies_series", {"id": 1}),
+            ("companies_series_retrieve", {"id": 1, "key": SERIES_KEY}),
+        ):
+            with pytest.raises(ToolError):
+                await client.call_tool(name, args)
+
+
+@pytest.mark.asyncio
+async def test_series_flag_on_tools_listed_read_only_with_their_params(series_module) -> None:
+    from fastmcp import Client
+
+    async with Client(series_module.mcp) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+    assert set(SERIES_TOOLS) <= set(tools)
+    # Only the series flag is on: the filing pair stays off.
+    assert set(tools).isdisjoint(UNSTD_TOOLS)
+    expected = {
+        "companies_series": ({"id", "period", "as_of", "search", "page", "page_size"}, ["id"]),
+        "companies_series_retrieve": ({"id", "key", "period", "as_of"}, ["id", "key"]),
+    }
+    for name, (params, required) in expected.items():
+        tool = tools[name]
+        assert set(tool.inputSchema["properties"]) == params, name
+        assert sorted(tool.inputSchema["required"]) == required, name
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        description = " ".join(tool.description.split())
+        assert "companies_financials_retrieve" in description, name
+        period_schema = json.dumps(tool.inputSchema["properties"]["period"])
+        for value in ("annual", "quarterly"):
+            assert f'"{value}"' in period_schema, name
+
+
+def test_series_flag_on_adds_exactly_the_series_tools(mcp_module, monkeypatch) -> None:
+    monkeypatch.delenv("MCP_UNSTD_FACTS_TOOLS", raising=False)
+    importlib.reload(mcp_module)
+    before = set(mcp_module.mcp._tool_manager._tools)
+    monkeypatch.setenv("MCP_FACT_SERIES_TOOLS", "1")
+    importlib.reload(mcp_module)
+    try:
+        after = set(mcp_module.mcp._tool_manager._tools)
+    finally:
+        monkeypatch.delenv("MCP_FACT_SERIES_TOOLS", raising=False)
+        importlib.reload(mcp_module)
+    assert after - before == set(SERIES_TOOLS)
+    assert before <= after
+
+
+@pytest.mark.asyncio
+async def test_companies_series_path_params_and_compact_output(
+    series_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(series_module, monkeypatch, fake_access_token)
+    route = respx_router.get(f"{TEST_API_BASE}/companies/4471/series/").mock(
+        return_value=httpx.Response(200, json=SERIES_LIST_BODY)
+    )
+    out = await _tool(series_module, "companies_series")(
+        id=4471, period="annual", as_of="2024-12-31", search="revenue", page=2, page_size=500
+    )
+    req = route.calls.last.request
+    assert dict(req.url.params) == {
+        "period": "annual", "as_of": "2024-12-31", "search": "revenue",
+        "page": "2", "page_size": "100",
+    }
+    assert req.headers["authorization"] == "Bearer real-access-token"
+    assert out == _compact(SERIES_LIST_BODY)
+    assert json.loads(out) == SERIES_LIST_BODY
+
+
+@pytest.mark.asyncio
+async def test_companies_series_defaults_send_no_params(
+    series_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(series_module, monkeypatch, fake_access_token)
+    route = respx_router.get(f"{TEST_API_BASE}/companies/4471/series/").mock(
+        return_value=httpx.Response(200, json=SERIES_LIST_BODY)
+    )
+    await _tool(series_module, "companies_series")(id=4471)
+    assert dict(route.calls.last.request.url.params) == {}
+
+
+@pytest.mark.asyncio
+async def test_companies_series_retrieve_path_and_params(
+    series_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(series_module, monkeypatch, fake_access_token)
+    route = respx_router.get(f"{TEST_API_BASE}/companies/4471/series/{SERIES_KEY}/").mock(
+        return_value=httpx.Response(200, json=SERIES_DETAIL_BODY)
+    )
+    out = await _tool(series_module, "companies_series_retrieve")(
+        id=4471, key=SERIES_KEY, period="quarterly", as_of="2024-06-30"
+    )
+    assert dict(route.calls.last.request.url.params) == {
+        "period": "quarterly", "as_of": "2024-06-30",
+    }
+    assert out == _compact(SERIES_DETAIL_BODY)
+
+
+@pytest.mark.asyncio
+async def test_series_key_cannot_rewrite_the_request_path(
+    series_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(series_module, monkeypatch, fake_access_token)
+    route = respx_router.get(url__regex=rf"^{TEST_API_BASE}/.*").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    bad_keys = (
+        "../../filings/1/facts",
+        "x_0f3a9c1d2b4e5a67/../../admin",
+        "x_0f3a9c1d2b4e5a67?page=2",
+        "x_0f3a9c1d2b4e5a67\n",
+        "x_0F3A9C1D2B4E5A67",  # upper-case hex is not a key
+        "x_0f3a9c1d2b4e5a6",  # 15 digits
+        "l_0f3a9c1d2b4e5a67",  # accepted by the route, not served
+        "d_0f3a9c1d2b4e5a67",
+        "",
+        123,
+    )
+    for bad_key in bad_keys:
+        out = await _tool(series_module, "companies_series_retrieve")(id=4471, key=bad_key)
+        assert "key must be a series key" in out, bad_key
+    for bad_id in ("../admin", 0, -1, True):
+        out = await _tool(series_module, "companies_series_retrieve")(id=bad_id, key=SERIES_KEY)
+        assert "id must be a positive integer" in out, bad_id
+        out = await _tool(series_module, "companies_series")(id=bad_id)
+        assert "id must be a positive integer" in out, bad_id
+    assert not route.called
+
+
+@pytest.mark.asyncio
+async def test_series_as_of_must_be_a_real_date(
+    series_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(series_module, monkeypatch, fake_access_token)
+    route = respx_router.get(url__regex=rf"^{TEST_API_BASE}/.*").mock(
+        return_value=httpx.Response(200, json={})
+    )
+    for bad in ("2024-13-01", "2024-02-30", "24-01-01", "2024-01-01T00:00:00Z", "yesterday"):
+        out = await _tool(series_module, "companies_series")(id=4471, as_of=bad)
+        assert "as_of must be a date in YYYY-MM-DD format" in out, bad
+        out = await _tool(series_module, "companies_series_retrieve")(
+            id=4471, key=SERIES_KEY, as_of=bad
+        )
+        assert "as_of must be a date in YYYY-MM-DD format" in out, bad
+    assert not route.called
+
+
+@pytest.mark.asyncio
+async def test_series_page_below_one_is_rejected_without_calling_upstream(
+    series_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(series_module, monkeypatch, fake_access_token)
+    route = respx_router.get(f"{TEST_API_BASE}/companies/4471/series/").mock(
+        return_value=httpx.Response(200, json=SERIES_LIST_BODY)
+    )
+    out = await _tool(series_module, "companies_series")(id=4471, page=0)
+    assert "page must be >= 1" in out
+    out = await _tool(series_module, "companies_series")(id=4471, page_size=0)
+    assert "page_size must be >= 1" in out
+    assert not route.called
+
+
+@pytest.mark.asyncio
+async def test_series_upstream_422_too_large_raises(
+    series_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(series_module, monkeypatch, fake_access_token)
+    detail = (
+        "This company's series are too large to compute for this request. "
+        "Leave out `as_of` and `kind`."
+    )
+    respx_router.get(f"{TEST_API_BASE}/companies/4471/series/").mock(
+        return_value=httpx.Response(422, json={"detail": detail})
+    )
+    with pytest.raises(series_module.UpstreamHTTPError) as ei:
+        await _tool(series_module, "companies_series")(id=4471, as_of="2020-01-01")
+    assert ei.value.upstream_status == 422
+    assert "too large" in str(ei.value)
+
+
+@pytest.mark.asyncio
+async def test_series_upstream_404_unknown_key_raises(
+    series_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(series_module, monkeypatch, fake_access_token)
+    respx_router.get(f"{TEST_API_BASE}/companies/4471/series/{SERIES_KEY}/").mock(
+        return_value=httpx.Response(
+            404, json={"detail": "No series with this key for this company."}
+        )
+    )
+    with pytest.raises(series_module.UpstreamHTTPError) as ei:
+        await _tool(series_module, "companies_series_retrieve")(id=4471, key=SERIES_KEY)
+    assert ei.value.upstream_status == 404
+
+
+@pytest.mark.asyncio
+async def test_oversized_series_list_says_how_to_narrow(
+    series_module, monkeypatch, fake_access_token, respx_router
+) -> None:
+    _auth_as(series_module, monkeypatch, fake_access_token)
+    row = SERIES_LIST_BODY["results"][0]
+    big = {**SERIES_LIST_BODY, "results": [row] * 400}
+    assert len(_compact(big)) > series_module._MAX_RESULT_CHARS
+    respx_router.get(f"{TEST_API_BASE}/companies/4471/series/").mock(
+        return_value=httpx.Response(200, json=big)
+    )
+    out = await _tool(series_module, "companies_series")(id=4471)
+    assert out.startswith("Invalid argument: result is")
+    for hint in ("search=", "period=", "page_size="):
+        assert hint in out, hint
+
+
+def test_series_generated_twins_are_replaced_by_the_hand_built_tools() -> None:
+    """The detail route's generic twin would take the hand-built tool's NAME
+    (companies_series_retrieve) and replace it; the list twin would be a second
+    tool for the same endpoint."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    from generate_mcp_tools import _REPLACED_BY_SYNTHETIC, snake_case
+
+    for op_id in ("companies_series_list", "companies_series_retrieve"):
         assert snake_case(op_id) in _REPLACED_BY_SYNTHETIC
