@@ -61,6 +61,9 @@ def _input_schema(mcp_module, tool_name):
 # NEGATION ("taxonomy codes, not regulator form names") with a POSITIVE
 # CROSS-REFERENCE ("for the source's own form name, use `source_filing_type`"),
 # which is better for an LLM — a negation tells it what the field is not.
+# Since the 2026-11-26 form-name lead (`_FORM_NAME_LEAD`), the cross-reference
+# on `type`/`types` is carried by that lead and upstream's copy is cut by the
+# cap; test_arg_error_guidance pins upstream's sentence against the snapshot.
 @pytest.mark.parametrize(
     "tool_name,param,must_contain",
     [
