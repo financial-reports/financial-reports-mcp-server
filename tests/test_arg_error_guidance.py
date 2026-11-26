@@ -100,7 +100,8 @@ def test_financials_fallback_does_not_suggest_a_form_name_as_a_type(mcp_module) 
     """The fallback told a model to filter by `20-F` — a form name `filings_list`
     rejects (7 of the 142 400s)."""
     desc = _tool(mcp_module, "companies_financials_retrieve").description or ""
-    assert "type='10-K'" in desc
+    # Both annual codes: an EU issuer's annual report is `10-K-ESEF` (SPECHT, #231).
+    assert "types='10-K,10-K-ESEF'" in desc
     assert "e.g. 10-K, 20-F" not in desc
 
 

@@ -83,9 +83,10 @@ companies_financials_retrieve:
     empty, FinancialFilings has no standardized financials for this company or
     period (coverage is global but not complete). Do NOT stop and do NOT
     estimate — FALL BACK to the filing:
-    call `filings_list` with `company` set to this `id` and `type='10-K'` (the
-    code for EVERY annual report, 20-F and local annual reports included;
-    `20-F` itself is not a code and returns 400) with
+    call `filings_list` with `company` set to this `id` and
+    `types='10-K,10-K-ESEF'` (annual reports: `10-K` covers 20-F too, and EU
+    issuers' ESEF reports are `10-K-ESEF`; `20-F` itself is not a code and
+    returns 400) with
     `ordering='-release_datetime'` and `page_size=10`, take the NEWEST row (do
     not gate on `processing_status` — it can be null, and null means
     unknown), retrieve it with `filings_markdown_retrieve`, and read
