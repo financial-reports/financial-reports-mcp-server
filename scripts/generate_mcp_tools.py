@@ -5922,7 +5922,9 @@ async def filings_markdown_search(
     -- search a distinctive phrase, not a whole passage. When NOTHING matches, it lists
     up to 3 closest passages, marked APPROXIMATE (they hold most of the query's words,
     e.g. "interest paid" for "cash paid for interest"): read around them, but they are
-    not matches."""
+    not matches.
+    ARGUMENTS: `filing_id` (not `id`) and ONE `query` string (not `queries`); for
+    the same query across several filings use filings_markdown_search_batch."""
     try:
         _require_auth_context()
         if not isinstance(filing_id, int) or filing_id <= 0:
@@ -6782,8 +6784,9 @@ async def filings_search(
     disclosed X", "who mentions Y", "filings that discuss Z" — questions where you do
     not yet know the filing. Once you have a filing, search INSIDE it with
     filings_markdown_search. For a company-and-period line item (revenue, assets, EPS)
-    call companies_financials_retrieve instead.
-    `queries`: 1 to 5 phrases, OR-ed, each at most 200 characters. Filings are in
+    call companies_financials_retrieve instead. To list a company's filings with
+    no text to match, call filings_list(company=<id>): this tool needs `queries`.
+    `queries` (REQUIRED): 1 to 5 phrases, OR-ed, each at most 200 characters. Filings are in
     many languages, so pass the term AND its translations into the languages of the
     markets you care about, plus close synonyms, as separate entries (e.g.
     ["going concern", "continuité d'exploitation", "Unternehmensfortführung"]).
@@ -6811,7 +6814,7 @@ async def filings_search(
     (country, ISIN, matching-filing count, first and last release date, best
     filing) instead of filings, best match first, counted over the kept matches
     only; then filings_search with companies=<id(s)> for those companies' hits.
-    No ordering, no snippets.
+    No snippets, and do not pass `ordering` with it (refused).
     An EMPTY result means no filing within the filters matched, among filings with
     extracted text, within the first 20 MB of each filing's text, unless the result
     says the search stopped early: then matches may exist and you should narrow the
@@ -9149,6 +9152,26 @@ _CSV_ENUM_PARAMS = frozenset({"include"})
 # match a POSITIVE "Combined with `as_of`, ..." sentence. That costs tokens
 # in a lead, not correctness — and today nothing matches it ("Combines with
 # `as_of`" is a different inflection).
+# Hand-written leads, for the one failure the schema text cannot prevent: a
+# regulator FORM NAME sent as a filing-type CODE. Prod MCP, 2026-11-13 -> 11-26,
+# customers: 142 `filings_list` 400s across 50+ users, still arriving on
+# v1.4.211-213 — 10-Q 98, 8-K 27, 6-K 8, 20-F 7. The server instructions already
+# carry the mapping (item 6), but instructions are read once per session and
+# not at all by some clients; the parameter text is what a model reads when it
+# builds the call. Upstream's own example, `10-K`, is the one code that IS also a
+# form name, which is the likeliest reason the guess generalises.
+# ⚠ PROSE, SO IT CAN DRIFT: the codes are not in the schema snapshot, so the
+# anti-rot test pins this against the instructions' own mapping instead, and the
+# codes were checked against prod's `filings_filingtype` (30 codes) on 11-26.
+# It also carries upstream's "use `source_filing_type`" cross-reference, because
+# the cap now falls on upstream's own copy of that sentence.
+_FORM_NAME_LEAD = (
+    "Form names are not codes (400): 10-Q -> `IR`, 20-F -> `10-K`. For an "
+    "exact form, or 8-K / 6-K (no code), omit this and use "
+    "`source_filing_type`."
+)
+_PARAM_LEADS = {"type": _FORM_NAME_LEAD, "types": _FORM_NAME_LEAD}
+
 _OPERATIVE_RE = re.compile(r"(?:\b4\d\d\b|\b503\b|Not served with|\bRequires\b|\bcombined with\b)")
 # Chars of the schema's OWN prose kept after the derived rules. The opening
 # sentences are where the "what do I actually send" instruction lives, and for
@@ -9237,6 +9260,8 @@ def _param_lead(name: str, csv_enum=None, description: str = "") -> str:
     protect.
     """
     parts = []
+    if name in _PARAM_LEADS:
+        parts.append(_PARAM_LEADS[name])
     if csv_enum:
         parts.append(f"One or more of: {', '.join(csv_enum)}, comma-separated.")
     # No budget race: every operative sentence is kept, and the CAP is widened to

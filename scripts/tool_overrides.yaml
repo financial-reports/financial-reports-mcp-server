@@ -83,8 +83,9 @@ companies_financials_retrieve:
     empty, FinancialFilings has no standardized financials for this company or
     period (coverage is global but not complete). Do NOT stop and do NOT
     estimate — FALL BACK to the filing:
-    call `filings_list` for this `id` filtered with `type` (or `types`) to an
-    annual report (e.g. 10-K, 20-F, or the local annual type) with
+    call `filings_list` with `company` set to this `id` and `type='10-K'` (the
+    code for EVERY annual report, 20-F and local annual reports included;
+    `20-F` itself is not a code and returns 400) with
     `ordering='-release_datetime'` and `page_size=10`, take the NEWEST row (do
     not gate on `processing_status` — it can be null, and null means
     unknown), retrieve it with `filings_markdown_retrieve`, and read
@@ -107,9 +108,20 @@ companies_financials_retrieve:
     most often guessed wrong: net_income -> net_income_loss, operating_income
     -> operating_income_loss, total_debt -> total_debt_bs, free_cash_flow ->
     levered_free_cash_flow_cf, capital_expenditure -> capital_expenditure_cf,
-    operating_cash_flow -> cash_from_operations, eps -> basic_eps /
-    diluted_eps, cash -> cash_and_equivalents. Not sure of a code? Omit
-    `line_items` to get every line item.
+    operating_cash_flow / net_cash_from_operating_activities ->
+    cash_from_operations, eps -> basic_eps / diluted_eps, cash ->
+    cash_and_equivalents, total_revenue -> revenue, operating_profit ->
+    operating_income_loss, income_tax_expense -> income_tax_expense_benefit,
+    pretax_income -> earnings_before_tax_including_unusual_items,
+    net_income_common -> net_income_to_common_including_extra_items,
+    depreciation_and_amortization -> depreciation_amortization_total_cf (cash
+    flow) / depreciation_and_amortization_supplemental (income statement),
+    stock_based_compensation -> stock_based_compensation_cf, diluted shares ->
+    weighted_avg_diluted_shares_outstanding, inventories -> inventory,
+    interest_paid -> cash_interest_paid_cf, cost_of_sales -> cost_of_revenue,
+    research_and_development_expense -> research_development_expense. Do not
+    invent a `_cf` suffix: only the codes shown with it carry one. Not sure of
+    a code? Omit `line_items` to get every line item.
   when_not_to_use: >
     Don't use for filing documents or markdown content — use
     `filings_list` + `filings_markdown_retrieve`. Don't use without
@@ -143,6 +155,11 @@ filings_list:
     never that matches exist either; the response proves neither. Same for any
     other disclosure object beside an empty `results`.
   when_not_to_use: >
+    ARGUMENT NAMES: one company is `company` (an internal id; not
+    `companies` or `company_id`); page size is `page_size` (not `limit`);
+    a year is `fiscal_year` (there is no `fiscal_year_from`/`_to` here — use
+    `period_ending_date_from`/`_to`). A ticker or CIK is not a filter: resolve
+    it with `companies_list` first.
     Don't use to get filing content — use `filings_markdown_retrieve`
     after getting the filing ID. Don't use for financial KPIs — use
     `companies_financials_retrieve`. Don't use `search` to find filings that
@@ -167,6 +184,8 @@ filings_retrieve:
     paginated `next`/`previous` links — those require credentials and 403
     for an unauthenticated person. Filing CONTENT for you (the model) comes
     from `filings_markdown_retrieve(filing_id)`, not from a URL.
+    ARGUMENT NAME: this tool takes `id`; `filings_markdown_retrieve` takes
+    `filing_id`.
   when_not_to_use: >
     Don't use for the actual filing content — use
     `filings_markdown_retrieve`. To find filings by what they say, use
@@ -188,6 +207,8 @@ filings_markdown_retrieve:
     made 10 calls — whichever comes first. Stop at the cap and say the
     document was truncated rather than paginating a long filing
     indefinitely against the request budget.
+    ARGUMENT NAMES: `filing_id` (not `id`), `offset` and `limit` in
+    characters (not `start`/`end`/`length`/`max_chars`).
   when_not_to_use: >
     To find filings by what they say, use `filings_search`; by metadata,
     use `filings_list`. Not every filing has Markdown content. If a `filings_list` row shows a
