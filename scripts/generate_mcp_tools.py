@@ -9384,6 +9384,8 @@ def sanitize_description(d: str) -> str:
     )
     # Strip leftover horizontal-rule separators.
     d = re.sub(r"^\s*---\s*$", "", d, flags=re.MULTILINE)
+    # MCP callers can't reach the REST transcript route, so drop the pointer to it.
+    d = re.sub(r"[^.\n]*`GET /filings/\{id\}/transcript/`[^.\n]*\.\s*", "", d)
     d = d.strip()
     if not d:
         return "No description available."
